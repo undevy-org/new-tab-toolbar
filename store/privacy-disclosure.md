@@ -21,6 +21,15 @@ local weather panel.
   coordinates for the city the user sets. All three are Open-Meteo's
   public, keyless APIs — no API key or account is involved.
 
+## Remote code
+
+No. The extension ships no `eval`/`new Function`/`document.write`, and the
+only `<script>` tag in `src/newtab.html` loads a local, packaged file
+(`./newtab.js`) — nothing is loaded from a remote host. All host-permission
+network requests (`api.open-meteo.com`, `air-quality-api.open-meteo.com`,
+`geocoding-api.open-meteo.com`) fetch JSON data only, never executable code.
+Answer "No, I am not using Remote code" — no justification field needed.
+
 ## Data usage disclosure
 
 - **Personally identifiable information:** not collected.
