@@ -1,0 +1,7 @@
+.DS_Store
+node_modules/
+.playwright-cli/
+output/
+.superpowers/
+.worktrees/
+key.pem

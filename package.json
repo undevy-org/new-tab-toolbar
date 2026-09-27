@@ -1,0 +1,30 @@
+{
+  "name": "new-tab-toolbar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A personal favorites toolbar and local weather on the new tab page — nothing else.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "chrome-extension",
+    "manifest-v3",
+    "new-tab",
+    "favorites",
+    "weather"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/undevy-org/new-tab-toolbar.git"
+  },
+  "bugs": {
+    "url": "https://github.com/undevy-org/new-tab-toolbar/issues"
+  },
+  "homepage": "https://github.com/undevy-org/new-tab-toolbar#readme",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "find src -name '*.js' -print0 | xargs -0 -n1 node --check"
+  }
+}
