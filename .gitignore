@@ -6,3 +6,5 @@ output/
 .worktrees/
 key.pem
 *.zip
+CLAUDE.md
+.claude/
