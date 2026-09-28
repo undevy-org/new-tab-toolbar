@@ -48,6 +48,17 @@ export function createWeatherService({
     });
   }
 
+  async function persistAndFetch(resolvedLocation) {
+    const location = await locationStore.setLocation(resolvedLocation);
+
+    try {
+      const data = await fetchAndCache(location);
+      return { status: "ready", location, data, error: null };
+    } catch (error) {
+      return { status: "error", location, data: null, error: errorMessage(error) };
+    }
+  }
+
   return {
     async initialize() {
       let location = null;
@@ -87,14 +98,11 @@ export function createWeatherService({
 
     async setCity(name) {
       const resolved = await geocodeCity(name);
-      const location = await locationStore.setLocation(resolved);
+      return persistAndFetch(resolved);
+    },
 
-      try {
-        const data = await fetchAndCache(location);
-        return { status: "ready", location, data, error: null };
-      } catch (error) {
-        return { status: "error", location, data: null, error: errorMessage(error) };
-      }
+    async selectLocation(location) {
+      return persistAndFetch(location);
     }
   };
 }

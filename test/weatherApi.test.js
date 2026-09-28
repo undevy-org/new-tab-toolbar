@@ -5,6 +5,7 @@ import {
   fetchAirQuality,
   fetchWeather,
   geocodeCity,
+  searchCities,
   summarizeHourlyForecast,
   usAqiCategory,
   uvIndexLevel
@@ -510,6 +511,141 @@ describe("geocodeCity", () => {
     await assert.rejects(
       () => geocodeCity("Springfield", { fetchImpl }),
       (error) => error instanceof WeatherApiError
+    );
+  });
+});
+
+describe("searchCities", () => {
+  it("requests multiple candidates and returns them as location objects", async () => {
+    const calls = [];
+    const fetchImpl = async (url) => {
+      calls.push(url);
+      return response({
+        results: [
+          { name: "Springfield", country: "United States", latitude: 39.78, longitude: -89.65 },
+          { name: "Springfield Gardens", country: "United States", latitude: 40.66, longitude: -73.76 }
+        ]
+      });
+    };
+
+    const result = await searchCities("Spring", { count: 6, fetchImpl });
+    const requestedUrl = new URL(calls[0]);
+
+    assert.equal(
+      requestedUrl.origin + requestedUrl.pathname,
+      "https://geocoding-api.open-meteo.com/v1/search"
+    );
+    assert.equal(requestedUrl.searchParams.get("name"), "Spring");
+    assert.equal(requestedUrl.searchParams.get("count"), "6");
+    assert.equal(requestedUrl.searchParams.get("language"), "en");
+    assert.deepEqual(result, [
+      { name: "Springfield", country: "United States", admin1: "", latitude: 39.78, longitude: -89.65 },
+      {
+        name: "Springfield Gardens",
+        country: "United States",
+        admin1: "",
+        latitude: 40.66,
+        longitude: -73.76
+      }
+    ]);
+  });
+
+  it("defaults count to 6 when not given", async () => {
+    const calls = [];
+    const fetchImpl = async (url) => {
+      calls.push(url);
+      return response({ results: [] });
+    };
+
+    await searchCities("Spring", { fetchImpl });
+    const requestedUrl = new URL(calls[0]);
+
+    assert.equal(requestedUrl.searchParams.get("count"), "6");
+  });
+
+  it("returns an empty array when no results are found", async () => {
+    const fetchImpl = async () => response({ results: [] });
+
+    const result = await searchCities("Nonexistent Place", { fetchImpl });
+
+    assert.deepEqual(result, []);
+  });
+
+  it("filters out malformed individual results", async () => {
+    const fetchImpl = async () =>
+      response({
+        results: [
+          { name: "Valid City", country: "Testland", latitude: 1.5, longitude: 2.5 },
+          { name: "", country: "Testland", latitude: 1.5, longitude: 2.5 },
+          { name: "No Coords", country: "Testland", latitude: "oops", longitude: 2.5 }
+        ]
+      });
+
+    const result = await searchCities("Test", { fetchImpl });
+
+    assert.deepEqual(result, [
+      { name: "Valid City", country: "Testland", admin1: "", latitude: 1.5, longitude: 2.5 }
+    ]);
+  });
+
+  it("includes admin1 to help disambiguate same-named cities", async () => {
+    const fetchImpl = async () =>
+      response({
+        results: [
+          {
+            name: "Springfield",
+            country: "United States",
+            admin1: "Illinois",
+            latitude: 39.78,
+            longitude: -89.65
+          },
+          {
+            name: "Springfield",
+            country: "United States",
+            admin1: "Missouri",
+            latitude: 37.21,
+            longitude: -93.29
+          }
+        ]
+      });
+
+    const result = await searchCities("Springfield", { fetchImpl });
+
+    assert.deepEqual(result, [
+      {
+        name: "Springfield",
+        country: "United States",
+        admin1: "Illinois",
+        latitude: 39.78,
+        longitude: -89.65
+      },
+      {
+        name: "Springfield",
+        country: "United States",
+        admin1: "Missouri",
+        latitude: 37.21,
+        longitude: -93.29
+      }
+    ]);
+  });
+
+  it("throws WeatherApiError for an empty query", async () => {
+    const fetchImpl = async () => {
+      throw new Error("fetchImpl should not be called for an empty query");
+    };
+
+    await assert.rejects(
+      () => searchCities("   ", { fetchImpl }),
+      (error) => error instanceof WeatherApiError
+    );
+  });
+
+  it("throws WeatherApiError on non-200 responses", async () => {
+    const fetchImpl = async () => response({}, { ok: false, status: 429 });
+
+    await assert.rejects(
+      () => searchCities("Spring", { fetchImpl }),
+      (error) => error instanceof WeatherApiError && error.message.includes("429")
     );
   });
 });

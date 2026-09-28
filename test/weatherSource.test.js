@@ -183,4 +183,84 @@ describe("newtab weather source", () => {
       /if \(status === "stale"\) \{\s*const staleStatus = createStatus\("Couldn't refresh"\);\s*staleStatus\.classList\.add\("weather-status"\);\s*fragment\.appendChild\(staleStatus\);\s*\}/
     );
   });
+
+  it("wires searchCities for live city suggestions with debounce, minimum length, and request cancellation", async () => {
+    const code = await source();
+    assert.match(code, /searchCities/);
+    assert.match(code, /query\.length < 2/);
+    assert.match(code, /new AbortController\(\)/);
+    assert.match(code, /}, 250\);/);
+  });
+
+  it("resets suggestion state on every fresh mount of the city form and guards stale async responses", async () => {
+    const code = await source();
+    const formStart = code.indexOf("function createWeatherForm(location) {");
+    const formEnd = code.indexOf("function createWeatherTile(");
+    const form = code.slice(formStart, formEnd);
+
+    assert.ok(formStart > -1 && formEnd > formStart);
+    assert.match(form, /weatherFormGeneration \+= 1;/);
+    assert.match(form, /const formGeneration = weatherFormGeneration;/);
+    assert.match(form, /weatherUi = hideSuggestions\(weatherUi\);/);
+    assert.match(form, /formGeneration !== weatherFormGeneration/);
+  });
+
+  it("selects a suggested city without a separate geocoding round-trip", async () => {
+    const code = await source();
+    assert.match(code, /"select-city"/);
+    assert.match(code, /await weatherService\.selectLocation\(location\)/);
+  });
+
+  it("keeps the input focused when clicking a suggestion, so the click is not lost to a blur race", async () => {
+    const code = await source();
+    const formStart = code.indexOf("function createWeatherForm(location) {");
+    const formEnd = code.indexOf("function createWeatherTile(");
+    const form = code.slice(formStart, formEnd);
+
+    assert.ok(formStart > -1 && formEnd > formStart);
+    assert.match(
+      form,
+      /suggestionsList\.addEventListener\("mousedown", \(event\) => \{\s*event\.preventDefault\(\);\s*\}\);/
+    );
+  });
+
+  it("cancels a pending suggestion request when the field blurs or Escape is pressed", async () => {
+    const code = await source();
+    const formStart = code.indexOf("function createWeatherForm(location) {");
+    const formEnd = code.indexOf("function createWeatherTile(");
+    const form = code.slice(formStart, formEnd);
+
+    const helperStart = form.indexOf("function cancelPendingSuggestionRequest()");
+    const keydownStart = form.indexOf('input.addEventListener("keydown"');
+    const blurStart = form.indexOf('input.addEventListener("blur"');
+    const helperBody = form.slice(helperStart, keydownStart);
+    const keydownHandler = form.slice(keydownStart, blurStart);
+    const blurHandler = form.slice(blurStart);
+
+    assert.ok(helperStart > -1 && keydownStart > helperStart && blurStart > keydownStart);
+    assert.match(helperBody, /clearTimeout\(debounceTimer\)/);
+    assert.match(helperBody, /abortController\.abort\(\)/);
+    assert.match(keydownHandler, /cancelPendingSuggestionRequest\(\)/);
+    assert.match(blurHandler, /cancelPendingSuggestionRequest\(\)/);
+  });
+
+  it("disambiguates suggestions with the same name using admin1", async () => {
+    const code = await source();
+    const formStart = code.indexOf("function createWeatherForm(location) {");
+    const formEnd = code.indexOf("function createWeatherTile(");
+    const form = code.slice(formStart, formEnd);
+
+    assert.ok(formStart > -1 && formEnd > formStart);
+    assert.match(
+      form,
+      /const labelParts = \[suggestion\.name, suggestion\.admin1, suggestion\.country\]\.filter\([\s\S]*?\(part\) => part[\s\S]*?\);/
+    );
+    assert.match(form, /const label = labelParts\.join\(", "\);/);
+  });
+
+  it("styles the city suggestion dropdown", async () => {
+    const styles = await css();
+    assert.match(styles, /\.weather-form__suggestions\s*\{/);
+    assert.match(styles, /\.weather-form__suggestion\s*\{/);
+  });
 });
