@@ -539,8 +539,14 @@ describe("searchCities", () => {
     assert.equal(requestedUrl.searchParams.get("count"), "6");
     assert.equal(requestedUrl.searchParams.get("language"), "en");
     assert.deepEqual(result, [
-      { name: "Springfield", country: "United States", latitude: 39.78, longitude: -89.65 },
-      { name: "Springfield Gardens", country: "United States", latitude: 40.66, longitude: -73.76 }
+      { name: "Springfield", country: "United States", admin1: "", latitude: 39.78, longitude: -89.65 },
+      {
+        name: "Springfield Gardens",
+        country: "United States",
+        admin1: "",
+        latitude: 40.66,
+        longitude: -73.76
+      }
     ]);
   });
 
@@ -578,7 +584,48 @@ describe("searchCities", () => {
     const result = await searchCities("Test", { fetchImpl });
 
     assert.deepEqual(result, [
-      { name: "Valid City", country: "Testland", latitude: 1.5, longitude: 2.5 }
+      { name: "Valid City", country: "Testland", admin1: "", latitude: 1.5, longitude: 2.5 }
+    ]);
+  });
+
+  it("includes admin1 to help disambiguate same-named cities", async () => {
+    const fetchImpl = async () =>
+      response({
+        results: [
+          {
+            name: "Springfield",
+            country: "United States",
+            admin1: "Illinois",
+            latitude: 39.78,
+            longitude: -89.65
+          },
+          {
+            name: "Springfield",
+            country: "United States",
+            admin1: "Missouri",
+            latitude: 37.21,
+            longitude: -93.29
+          }
+        ]
+      });
+
+    const result = await searchCities("Springfield", { fetchImpl });
+
+    assert.deepEqual(result, [
+      {
+        name: "Springfield",
+        country: "United States",
+        admin1: "Illinois",
+        latitude: 39.78,
+        longitude: -89.65
+      },
+      {
+        name: "Springfield",
+        country: "United States",
+        admin1: "Missouri",
+        latitude: 37.21,
+        longitude: -93.29
+      }
     ]);
   });
 

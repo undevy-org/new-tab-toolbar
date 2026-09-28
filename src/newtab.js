@@ -857,9 +857,10 @@ if (weatherRoot) {
       }
 
       for (const suggestion of citySuggestions(weatherUi)) {
-        const label = suggestion.country
-          ? `${suggestion.name}, ${suggestion.country}`
-          : suggestion.name;
+        const labelParts = [suggestion.name, suggestion.admin1, suggestion.country].filter(
+          (part) => part
+        );
+        const label = labelParts.join(", ");
         const button = createNode("button", "weather-form__suggestion", label);
         button.type = "button";
         button.dataset.weatherAction = "select-city";
@@ -873,12 +874,14 @@ if (weatherRoot) {
 
     renderSuggestionsList();
 
+    suggestionsList.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+    });
+
     let debounceTimer = null;
     let abortController = null;
 
-    input.addEventListener("input", () => {
-      const query = input.value.trim();
-
+    function cancelPendingSuggestionRequest() {
       if (debounceTimer !== null) {
         clearTimeout(debounceTimer);
         debounceTimer = null;
@@ -888,6 +891,12 @@ if (weatherRoot) {
         abortController.abort();
         abortController = null;
       }
+    }
+
+    input.addEventListener("input", () => {
+      const query = input.value.trim();
+
+      cancelPendingSuggestionRequest();
 
       if (query.length < 2) {
         weatherUi = hideSuggestions(weatherUi);
@@ -925,12 +934,15 @@ if (weatherRoot) {
 
     input.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && isSuggestionsOpen(weatherUi)) {
+        cancelPendingSuggestionRequest();
         weatherUi = hideSuggestions(weatherUi);
         renderSuggestionsList();
       }
     });
 
     input.addEventListener("blur", () => {
+      cancelPendingSuggestionRequest();
+
       setTimeout(() => {
         if (formGeneration !== weatherFormGeneration) {
           return;

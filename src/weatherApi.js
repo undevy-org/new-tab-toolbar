@@ -353,6 +353,7 @@ export async function searchCities(query, { count = 6, fetchImpl = globalThis.fe
     .map((result) => ({
       name: result.name,
       country: typeof result.country === "string" ? result.country : "",
+      admin1: typeof result.admin1 === "string" ? result.admin1 : "",
       latitude: result.latitude,
       longitude: result.longitude
     }));
