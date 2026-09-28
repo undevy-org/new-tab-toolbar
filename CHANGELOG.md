@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - README badge linking to the [Chrome Web Store listing](https://chromewebstore.google.com/detail/quiet-tab/dbcdpffdgfbjmdlomgheeijfkkjkhmma).
+- A live city suggestion dropdown in the weather panel: typing two or more
+  characters shows matching cities from Open-Meteo's geocoding search;
+  selecting one sets the location immediately without a second geocoding
+  request. Free-text entry and Save still work exactly as before.
 
 ## [0.1.0] - 2026-09-27
 

@@ -660,6 +660,34 @@ body {
   min-width: 0;
 }
 
+.weather-form__suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.weather-form__suggestions:empty {
+  display: none;
+}
+
+.weather-form__suggestion {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.weather-form__suggestion:hover,
+.weather-form__suggestion:focus-visible {
+  border-color: var(--primary);
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
 @media (max-width: 600px) {
   :root {
     --toolbar-h: 64px;

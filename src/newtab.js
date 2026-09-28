@@ -20,7 +20,7 @@ import {
 } from "./favoritesUiState.js";
 import { createFavoritesService } from "./favoritesService.js";
 import { createFavoritesStore, migrateLegacyFavorites } from "./favoritesStore.js";
-import { usAqiCategory, uvIndexLevel } from "./weatherApi.js";
+import { searchCities, usAqiCategory, uvIndexLevel } from "./weatherApi.js";
 import {
   formatPm25,
   formatPrecipitation,
@@ -33,8 +33,12 @@ import {
 import { createWeatherService } from "./weatherService.js";
 import { createWeatherCacheStore, createWeatherLocationStore } from "./weatherStore.js";
 import {
+  citySuggestions,
   createInitialWeatherUiState,
+  hideSuggestions,
   isEditingCity,
+  isSuggestionsOpen,
+  showSuggestions,
   startEditingCity,
   stopEditingCity
 } from "./weatherUiState.js";
@@ -129,6 +133,7 @@ let weatherResult = null;
 let weatherUi = createInitialWeatherUiState();
 let weatherFormError = "";
 let weatherBusy = false;
+let weatherFormGeneration = 0;
 
 function createFavoriteLetterNode(item, source) {
   const span = createNode("span", "favorite-letter", getFavoriteLetter(item));
@@ -807,6 +812,10 @@ if (favoritesRoot) {
 
 if (weatherRoot) {
   function createWeatherForm(location) {
+    weatherFormGeneration += 1;
+    const formGeneration = weatherFormGeneration;
+    weatherUi = hideSuggestions(weatherUi);
+
     const form = createNode("form", "weather-form");
     form.dataset.weatherForm = "city";
 
@@ -836,6 +845,101 @@ if (weatherRoot) {
     }
 
     form.appendChild(row);
+
+    const suggestionsList = createNode("div", "weather-form__suggestions");
+    form.appendChild(suggestionsList);
+
+    function renderSuggestionsList() {
+      suggestionsList.replaceChildren();
+
+      if (!isSuggestionsOpen(weatherUi)) {
+        return;
+      }
+
+      for (const suggestion of citySuggestions(weatherUi)) {
+        const label = suggestion.country
+          ? `${suggestion.name}, ${suggestion.country}`
+          : suggestion.name;
+        const button = createNode("button", "weather-form__suggestion", label);
+        button.type = "button";
+        button.dataset.weatherAction = "select-city";
+        button.dataset.cityName = suggestion.name;
+        button.dataset.cityCountry = suggestion.country;
+        button.dataset.cityLatitude = String(suggestion.latitude);
+        button.dataset.cityLongitude = String(suggestion.longitude);
+        suggestionsList.appendChild(button);
+      }
+    }
+
+    renderSuggestionsList();
+
+    let debounceTimer = null;
+    let abortController = null;
+
+    input.addEventListener("input", () => {
+      const query = input.value.trim();
+
+      if (debounceTimer !== null) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+      }
+
+      if (abortController) {
+        abortController.abort();
+        abortController = null;
+      }
+
+      if (query.length < 2) {
+        weatherUi = hideSuggestions(weatherUi);
+        renderSuggestionsList();
+        return;
+      }
+
+      debounceTimer = setTimeout(() => {
+        abortController = new AbortController();
+        const { signal } = abortController;
+
+        void (async () => {
+          let results = null;
+
+          try {
+            results = await searchCities(query, {
+              fetchImpl: (url) => globalThis.fetch(url, { signal })
+            });
+          } catch {
+            results = null;
+          }
+
+          if (signal.aborted || formGeneration !== weatherFormGeneration) {
+            return;
+          }
+
+          weatherUi =
+            results && results.length > 0
+              ? showSuggestions(weatherUi, results)
+              : hideSuggestions(weatherUi);
+          renderSuggestionsList();
+        })();
+      }, 250);
+    });
+
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && isSuggestionsOpen(weatherUi)) {
+        weatherUi = hideSuggestions(weatherUi);
+        renderSuggestionsList();
+      }
+    });
+
+    input.addEventListener("blur", () => {
+      setTimeout(() => {
+        if (formGeneration !== weatherFormGeneration) {
+          return;
+        }
+        weatherUi = hideSuggestions(weatherUi);
+        renderSuggestionsList();
+      }, 150);
+    });
+
     return form;
   }
 
@@ -1010,6 +1114,30 @@ if (weatherRoot) {
       weatherUi = stopEditingCity(weatherUi);
       weatherFormError = "";
       renderWeather();
+    } else if (action === "select-city") {
+      const location = {
+        name: target.dataset.cityName,
+        country: target.dataset.cityCountry ?? "",
+        latitude: Number(target.dataset.cityLatitude),
+        longitude: Number(target.dataset.cityLongitude)
+      };
+
+      weatherUi = hideSuggestions(weatherUi);
+      weatherBusy = true;
+      renderWeather();
+
+      void (async () => {
+        try {
+          weatherResult = await weatherService.selectLocation(location);
+          weatherUi = stopEditingCity(weatherUi);
+          weatherFormError = "";
+        } catch (error) {
+          weatherFormError = error instanceof Error ? error.message : String(error);
+        } finally {
+          weatherBusy = false;
+          renderWeather();
+        }
+      })();
     }
   });
 
