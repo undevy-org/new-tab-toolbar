@@ -15,6 +15,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selecting one sets the location immediately without a second geocoding
   request. Free-text entry and Save still work exactly as before.
 
+### Changed
+
+- The favorites bar is now a wrapping grid with a configurable number of columns (1–12)
+  instead of a single horizontally scrolling row, and can be placed at the top, center
+  or bottom of the page (Quick links settings).
+- Reordering in the Quick links settings now uses up/down "Move earlier"/"Move later"
+  buttons to match the multi-row grid.
+- Favorites are stored in a new unified widgets layout (`quietTabWidgetsMeta` /
+  `quietTabWidget:<id>`), preparing for weather tiles to join the same grid. Existing
+  favorites are migrated automatically on first open; the migration is resumable and
+  leaves your data untouched if it fails.
+- A wide tile is shown as a square while the grid has a single column.
+- The favorites bar keeps clear of the weather panel in every position.
+
 ## [0.1.0] - 2026-09-27
 
 ### Added
