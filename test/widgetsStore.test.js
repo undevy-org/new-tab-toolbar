@@ -536,6 +536,16 @@ describe("migrateToWidgets", () => {
     assert.deepEqual(await sync.get(WIDGETS_META_KEY), {});
   });
 
+  it("does not clear the legacy blob key when the sync write throws", async () => {
+    const blob = { version: 1, items: [legacyFavorite()], createdAt: NOW, updatedAt: NOW };
+    const { local, sync, migrate } = setup({}, { [LEGACY_BLOB_KEY]: blob }, { quotaBytesPerItem: 1 });
+
+    await assert.rejects(migrate, /Couldn't save this change to Chrome Sync/);
+
+    assert.deepEqual(await local.get(LEGACY_BLOB_KEY), { [LEGACY_BLOB_KEY]: blob });
+    assert.deepEqual(await sync.get(WIDGETS_META_KEY), {});
+  });
+
   it("stays under the sync TOTAL quota by deleting legacy keys chunk by chunk (Review Focus #1)", async () => {
     const ids = Array.from({ length: 100 }, (_, index) => `fav-${index}`);
     const values = legacyArea(ids);

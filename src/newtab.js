@@ -693,8 +693,8 @@ if (favoritesRoot) {
         await migrateToWidgets(localStorageArea, syncStorageArea);
       } catch (error) {
         widgetsMigrationFailed = true;
-        const message = error instanceof Error ? error.message : String(error);
-        favoritesError = `${message} Your existing favorites are untouched — reload this tab to try again.`;
+        favoritesError =
+          "Couldn't move your favorites to the new layout — Chrome Sync storage may be full or unavailable. Free up some sync space, then reload this tab to try again. Your favorites are kept.";
         renderFavorites();
         return;
       }
@@ -815,7 +815,6 @@ if (favoritesRoot) {
       return;
     }
 
-    const errorNode = favoritesPanelRoot.querySelector("[data-grid-error]");
     const value = target.value;
 
     void (async () => {
@@ -825,6 +824,7 @@ if (favoritesRoot) {
             ? await widgetsService.setColumns(value)
             : await widgetsService.setPosition(value);
 
+        const errorNode = favoritesPanelRoot.querySelector("[data-grid-error]");
         if (errorNode) {
           errorNode.textContent = "";
           errorNode.hidden = true;
@@ -832,6 +832,7 @@ if (favoritesRoot) {
         renderFavoritesToolbar();
         favoritesPanelRoot.dataset.barPosition = gridLayout(widgetsState).position;
       } catch (error) {
+        const errorNode = favoritesPanelRoot.querySelector("[data-grid-error]");
         if (errorNode) {
           errorNode.textContent = error instanceof Error ? error.message : String(error);
           errorNode.hidden = false;
