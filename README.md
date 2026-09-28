@@ -4,6 +4,8 @@ A small Manifest V3 extension for Chromium-based browsers that turns the new
 tab page into a personal favorites toolbar with local weather — nothing
 else.
 
+[<img src="https://developer.chrome.com/static/docs/webstore/branding/image/UV4C4ybeBTsZt43U4xis.png" alt="Available in the Chrome Web Store" height="58">](https://chromewebstore.google.com/detail/quiet-tab/dbcdpffdgfbjmdlomgheeijfkkjkhmma)
+
 ![Quiet Tab](docs/screenshot.png)
 
 ## Features
