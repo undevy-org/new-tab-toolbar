@@ -316,3 +316,44 @@ export async function geocodeCity(name, { fetchImpl = globalThis.fetch } = {}) {
     longitude: result.longitude
   };
 }
+
+export async function searchCities(query, { count = 6, fetchImpl = globalThis.fetch } = {}) {
+  if (typeof query !== "string" || query.trim() === "") {
+    throw new WeatherApiError("City search query must not be empty", { query });
+  }
+
+  const url = new URL(GEOCODING_ENDPOINT);
+  url.searchParams.set("name", query.trim());
+  url.searchParams.set("count", String(count));
+  url.searchParams.set("language", "en");
+
+  const response = await fetchImpl(url.toString());
+
+  if (!response.ok) {
+    throw new WeatherApiError(
+      `Open-Meteo geocoding request failed with status ${response.status}`,
+      { status: response.status, url: url.toString() }
+    );
+  }
+
+  const body = await parseJson(response, url.toString(), "Open-Meteo geocoding");
+  const results = Array.isArray(body?.results) ? body.results : [];
+
+  return results
+    .filter(
+      (result) =>
+        result &&
+        typeof result.name === "string" &&
+        result.name.trim() !== "" &&
+        typeof result.latitude === "number" &&
+        Number.isFinite(result.latitude) &&
+        typeof result.longitude === "number" &&
+        Number.isFinite(result.longitude)
+    )
+    .map((result) => ({
+      name: result.name,
+      country: typeof result.country === "string" ? result.country : "",
+      latitude: result.latitude,
+      longitude: result.longitude
+    }));
+}
