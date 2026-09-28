@@ -7,6 +7,8 @@ const ICON_NAMES = [
   "settings",
   "chevronLeft",
   "chevronRight",
+  "chevronUp",
+  "chevronDown",
   "pencil",
   "plus",
   "check",
