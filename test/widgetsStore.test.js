@@ -550,10 +550,12 @@ describe("migrateToWidgets", () => {
 
   it("resumes an interrupted run, preferring an item's new key over its legacy key", async () => {
     const values = legacyArea(["fav-a", "fav-b", "fav-c"]);
-    // Simulate a crash after chunk 1 wrote+removed fav-a but before the widgets meta.
-    delete values[legacyItemKey("fav-a")];
+    // Simulate a crash after chunk 1 wrote fav-a's new key but before its legacy key was
+    // removed: BOTH keys exist, with different labels. The new key must win.
+    values[legacyItemKey("fav-a")].label = "Legacy label";
     values[widgetItemStorageKey("fav-a")] = favorite({
       id: "fav-a",
+      label: "New label",
       url: "https://ex-0.example/",
       domain: "ex-0.example"
     });
@@ -561,7 +563,10 @@ describe("migrateToWidgets", () => {
 
     assert.deepEqual(await migrate(), { migrated: true, source: "sharded-favorites" });
 
-    assert.deepEqual((await store.getState()).items.map((item) => item.id), ["fav-a", "fav-b", "fav-c"]);
+    const state = await store.getState();
+    assert.deepEqual(state.items.map((item) => item.id), ["fav-a", "fav-b", "fav-c"]);
+    assert.equal(state.items[0].label, "New label");
+    assert.deepEqual(await sync.get(legacyItemKey("fav-a")), {});
     assert.deepEqual(await sync.get(LEGACY_META_KEY), {});
   });
 });
