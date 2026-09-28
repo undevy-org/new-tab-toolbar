@@ -27,7 +27,7 @@ Productivity
 
 ## Privacy policy URL
 
-https://github.com/undevy-org/new-tab-toolbar/blob/main/docs/privacy.md
+https://github.com/undevy-org/quiet-tab/blob/main/docs/privacy.md
 
 ## Screenshot
 

@@ -6,5 +6,12 @@ output/
 .worktrees/
 key.pem
 *.zip
+
+# Cursor / agent (local only)
+.cursor/
+AGENTS.md
 CLAUDE.md
 .claude/
+
+# Private dev memory/notes (separate private repo, cloned here — see .private/README.md)
+.private/

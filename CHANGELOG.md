@@ -16,4 +16,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extension, with the news feature removed entirely and every remaining
   string translated to English.
 
-[0.1.0]: https://github.com/undevy-org/new-tab-toolbar/releases/tag/v0.1.0
+[0.1.0]: https://github.com/undevy-org/quiet-tab/releases/tag/v0.1.0
