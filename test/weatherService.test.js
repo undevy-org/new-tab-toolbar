@@ -93,6 +93,51 @@ describe("createWeatherService", () => {
     assert.equal(await locationStore.getLocation(), null);
   });
 
+  it("selectLocation persists a pre-resolved location and fetches weather+air quality without geocoding", async () => {
+    const calls = [];
+    const { service, locationStore } = createHarness({
+      geocodeCity: async () => {
+        throw new Error("geocodeCity should not be called by selectLocation");
+      },
+      fetchWeather: async (args) => {
+        calls.push(["weather", args]);
+        return WEATHER_READING;
+      },
+      fetchAirQuality: async (args) => {
+        calls.push(["air", args]);
+        return AIR_READING;
+      }
+    });
+
+    const result = await service.selectLocation(TBILISI);
+
+    assert.equal(result.status, "ready");
+    assert.equal(result.location.name, "Springfield");
+    assert.equal(result.data.temperature, 24);
+    assert.deepEqual(await locationStore.getLocation(), result.location);
+    assert.deepEqual(
+      calls.map(([kind, args]) => [kind, args.latitude, args.longitude]),
+      [
+        ["weather", 41.72, 44.78],
+        ["air", 41.72, 44.78]
+      ]
+    );
+  });
+
+  it("selectLocation returns an error status without throwing when fetching fails, but still persists the location", async () => {
+    const { service, locationStore } = createHarness({
+      fetchWeather: async () => {
+        throw new Error("network down");
+      }
+    });
+
+    const result = await service.selectLocation(TBILISI);
+
+    assert.equal(result.status, "error");
+    assert.equal(result.error, "network down");
+    assert.deepEqual(await locationStore.getLocation(), result.location);
+  });
+
   it("returns ready from a fresh cache without calling fetch again", async () => {
     let fetchCalls = 0;
     const harness = createHarness({
