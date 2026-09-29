@@ -26,7 +26,7 @@ import {
   inspectWidgetsMeta,
   migrateToWidgets
 } from "./widgetsStore.js";
-import { gridLayout, panelDock, tileSpan } from "./widgetsLayout.js";
+import { gridLayout, panelDock, placeTooltip, tileSpan } from "./widgetsLayout.js";
 import {
   MAX_GRID_COLUMNS,
   MIN_GRID_COLUMNS,
@@ -95,6 +95,81 @@ function createNode(tagName, className, textContent) {
 
   return node;
 }
+
+// One shared tooltip for every trigger, appended to body so no scrolling container clips it.
+const tooltipLayer = createNode("div", "tooltip");
+tooltipLayer.id = "tooltip";
+tooltipLayer.setAttribute("role", "tooltip");
+tooltipLayer.hidden = true;
+document.body.appendChild(tooltipLayer);
+
+let tooltipTrigger = null;
+let suppressTooltipOnFocus = false;
+let ignoreScrollUntil = 0;
+
+function hideTooltip() {
+  tooltipLayer.hidden = true;
+  tooltipTrigger = null;
+}
+
+function hideTooltipIfVisible() {
+  if (tooltipLayer.hidden) return false;
+  hideTooltip();
+  return true;
+}
+
+function showTooltipFor(trigger) {
+  const text = trigger.querySelector("[data-tooltip-text]")?.textContent;
+  if (!text) return;
+  tooltipTrigger = trigger;
+  tooltipLayer.textContent = text;
+  tooltipLayer.style.visibility = "hidden";
+  tooltipLayer.hidden = false;
+  const t = trigger.getBoundingClientRect();
+  const w = tooltipLayer.getBoundingClientRect();
+  const { left, top } = placeTooltip({
+    trigger: { top: t.top, bottom: t.bottom, left: t.left, width: t.width },
+    tooltip: { width: w.width, height: w.height },
+    viewport: { width: window.innerWidth, height: window.innerHeight }
+  });
+  tooltipLayer.style.left = `${left}px`;
+  tooltipLayer.style.top = `${top}px`;
+  tooltipLayer.style.visibility = "";
+}
+
+const tooltipTriggerOf = (event) =>
+  event.target instanceof Element ? event.target.closest("[data-tooltip-trigger]") : null;
+
+favoritesRoot?.addEventListener("pointerover", (event) => {
+  const trigger = tooltipTriggerOf(event);
+  if (trigger && trigger !== tooltipTrigger) showTooltipFor(trigger);
+});
+favoritesRoot?.addEventListener("pointerout", (event) => {
+  const trigger = tooltipTriggerOf(event);
+  if (trigger && trigger === tooltipTrigger && !trigger.contains(event.relatedTarget)) hideTooltip();
+});
+favoritesRoot?.addEventListener("focusin", (event) => {
+  if (suppressTooltipOnFocus) return;
+  const trigger = tooltipTriggerOf(event);
+  if (!trigger || !trigger.matches(":focus-visible")) return;
+  ignoreScrollUntil = performance.now() + 250; // the browser may scroll the tile into view
+  requestAnimationFrame(() => {
+    if (document.activeElement === trigger) showTooltipFor(trigger);
+  });
+});
+favoritesRoot?.addEventListener("focusout", (event) => {
+  if (tooltipTriggerOf(event) === tooltipTrigger) hideTooltip();
+});
+favoritesRoot?.addEventListener(
+  "scroll",
+  () => {
+    if (performance.now() >= ignoreScrollUntil) hideTooltip();
+  },
+  true
+);
+favoritesRoot?.addEventListener("wheel", hideTooltip, { passive: true });
+favoritesRoot?.addEventListener("touchmove", hideTooltip, { passive: true });
+window.addEventListener("resize", hideTooltip);
 
 function createStatus(text, { error = false, live = "polite", full = false } = {}) {
   const status = createNode(
@@ -760,6 +835,8 @@ function renderFavoritesToolbar() {
     return;
   }
 
+  hideTooltip();
+
   const active = document.activeElement instanceof Element ? document.activeElement : null;
   const focused = active && favoritesRoot.contains(active) ? active.closest("[data-widget-id], .favorite-settings") : null;
   const focusedId = focused ? focused.dataset.widgetId ?? "gear" : null;
@@ -815,7 +892,12 @@ function renderFavoritesToolbar() {
       focusedId === "gear"
         ? favoritesRoot.querySelector(GEAR_SELECTOR)
         : [...favoritesRoot.querySelectorAll("[data-widget-id]")].find((el) => el.dataset.widgetId === focusedId);
-    (again ?? favoritesRoot.querySelector(GEAR_SELECTOR))?.focus();
+    suppressTooltipOnFocus = true;
+    try {
+      (again ?? favoritesRoot.querySelector(GEAR_SELECTOR))?.focus();
+    } finally {
+      suppressTooltipOnFocus = false;
+    }
   }
 }
 
@@ -1300,11 +1382,6 @@ if (favoritesRoot) {
       }
     })();
   });
-}
-
-// Task 6 replaces this with the shared tooltip layer; until then there is never a tooltip to hide.
-function hideTooltipIfVisible() {
-  return false;
 }
 
 const CHANGE_CITY_SELECTOR = '[data-weather-action="edit-city"]';

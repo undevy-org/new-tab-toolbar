@@ -334,4 +334,24 @@ describe("newtab favorites source", () => {
     const html = await readFile(new URL("../src/newtab.html", import.meta.url), "utf8");
     assert.match(html, /id="favorites"[^>]*data-position="top"/);
   });
+
+  it("uses one shared tooltip layer appended to body and placed by placeTooltip", async () => {
+    const code = await source();
+    assert.match(code, /tooltipLayer\.id = "tooltip";/);
+    assert.match(code, /tooltipLayer\.setAttribute\("role", "tooltip"\);/);
+    assert.match(code, /document\.body\.appendChild\(tooltipLayer\);/);
+    assert.match(code, /placeTooltip\(/);
+    assert.doesNotMatch(code, /createTooltip/);
+    assert.match(code, /suppressTooltipOnFocus = true;/);
+    assert.match(code, /function renderFavoritesToolbar\(\) \{[\s\S]*?hideTooltip\(\);/);
+  });
+
+  it("styles the tooltip as a fixed layer with no per-tile edge rules", async () => {
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /\.tooltip \{\s*position: fixed;/);
+    assert.doesNotMatch(css, /:first-child > \.tooltip/);
+    assert.doesNotMatch(css, /:nth-child\(2\) > \.tooltip/);
+    assert.doesNotMatch(css, /:last-child > \.tooltip/);
+    assert.doesNotMatch(css, /\[data-tooltip-trigger\]:(hover|focus-visible) > \.tooltip/);
+  });
 });
