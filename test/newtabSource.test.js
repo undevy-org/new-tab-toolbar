@@ -324,6 +324,7 @@ describe("newtab favorites source", () => {
     assert.match(code, /if \(widgetsNewer\) \{\s*favoritesRoot\.replaceChildren\(\s*createStatus\(NEWER_WIDGETS_MESSAGE/);
     assert.ok(code.indexOf("if (widgetsNewer)") < code.indexOf("if (widgetsMigrationFailed) {\n    favoritesRoot"));
     assert.match(code, /inspectWidgetsMeta\(rawMeta\) === "newer"/);
+    assert.match(code, /const migration = await migrateToWidgets\(localStorageArea, syncStorageArea\);\s*if \(migration\?\.newer\) \{\s*widgetsNewer = true;/);
     assert.match(code, /await ensureWeatherMetrics\(syncStorageArea\)/);
     assert.match(code, /widgetsEnsureFailed = true;/);
     assert.match(code, /closest\("\[data-widget-id\], \.favorite-settings"\)/);

@@ -978,7 +978,12 @@ if (favoritesRoot) {
       }
 
       if (hasStorageArea(localStorageArea) && hasStorageArea(syncStorageArea)) {
-        await migrateToWidgets(localStorageArea, syncStorageArea);
+        const migration = await migrateToWidgets(localStorageArea, syncStorageArea);
+        if (migration?.newer) {
+          widgetsNewer = true;
+          renderFavorites();
+          return;
+        }
       }
     } catch (error) {
       widgetsMigrationFailed = true;
@@ -1404,14 +1409,16 @@ async function startWeather() {
 }
 
 function changeCity(run) {
-  weatherGeneration += 1;
   weatherBusy = true;
   weatherChanging = true;
   weatherUi = hideSuggestions(weatherUi);
   renderFavoritesToolbar();
   void (async () => {
     try {
-      weatherResult = await run();
+      const result = await run();
+      // Only a successful change makes an earlier in-flight boot load stale; a failed one leaves it valid.
+      weatherGeneration += 1;
+      weatherResult = result;
       weatherUi = stopEditingCity(weatherUi);
       weatherFormError = "";
       weatherLocation = weatherResult.location ?? weatherLocation;

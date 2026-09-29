@@ -56,7 +56,8 @@ describe("newtab weather source", () => {
   it("blocks weather actions while a request is in flight", async () => {
     const code = await source();
     assert.match(code, /let weatherBusy = false;/);
-    assert.match(code, /weatherBusy\) return;/);
+    assert.match(code, /\|\| weatherBusy\) return;/);
+    assert.match(code, /if \(weatherBusy \|\| !weatherService \|\| !cityName\) return;/);
   });
 
   it("has no weather panel markup, and labels the bar and panel as widgets", async () => {
@@ -86,6 +87,12 @@ describe("newtab weather source", () => {
       /Currently \$\{formatTemperature\(data\.temperature\)\}°\. Today at 15:00 — \$\{formatTemperature\(data\.temperatureTodayAt15\)\}°, yesterday at 15:00 — \$\{formatTemperature\(data\.temperatureYesterdayAt15\)\}°\./
     );
     assert.match(tiles, /Chance of rain for the rest of the day — \$\{primary\}, expected from \$\{start\}\./);
+    assert.match(tiles, /Chance of rain for the rest of the day — \$\{primary\}\./);
+    const shared = await readFile(new URL("../src/widgetsShared.js", import.meta.url), "utf8");
+    assert.deepEqual(
+      [...shared.matchAll(/"weather:(\w+)": "(square|wide)"/g)].map((match) => `${match[1]}:${match[2]}`),
+      ["temperature:square", "precipitation:wide", "airQuality:wide", "uv:square"]
+    );
     assert.match(tiles, /US AQI \$\{data\.usAqi\} \(\$\{usAqiCategory\(data\.usAqi\)\}\), PM2\.5 \$\{formatPm25\(data\.pm2_5\)\} µg\/m³\./);
     assert.match(tiles, /Current UV index \$\{data\.uvIndex\} \(\$\{uvIndexLevel\(data\.uvIndex\)\}\)\. Today's peak/);
   });
@@ -231,6 +238,8 @@ describe("newtab weather source", () => {
     assert.match(code, /if \(formHost\.dataset\.kind === kind\) return;/);
     assert.match(code, /renderFavoritesToolbar\(\);\s*syncWeatherBlock\(\);/);
     assert.match(code, /if \(generation !== weatherGeneration\) \{\s*return;\s*\}/);
+    assert.match(code, /const result = await run\(\);[\s\S]*?weatherGeneration \+= 1;\s*weatherResult = result;/);
+    assert.doesNotMatch(code, /function changeCity\(run\) \{\s*weatherGeneration \+= 1;/);
     assert.match(code, /if \(weatherChanging && currentLocation\(\)\) return null;/);
   });
 
