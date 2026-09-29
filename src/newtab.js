@@ -241,6 +241,7 @@ let weatherChanging = false;
 let weatherGeneration = 0;
 let widgetsEnsureFailed = false;
 let widgetsNewer = false;
+let metricWritesPending = 0; // metric writes in flight; controls are re-synced only when none is
 let metricErrorText = ""; // write-error slot of the metric controls; module state so a panel rebuild keeps it
 let activeCityForm = null; // { cancelPending, renderSuggestions } of the mounted city form
 let weatherUi = createInitialWeatherUiState();
@@ -607,8 +608,13 @@ function syncGridSettingInputs() {
   }
 }
 
+// Single rule for the earlier/later buttons, used at build time and when Show/size changes re-sync in place.
+function moveButtonDisabled(items, item, action) {
+  if (favoritesBusy || isFormOpen(favoritesUi)) return true;
+  return moveTargetIndex(items, items.indexOf(item), action === "move-earlier" ? -1 : 1) === -1;
+}
+
 function createFavoritesPanelRow(item, items) {
-  const index = items.indexOf(item);
   const row = createNode("div", "favorites-panel__row");
 
   const info = createNode("div", "favorites-panel__item");
@@ -626,7 +632,7 @@ function createFavoritesPanelRow(item, items) {
   earlier.dataset.favoriteAction = "move-earlier";
   earlier.dataset.favoriteId = item.id;
   earlier.setAttribute("aria-label", `Move ${item.label} earlier`);
-  earlier.disabled = disabled || moveTargetIndex(items, index, -1) === -1;
+  earlier.disabled = moveButtonDisabled(items, item, "move-earlier");
   earlier.appendChild(createIconNode("chevronUp"));
 
   const later = createNode("button", "icon-button");
@@ -634,7 +640,7 @@ function createFavoritesPanelRow(item, items) {
   later.dataset.favoriteAction = "move-later";
   later.dataset.favoriteId = item.id;
   later.setAttribute("aria-label", `Move ${item.label} later`);
-  later.disabled = disabled || moveTargetIndex(items, index, 1) === -1;
+  later.disabled = moveButtonDisabled(items, item, "move-later");
   later.appendChild(createIconNode("chevronDown"));
 
   const edit = createNode("button", "icon-button");
@@ -652,22 +658,21 @@ function createFavoritesPanelRow(item, items) {
 
 const METRIC_LABELS = { temperature: "Temperature", precipitation: "Precipitation", airQuality: "Air quality", uv: "UV index" };
 
-function createMetricMoveButtons(item, items, disabled) {
-  const index = items.indexOf(item);
-  const make = (action, label, icon, blocked) => {
+function createMetricMoveButtons(item, items) {
+  const make = (action, label, icon) => {
     const button = createNode("button", "icon-button");
     button.type = "button";
     button.dataset.favoriteAction = action;
     button.dataset.favoriteId = item.id;
     button.setAttribute("aria-label", `Move ${label} ${action === "move-earlier" ? "earlier" : "later"}`);
-    button.disabled = disabled || blocked;
+    button.disabled = moveButtonDisabled(items, item, action);
     button.appendChild(createIconNode(icon));
     return button;
   };
   const label = METRIC_LABELS[weatherMetricKey(item.id)];
   return [
-    make("move-earlier", label, "chevronUp", moveTargetIndex(items, index, -1) === -1),
-    make("move-later", label, "chevronDown", moveTargetIndex(items, index, 1) === -1)
+    make("move-earlier", label, "chevronUp"),
+    make("move-later", label, "chevronDown")
   ];
 }
 
@@ -701,7 +706,7 @@ function createWeatherMetricRow(item, items) {
     input.dataset.metricId = item.id;
   }
 
-  controls.append(show, size, ...createMetricMoveButtons(item, items, favoritesBusy || isFormOpen(favoritesUi)));
+  controls.append(show, size, ...createMetricMoveButtons(item, items));
   row.append(info, controls);
   applyMetricRowState(row, item);
   return row;
@@ -716,6 +721,11 @@ function applyMetricRowState(row, item) {
 
 // In-place sync so an open add/edit form keeps its contents and focus stays on the used control.
 function syncMetricRows() {
+  const items = widgetsState?.items ?? [];
+  for (const button of favoritesPanelRoot?.querySelectorAll('[data-favorite-action^="move-"]') ?? []) {
+    const item = items.find((entry) => entry.id === button.dataset.favoriteId);
+    if (item) button.disabled = moveButtonDisabled(items, item, button.dataset.favoriteAction);
+  }
   for (const row of favoritesPanelRoot?.querySelectorAll("[data-metric-row]") ?? []) {
     const item = widgetsState?.items.find((entry) => entry.id === row.dataset.metricId);
     if (item) applyMetricRowState(row, item);
@@ -1324,6 +1334,7 @@ if (favoritesRoot) {
     if (metricSetting) {
       const id = target.dataset.metricId;
       const patch = metricSetting === "enabled" ? { enabled: target.checked } : { tileSize: target.value };
+      metricWritesPending += 1;
       void (async () => {
         try {
           widgetsState = await widgetsService.updateWeatherMetric(id, patch);
@@ -1332,7 +1343,9 @@ if (favoritesRoot) {
         } catch (error) {
           showMetricError(error instanceof Error ? error.message : String(error));
         }
-        syncMetricRows();
+        // While later writes are in flight the controls keep showing the user's latest intent.
+        metricWritesPending -= 1;
+        if (metricWritesPending === 0) syncMetricRows();
       })();
       return;
     }

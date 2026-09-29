@@ -360,7 +360,7 @@ describe("newtab favorites source", () => {
     assert.match(code, /\{ enabled: target\.checked \}/);
     assert.match(code, /\{ tileSize: target\.value \}/);
     assert.match(code, /function syncMetricRows\(\)/);
-    assert.match(code, /moveTargetIndex\(items, index, -1\) === -1/);
+    assert.match(code, /function moveButtonDisabled\(items, item, action\)/);
   });
 
   it("finds the newly added favorite by id difference, never as the last item", async () => {
@@ -390,6 +390,14 @@ describe("newtab favorites source", () => {
     ].map((needle) => model.indexOf(needle));
     assert.ok(positions.every((position) => position >= 0), positions.join());
     assert.deepEqual([...positions].sort((a, b) => a - b), positions);
+  });
+
+  it("shares one move-button rule between build and in-place sync, and syncs controls only when no metric write is pending", async () => {
+    const code = await source();
+    assert.ok((code.match(/moveButtonDisabled\(/g) ?? []).length >= 5);
+    assert.match(code, /querySelectorAll\('\[data-favorite-action\^="move-"\]'\)/);
+    assert.match(code, /metricWritesPending \+= 1;/);
+    assert.match(code, /metricWritesPending -= 1;\s*if \(metricWritesPending === 0\) syncMetricRows\(\);/);
   });
 
   it("keeps metric move errors in the metric slot", async () => {
