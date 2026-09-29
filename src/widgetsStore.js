@@ -15,11 +15,15 @@ import {
 } from "./favoritesShared.js";
 import {
   DEFAULT_GRID_COLUMNS,
+  DEFAULT_WEATHER_METRIC_SIZES,
   GRID_POSITIONS,
   MAX_FAVORITE_WIDGETS,
   MAX_GRID_COLUMNS,
+  MAX_WEATHER_METRIC_WIDGETS,
   MAX_WIDGETS,
   MIN_GRID_COLUMNS,
+  NEWER_WIDGETS_MESSAGE,
+  WEATHER_METRIC_IDS,
   WIDGETS_MUTATION_LOCK_NAME,
   WIDGET_TYPES
 } from "./widgetsShared.js";
@@ -105,13 +109,21 @@ function isFavoriteWidgetItem(value) {
   );
 }
 
+function isWeatherMetricItem(value) {
+  return (
+    hasOwnFields(value, ["id", "type", "tileSize", "enabled"]) &&
+    value.type === "weather-metric" &&
+    WEATHER_METRIC_IDS.includes(value.id) &&
+    TILE_SIZES.has(value.tileSize) &&
+    typeof value.enabled === "boolean"
+  );
+}
+
 export function isWidgetItem(value) {
   if (!isRecord(value) || !WIDGET_TYPES.has(value.type)) {
     return false;
   }
-
-  // Phase 2 adds the "weather-metric" branch here.
-  return value.type === "favorite" ? isFavoriteWidgetItem(value) : false;
+  return value.type === "favorite" ? isFavoriteWidgetItem(value) : isWeatherMetricItem(value);
 }
 
 function isColumns(value) {
@@ -146,6 +158,8 @@ export function isWidgetsState(value) {
     Array.isArray(value.items) &&
     value.items.length <= MAX_WIDGETS &&
     value.items.filter((item) => item?.type === "favorite").length <= MAX_FAVORITE_WIDGETS &&
+    value.items.filter((item) => item?.type === "weather-metric").length <= MAX_WEATHER_METRIC_WIDGETS &&
+    new Set(value.items.map((item) => item?.id)).size === value.items.length &&
     value.items.every(isWidgetItem) &&
     isColumns(value.columns) &&
     GRID_POSITIONS.has(value.position) &&
@@ -163,6 +177,21 @@ function buildWidgetsMeta(state) {
     createdAt: state.createdAt,
     updatedAt: state.updatedAt
   };
+}
+
+// `result` is what storageArea.get(WIDGETS_META_KEY) returned.
+export function inspectWidgetsMeta(result) {
+  if (!Object.hasOwn(result ?? {}, WIDGETS_META_KEY)) {
+    return "missing";
+  }
+  const raw = result[WIDGETS_META_KEY];
+  if (isWidgetsMeta(raw)) {
+    return "valid";
+  }
+  if (isRecord(raw) && Number.isInteger(raw.version) && raw.version > WIDGETS_VERSION) {
+    return "newer";
+  }
+  return "invalid";
 }
 
 async function readMeta(storageArea) {
@@ -183,7 +212,15 @@ export function createWidgetsStore(
   storageArea,
   { now = () => new Date().toISOString() } = {}
 ) {
+  async function assertWritable() {
+    if (inspectWidgetsMeta(await storageArea.get(WIDGETS_META_KEY)) === "newer") {
+      throw new Error(NEWER_WIDGETS_MESSAGE);
+    }
+  }
+
   return {
+    assertWritable,
+
     async getState() {
       const meta = await readMeta(storageArea);
 
@@ -226,6 +263,7 @@ export function createWidgetsStore(
       if (!isWidgetsState(state)) {
         throw new Error("Invalid widgets state");
       }
+      await assertWritable();
 
       const nextState = cloneValue(state);
       const previousMeta = await readMeta(storageArea);
@@ -316,7 +354,12 @@ export function migrateToWidgets(
   { now = () => new Date().toISOString() } = {}
 ) {
   return withWidgetsMutationLock(async () => {
-    const existingMeta = await readMeta(syncStorageArea);
+    const widgetsMetaResult = await syncStorageArea.get(WIDGETS_META_KEY);
+    const metaKind = inspectWidgetsMeta(widgetsMetaResult);
+    if (metaKind === "newer") {
+      return { migrated: false, newer: true };
+    }
+    const existingMeta = metaKind === "valid" ? widgetsMetaResult[WIDGETS_META_KEY] : null;
 
     const legacyMetaResult = await syncStorageArea.get(LEGACY_FAVORITES_META_KEY);
     const legacyMeta = legacyMetaResult?.[LEGACY_FAVORITES_META_KEY];
@@ -417,5 +460,76 @@ export function migrateToWidgets(
 
     await localStorageArea.remove(LEGACY_FAVORITES_BLOB_KEY);
     return { migrated: true, source: "legacy-blob" };
+  });
+}
+
+// Adds the four system weather metrics next to the user's widgets (spec § Ensure step).
+// Only ever writes for a `valid` or `missing` meta; a `newer` or `invalid` meta is left alone.
+export function ensureWeatherMetrics(storageArea, { now = () => new Date().toISOString() } = {}) {
+  return withWidgetsMutationLock(async () => {
+    const metaResult = await storageArea.get(WIDGETS_META_KEY);
+    const kind = inspectWidgetsMeta(metaResult);
+    if (kind === "newer" || kind === "invalid") {
+      return { changed: false, meta: kind };
+    }
+
+    const timestamp = now();
+    const meta =
+      kind === "valid"
+        ? metaResult[WIDGETS_META_KEY]
+        : {
+            version: WIDGETS_VERSION,
+            order: [],
+            columns: DEFAULT_GRID_COLUMNS,
+            position: "top",
+            createdAt: timestamp,
+            updatedAt: timestamp
+          };
+    const stored = await storageArea.get(WEATHER_METRIC_IDS.map(widgetItemStorageKey));
+    const listed = new Set(meta.order);
+
+    const states = WEATHER_METRIC_IDS.map((id) => {
+      const existing = stored[widgetItemStorageKey(id)];
+      return {
+        id,
+        present: isWidgetItem(existing) && existing.type === "weather-metric",
+        listed: listed.has(id)
+      };
+    });
+    // No id is listed yet: the whole block is appended now (orphan items from an interrupted run still count).
+    const allNew = states.every((s) => !s.listed);
+
+    const itemWrites = {};
+    const appended = [];
+    for (const { id, present, listed: isListed } of states) {
+      if (!present) {
+        itemWrites[widgetItemStorageKey(id)] = {
+          id,
+          type: "weather-metric",
+          tileSize: DEFAULT_WEATHER_METRIC_SIZES[id],
+          enabled: true
+        };
+      }
+      if (!isListed) {
+        appended.push(id);
+      }
+    }
+
+    const columns = kind === "valid" && allNew ? Math.max(meta.columns, DEFAULT_GRID_COLUMNS) : meta.columns;
+    const metaChanged = kind === "missing" || appended.length > 0 || columns !== meta.columns;
+
+    if (Object.keys(itemWrites).length === 0 && !metaChanged) {
+      return { changed: false, meta: kind };
+    }
+
+    if (Object.keys(itemWrites).length > 0) {
+      await setOrThrow(storageArea, itemWrites);
+    }
+    if (metaChanged) {
+      await setOrThrow(storageArea, {
+        [WIDGETS_META_KEY]: { ...meta, order: [...meta.order, ...appended], columns, updatedAt: timestamp }
+      });
+    }
+    return { changed: true, meta: kind };
   });
 }

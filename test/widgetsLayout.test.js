@@ -3,7 +3,10 @@ import { describe, it } from "node:test";
 import {
   defaultColumnsForItems,
   gridLayout,
+  isRenderedWidget,
+  moveTargetIndex,
   panelDock,
+  placeTooltip,
   tileSpan
 } from "../src/widgetsLayout.js";
 
@@ -95,5 +98,77 @@ describe("panelDock", () => {
     assert.equal(dock.dock, "bottom");
     assert.equal(dock.maxHeight, 200);
     assert.equal(dock.overlaps, true);
+  });
+});
+
+const fav = (id) => ({ id, type: "favorite" });
+const met = (id, enabled = true) => ({ id: `weather:${id}`, type: "weather-metric", enabled });
+
+describe("moveTargetIndex", () => {
+  const items = [fav("f0"), fav("f1"), met("temperature"), met("precipitation", false), met("airQuality"), met("uv")];
+  it("skips disabled metrics when a rendered widget moves", () => {
+    assert.equal(moveTargetIndex(items, 2, 1), 4);   // temperature -> after airQuality
+    assert.equal(moveTargetIndex(items, 4, -1), 2);  // airQuality -> before temperature
+    assert.equal(moveTargetIndex(items, 2, -1), 1);
+  });
+  it("moves a disabled row exactly one step", () => {
+    assert.equal(moveTargetIndex(items, 3, 1), 4);
+    assert.equal(moveTargetIndex(items, 3, -1), 2);
+  });
+  it("returns -1 with no target", () => {
+    assert.equal(moveTargetIndex(items, 0, -1), -1);
+    assert.equal(moveTargetIndex(items, 5, 1), -1);
+    assert.equal(moveTargetIndex([fav("a"), met("uv", false)], 0, 1), -1, "only a disabled row follows");
+  });
+  it("classifies rendered widgets", () => {
+    assert.equal(isRenderedWidget(fav("a")), true);
+    assert.equal(isRenderedWidget(met("uv", false)), false);
+  });
+});
+
+describe("placeTooltip", () => {
+  const vp = { width: 1280, height: 800 };
+  const tip = { width: 200, height: 60 };
+  const trig = (left, top, width = 52, height = 52) => ({ left, top, width, bottom: top + height });
+
+  it("goes above the trigger when there is room and centers on it", () => {
+    const p = placeTooltip({ trigger: trig(600, 300), tooltip: tip, viewport: vp });
+    assert.deepEqual(p, { left: 600 + 26 - 100, top: 300 - 8 - 60, side: "top" });
+  });
+  it("goes below when the room above is smaller than tooltip + gap + margin", () => {
+    const p = placeTooltip({ trigger: trig(600, 27), tooltip: tip, viewport: vp });
+    assert.equal(p.side, "bottom");
+    assert.equal(p.top, 27 + 52 + 8);
+  });
+  it("clamps horizontally to the margin at both edges", () => {
+    assert.equal(placeTooltip({ trigger: trig(0, 300), tooltip: tip, viewport: vp }).left, 8);
+    assert.equal(placeTooltip({ trigger: trig(1250, 300, 30), tooltip: tip, viewport: vp }).left, 1280 - 8 - 200);
+  });
+  it("never leaves the viewport when the tooltip is wider than the room", () => {
+    const p = placeTooltip({ trigger: trig(100, 300), tooltip: { width: 400, height: 60 }, viewport: { width: 320, height: 600 } });
+    assert.equal(p.left, 8);
+  });
+  it("keeps the tooltip inside the viewport vertically when neither side fits well", () => {
+    const p = placeTooltip({ trigger: trig(100, 5, 52, 590), tooltip: { width: 100, height: 80 }, viewport: { width: 320, height: 600 } });
+    assert.ok(p.top >= 8 && p.top + 80 <= 600 - 8);
+    assert.deepEqual(p, { left: 76, top: 512, side: "bottom" });
+  });
+  it("switches side exactly at tooltip + gap + margin of room above", () => {
+    const at = placeTooltip({ trigger: trig(600, 76), tooltip: tip, viewport: vp });
+    assert.deepEqual([at.side, at.top], ["top", 8]);
+    assert.equal(placeTooltip({ trigger: trig(600, 75), tooltip: tip, viewport: vp }).side, "bottom");
+  });
+  it("stays on top near the viewport bottom when there is no room below", () => {
+    const p = placeTooltip({ trigger: trig(600, 740), tooltip: tip, viewport: vp });
+    assert.equal(p.side, "top");
+  });
+  it("goes below (and is clamped) when above does not fit, even if below fits worse", () => {
+    const p = placeTooltip({
+      trigger: { left: 100, top: 40, width: 52, bottom: 92 },
+      tooltip: { width: 100, height: 80 },
+      viewport: { width: 320, height: 100 }
+    });
+    assert.equal(p.side, "bottom");
+    assert.equal(p.top, 12);
   });
 });

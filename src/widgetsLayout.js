@@ -43,3 +43,37 @@ export function panelDock({ position, barTop, barBottom, viewportHeight, inset, 
   const free = dock === "top" ? freeTop : freeBottom;
   return { dock, maxHeight: Math.max(minHeight, free), overlaps: free < minHeight };
 }
+
+export function isRenderedWidget(item) {
+  return item.type === "favorite" || item.enabled === true;
+}
+
+// A rendered widget jumps over the next rendered widget in `step` direction (disabled
+// metrics are transparent); a disabled row moves exactly one row. -1 = nowhere to go.
+export function moveTargetIndex(items, index, step) {
+  if (step === 0) {
+    return -1;
+  }
+  if (!isRenderedWidget(items[index])) {
+    const target = index + step;
+    return target >= 0 && target < items.length ? target : -1;
+  }
+  for (let i = index + step; i >= 0 && i < items.length; i += step) {
+    if (isRenderedWidget(items[i])) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// Where the shared tooltip goes: above the trigger if it fits, else below; centered on the
+// trigger and clamped so it never leaves the viewport. Pure so it is testable without a DOM.
+export function placeTooltip({ trigger, tooltip, viewport, gap = 8, margin = 8 }) {
+  const spaceAbove = trigger.top - gap - margin;
+  const side = spaceAbove >= tooltip.height ? "top" : "bottom";
+  const rawTop = side === "top" ? trigger.top - gap - tooltip.height : trigger.bottom + gap;
+  const top = Math.min(Math.max(rawTop, margin), Math.max(margin, viewport.height - margin - tooltip.height));
+  const centered = trigger.left + trigger.width / 2 - tooltip.width / 2;
+  const maxLeft = Math.max(margin, viewport.width - margin - tooltip.width);
+  return { left: Math.min(Math.max(centered, margin), maxLeft), top, side };
+}
