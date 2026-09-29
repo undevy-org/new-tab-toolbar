@@ -18,8 +18,11 @@ import {
   GRID_POSITIONS,
   MAX_FAVORITE_WIDGETS,
   MAX_GRID_COLUMNS,
+  MAX_WEATHER_METRIC_WIDGETS,
   MAX_WIDGETS,
   MIN_GRID_COLUMNS,
+  NEWER_WIDGETS_MESSAGE,
+  WEATHER_METRIC_IDS,
   WIDGETS_MUTATION_LOCK_NAME,
   WIDGET_TYPES
 } from "./widgetsShared.js";
@@ -105,13 +108,21 @@ function isFavoriteWidgetItem(value) {
   );
 }
 
+function isWeatherMetricItem(value) {
+  return (
+    hasOwnFields(value, ["id", "type", "tileSize", "enabled"]) &&
+    value.type === "weather-metric" &&
+    WEATHER_METRIC_IDS.includes(value.id) &&
+    TILE_SIZES.has(value.tileSize) &&
+    typeof value.enabled === "boolean"
+  );
+}
+
 export function isWidgetItem(value) {
   if (!isRecord(value) || !WIDGET_TYPES.has(value.type)) {
     return false;
   }
-
-  // Phase 2 adds the "weather-metric" branch here.
-  return value.type === "favorite" ? isFavoriteWidgetItem(value) : false;
+  return value.type === "favorite" ? isFavoriteWidgetItem(value) : isWeatherMetricItem(value);
 }
 
 function isColumns(value) {
@@ -146,6 +157,8 @@ export function isWidgetsState(value) {
     Array.isArray(value.items) &&
     value.items.length <= MAX_WIDGETS &&
     value.items.filter((item) => item?.type === "favorite").length <= MAX_FAVORITE_WIDGETS &&
+    value.items.filter((item) => item?.type === "weather-metric").length <= MAX_WEATHER_METRIC_WIDGETS &&
+    new Set(value.items.map((item) => item?.id)).size === value.items.length &&
     value.items.every(isWidgetItem) &&
     isColumns(value.columns) &&
     GRID_POSITIONS.has(value.position) &&
@@ -163,6 +176,21 @@ function buildWidgetsMeta(state) {
     createdAt: state.createdAt,
     updatedAt: state.updatedAt
   };
+}
+
+// `result` is what storageArea.get(WIDGETS_META_KEY) returned.
+export function inspectWidgetsMeta(result) {
+  if (!Object.hasOwn(result ?? {}, WIDGETS_META_KEY)) {
+    return "missing";
+  }
+  const raw = result[WIDGETS_META_KEY];
+  if (isWidgetsMeta(raw)) {
+    return "valid";
+  }
+  if (isRecord(raw) && Number.isInteger(raw.version) && raw.version > WIDGETS_VERSION) {
+    return "newer";
+  }
+  return "invalid";
 }
 
 async function readMeta(storageArea) {
@@ -183,7 +211,15 @@ export function createWidgetsStore(
   storageArea,
   { now = () => new Date().toISOString() } = {}
 ) {
+  async function assertWritable() {
+    if (inspectWidgetsMeta(await storageArea.get(WIDGETS_META_KEY)) === "newer") {
+      throw new Error(NEWER_WIDGETS_MESSAGE);
+    }
+  }
+
   return {
+    assertWritable,
+
     async getState() {
       const meta = await readMeta(storageArea);
 
@@ -226,6 +262,7 @@ export function createWidgetsStore(
       if (!isWidgetsState(state)) {
         throw new Error("Invalid widgets state");
       }
+      await assertWritable();
 
       const nextState = cloneValue(state);
       const previousMeta = await readMeta(storageArea);

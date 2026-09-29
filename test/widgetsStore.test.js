@@ -5,13 +5,14 @@ import {
   WIDGETS_META_KEY,
   createWidgetsStore,
   createInitialWidgetsState,
+  inspectWidgetsMeta,
   isWidgetItem,
   isWidgetsState,
   migrateToWidgets,
   widgetItemStorageKey,
   withWidgetsMutationLock
 } from "../src/widgetsStore.js";
-import { MAX_FAVORITE_WIDGETS } from "../src/widgetsShared.js";
+import { MAX_FAVORITE_WIDGETS, NEWER_WIDGETS_MESSAGE, WEATHER_METRIC_IDS } from "../src/widgetsShared.js";
 
 const NOW = "2026-07-07T10:00:00.000Z";
 
@@ -578,5 +579,72 @@ describe("migrateToWidgets", () => {
     assert.equal(state.items[0].label, "New label");
     assert.deepEqual(await sync.get(legacyItemKey("fav-a")), {});
     assert.deepEqual(await sync.get(LEGACY_META_KEY), {});
+  });
+});
+
+function metric(id = "weather:temperature", overrides = {}) {
+  return { id, type: "weather-metric", tileSize: "square", enabled: true, ...overrides };
+}
+function metaOf(order, overrides = {}) {
+  return { version: 1, order, columns: 6, position: "top", createdAt: NOW, updatedAt: NOW, ...overrides };
+}
+
+describe("weather-metric widgets", () => {
+  it("validates metric items strictly", () => {
+    assert.equal(isWidgetItem(metric()), true);
+    assert.equal(isWidgetItem(metric("weather:nope")), false);
+    assert.equal(isWidgetItem(metric("weather:uv", { tileSize: "huge" })), false);
+    assert.equal(isWidgetItem(metric("weather:uv", { enabled: "yes" })), false);
+    const { enabled, ...missing } = metric();
+    assert.equal(isWidgetItem(missing), false);
+  });
+
+  it("accepts 200 favorites plus 4 metrics (204) and rejects a fifth metric or duplicate ids", () => {
+    const favs = Array.from({ length: 200 }, (_, i) => favorite({ id: `f${i}` }));
+    const metrics = WEATHER_METRIC_IDS.map((id) => metric(id));
+    const state = { version: 1, columns: 6, position: "top", createdAt: NOW, updatedAt: NOW, items: [...favs, ...metrics] };
+    assert.equal(isWidgetsState(state), true);
+    assert.equal(isWidgetsState({ ...state, items: [...state.items, metric("weather:uv")] }), false);
+    assert.equal(isWidgetsState({ ...state, items: [favs[0], favs[0]] }), false);
+  });
+
+  it("round-trips metrics through the store in order", async () => {
+    const area = createMemoryStorageArea();
+    const store = createWidgetsStore(area, { now: () => NOW });
+    const items = [favorite({ id: "a" }), metric("weather:uv", { enabled: false, tileSize: "wide" })];
+    await store.setState({ ...createInitialWidgetsState(NOW), items });
+    assert.deepEqual((await store.getState()).items, items);
+  });
+});
+
+describe("inspectWidgetsMeta", () => {
+  it("classifies missing, valid, newer and invalid", () => {
+    assert.equal(inspectWidgetsMeta({}), "missing");
+    assert.equal(inspectWidgetsMeta({ [WIDGETS_META_KEY]: metaOf(["a"]) }), "valid");
+    assert.equal(inspectWidgetsMeta({ [WIDGETS_META_KEY]: metaOf(["a"], { version: 2 }) }), "newer");
+    assert.equal(inspectWidgetsMeta({ [WIDGETS_META_KEY]: { version: 2 } }), "newer");
+    assert.equal(inspectWidgetsMeta({ [WIDGETS_META_KEY]: { version: 1, order: "x" } }), "invalid");
+    assert.equal(inspectWidgetsMeta({ [WIDGETS_META_KEY]: null }), "invalid");
+  });
+});
+
+describe("setState over a newer meta", () => {
+  it("refuses to write and leaves storage untouched", async () => {
+    const newer = metaOf(["a"], { version: 2 });
+    const area = createMemoryStorageArea({ [WIDGETS_META_KEY]: newer });
+    const store = createWidgetsStore(area, { now: () => NOW });
+    await assert.rejects(
+      store.setState({ ...createInitialWidgetsState(NOW), items: [favorite()] }),
+      { message: NEWER_WIDGETS_MESSAGE }
+    );
+    assert.deepEqual(await area.get(null), { [WIDGETS_META_KEY]: newer });
+  });
+
+  it("assertWritable rejects for a newer meta and resolves otherwise", async () => {
+    const newerStore = createWidgetsStore(createMemoryStorageArea({ [WIDGETS_META_KEY]: metaOf(["a"], { version: 2 }) }));
+    await assert.rejects(newerStore.assertWritable(), { message: NEWER_WIDGETS_MESSAGE });
+    await createWidgetsStore(createMemoryStorageArea()).assertWritable();
+    await createWidgetsStore(createMemoryStorageArea({ [WIDGETS_META_KEY]: metaOf(["a"]) })).assertWritable();
+    await createWidgetsStore(createMemoryStorageArea({ [WIDGETS_META_KEY]: { version: 1, order: "x" } })).assertWritable();
   });
 });
