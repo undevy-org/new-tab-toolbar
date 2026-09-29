@@ -765,6 +765,73 @@ describe("ensureWeatherMetrics", () => {
   });
 });
 
+describe("ensureWeatherMetrics columns raise", () => {
+  const colsOf = async (area) => (await area.get(WIDGETS_META_KEY))[WIDGETS_META_KEY].columns;
+  const orderOf = async (area) => (await area.get(WIDGETS_META_KEY))[WIDGETS_META_KEY].order;
+
+  it("does not raise columns when 3 of 4 metrics are already listed", async () => {
+    const s = phase1Storage(["a"], { columns: 2 });
+    for (const id of WEATHER_METRIC_IDS.slice(0, 3)) { s[key(id)] = metric(id); s[WIDGETS_META_KEY].order.push(id); }
+    const area = createMemoryStorageArea(s);
+    await ensureWeatherMetrics(area);
+    assert.equal(await colsOf(area), 2);
+    const order = await orderOf(area);
+    assert.equal(order.filter((i) => i === WEATHER_METRIC_IDS[3]).length, 1);
+    assert.equal(order.length, 5);
+  });
+
+  it("does not raise columns when an id is listed but its item is missing", async () => {
+    const s = phase1Storage(["a", "weather:uv"], { columns: 2 });
+    const area = createMemoryStorageArea(s);
+    await ensureWeatherMetrics(area);
+    assert.equal(await colsOf(area), 2);
+    const all = await area.get(null);
+    assert.equal(all[WIDGETS_META_KEY].order.filter((i) => i === "weather:uv").length, 1);
+    assert.equal(all[key("weather:uv")].type, "weather-metric");
+  });
+
+  it("does not raise columns for one orphan item while the other three are listed", async () => {
+    const s = phase1Storage(["a"], { columns: 2 });
+    for (const id of WEATHER_METRIC_IDS.slice(0, 3)) { s[key(id)] = metric(id); s[WIDGETS_META_KEY].order.push(id); }
+    s[key(WEATHER_METRIC_IDS[3])] = metric(WEATHER_METRIC_IDS[3]);
+    const area = createMemoryStorageArea(s);
+    await ensureWeatherMetrics(area);
+    assert.equal(await colsOf(area), 2);
+  });
+
+  it("raises once, then leaves a user-changed columns value alone with no writes", async () => {
+    const area = createMemoryStorageArea(phase1Storage(["a"], { columns: 2 }));
+    await ensureWeatherMetrics(area);
+    assert.equal(await colsOf(area), 6);
+    const all = await area.get(null);
+    all[WIDGETS_META_KEY] = { ...all[WIDGETS_META_KEY], columns: 3 };
+    await area.set({ [WIDGETS_META_KEY]: all[WIDGETS_META_KEY] });
+    let writes = 0;
+    const origSet = area.set.bind(area); area.set = async (p) => { writes += 1; return origSet(p); };
+    const result = await ensureWeatherMetrics(area);
+    assert.equal(result.changed, false);
+    assert.equal(writes, 0);
+    assert.equal(await colsOf(area), 3);
+  });
+
+  it("recovers after only the meta write fails: orphan items stay, meta unchanged, retry completes", async () => {
+    const area = createMemoryStorageArea(phase1Storage(["a"], { columns: 2 }));
+    const origSet = area.set.bind(area);
+    let calls = 0;
+    area.set = async (p) => { calls += 1; if (calls === 2) throw new Error("quota"); return origSet(p); };
+    const metaBefore = (await area.get(WIDGETS_META_KEY))[WIDGETS_META_KEY];
+    await assert.rejects(ensureWeatherMetrics(area), /Chrome Sync/);
+    assert.deepEqual((await area.get(WIDGETS_META_KEY))[WIDGETS_META_KEY], metaBefore);
+    const after = await area.get(null);
+    for (const id of WEATHER_METRIC_IDS) assert.ok(after[key(id)], `${id} item present`);
+    area.set = origSet;
+    const result = await ensureWeatherMetrics(area);
+    assert.equal(result.changed, true);
+    assert.deepEqual(await orderOf(area), ["a", ...WEATHER_METRIC_IDS]);
+    assert.equal(await colsOf(area), 6);
+  });
+});
+
 describe("migrateToWidgets over a newer meta", () => {
   it("neither migrates nor cleans up legacy keys", async () => {
     const sync = createMemoryStorageArea({
