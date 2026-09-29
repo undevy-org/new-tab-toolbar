@@ -6,6 +6,7 @@ import {
   isRenderedWidget,
   moveTargetIndex,
   panelDock,
+  placeTooltip,
   tileSpan
 } from "../src/widgetsLayout.js";
 
@@ -122,5 +123,33 @@ describe("moveTargetIndex", () => {
   it("classifies rendered widgets", () => {
     assert.equal(isRenderedWidget(fav("a")), true);
     assert.equal(isRenderedWidget(met("uv", false)), false);
+  });
+});
+
+describe("placeTooltip", () => {
+  const vp = { width: 1280, height: 800 };
+  const tip = { width: 200, height: 60 };
+  const trig = (left, top, width = 52, height = 52) => ({ left, top, width, bottom: top + height });
+
+  it("goes above the trigger when there is room and centers on it", () => {
+    const p = placeTooltip({ trigger: trig(600, 300), tooltip: tip, viewport: vp });
+    assert.deepEqual(p, { left: 600 + 26 - 100, top: 300 - 8 - 60, side: "top" });
+  });
+  it("goes below when the room above is smaller than tooltip + gap + margin", () => {
+    const p = placeTooltip({ trigger: trig(600, 27), tooltip: tip, viewport: vp });
+    assert.equal(p.side, "bottom");
+    assert.equal(p.top, 27 + 52 + 8);
+  });
+  it("clamps horizontally to the margin at both edges", () => {
+    assert.equal(placeTooltip({ trigger: trig(0, 300), tooltip: tip, viewport: vp }).left, 8);
+    assert.equal(placeTooltip({ trigger: trig(1250, 300, 30), tooltip: tip, viewport: vp }).left, 1280 - 8 - 200);
+  });
+  it("never leaves the viewport when the tooltip is wider than the room", () => {
+    const p = placeTooltip({ trigger: trig(100, 300), tooltip: { width: 400, height: 60 }, viewport: { width: 320, height: 600 } });
+    assert.equal(p.left, 8);
+  });
+  it("keeps the tooltip inside the viewport vertically when neither side fits well", () => {
+    const p = placeTooltip({ trigger: trig(100, 5, 52, 590), tooltip: { width: 100, height: 80 }, viewport: { width: 320, height: 600 } });
+    assert.ok(p.top >= 8 && p.top + 80 <= 600 - 8);
   });
 });
