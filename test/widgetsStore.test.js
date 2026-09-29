@@ -5,6 +5,7 @@ import {
   WIDGETS_META_KEY,
   createWidgetsStore,
   createInitialWidgetsState,
+  ensureWeatherMetrics,
   inspectWidgetsMeta,
   isWidgetItem,
   isWidgetsState,
@@ -646,5 +647,134 @@ describe("setState over a newer meta", () => {
     await createWidgetsStore(createMemoryStorageArea()).assertWritable();
     await createWidgetsStore(createMemoryStorageArea({ [WIDGETS_META_KEY]: metaOf(["a"]) })).assertWritable();
     await createWidgetsStore(createMemoryStorageArea({ [WIDGETS_META_KEY]: { version: 1, order: "x" } })).assertWritable();
+  });
+});
+
+const key = widgetItemStorageKey;
+const fav = (id) => favorite({ id });
+function phase1Storage(ids, metaOverrides = {}) {
+  const s = { [WIDGETS_META_KEY]: metaOf(ids, metaOverrides) };
+  for (const id of ids) s[key(id)] = fav(id);
+  return s;
+}
+
+describe("ensureWeatherMetrics", () => {
+  it("appends the four metrics in canonical order with defaults and raises columns to 6 (writes meta last)", async () => {
+    const area = createMemoryStorageArea(phase1Storage(["a", "b"], { columns: 2 }));
+    const writes = [];
+    const origSet = area.set.bind(area);
+    area.set = async (p) => { writes.push(Object.keys(p)); return origSet(p); };
+    const result = await ensureWeatherMetrics(area, { now: () => "2026-09-30T00:00:00.000Z" });
+    assert.equal(result.changed, true);
+    const all = await area.get(null);
+    assert.deepEqual(all[WIDGETS_META_KEY].order, ["a", "b", ...WEATHER_METRIC_IDS]);
+    assert.equal(all[WIDGETS_META_KEY].columns, 6);
+    assert.deepEqual(all[key("weather:precipitation")], { id: "weather:precipitation", type: "weather-metric", tileSize: "wide", enabled: true });
+    assert.equal(writes.at(-1).includes(WIDGETS_META_KEY), true, "meta is the last write");
+    assert.equal(writes.slice(0, -1).some((w) => w.includes(WIDGETS_META_KEY)), false);
+  });
+
+  it("never lowers columns and does not touch a user-chosen larger value", async () => {
+    const area = createMemoryStorageArea(phase1Storage(["a"], { columns: 9 }));
+    await ensureWeatherMetrics(area);
+    assert.equal((await area.get(WIDGETS_META_KEY))[WIDGETS_META_KEY].columns, 9);
+  });
+
+  it("is a no-op (no write at all) when everything is present", async () => {
+    const area = createMemoryStorageArea(phase1Storage(["a"]));
+    await ensureWeatherMetrics(area);
+    let writes = 0;
+    const origSet = area.set.bind(area); area.set = async (p) => { writes += 1; return origSet(p); };
+    const before = await area.get(null);
+    const result = await ensureWeatherMetrics(area);
+    assert.equal(result.changed, false);
+    assert.equal(writes, 0);
+    assert.deepEqual(await area.get(null), before);
+  });
+
+  it("creates meta on a fresh install with columns 6 and position top", async () => {
+    const area = createMemoryStorageArea();
+    const r = await ensureWeatherMetrics(area, { now: () => NOW });
+    assert.equal(r.meta, "missing");
+    const meta = (await area.get(WIDGETS_META_KEY))[WIDGETS_META_KEY];
+    assert.deepEqual([meta.order, meta.columns, meta.position], [WEATHER_METRIC_IDS, 6, "top"]);
+  });
+
+  it("re-creates the item of a listed id without duplicating the id", async () => {
+    const s = phase1Storage(["a", "weather:uv"]);
+    for (const id of WEATHER_METRIC_IDS.slice(0, 3)) { s[key(id)] = metric(id); s[WIDGETS_META_KEY].order.push(id); }
+    const area = createMemoryStorageArea(s);
+    await ensureWeatherMetrics(area);
+    const all = await area.get(null);
+    assert.equal(all[WIDGETS_META_KEY].order.filter((i) => i === "weather:uv").length, 1);
+    assert.deepEqual(all[key("weather:uv")], { id: "weather:uv", type: "weather-metric", tileSize: "square", enabled: true });
+    assert.equal(isWidgetsState(await createWidgetsStore(area).getState()), true);
+  });
+
+  it("keeps an orphan item's stored settings and appends its id once", async () => {
+    const s = phase1Storage(["a"]);
+    s[key("weather:uv")] = metric("weather:uv", { enabled: false, tileSize: "wide" });
+    const area = createMemoryStorageArea(s);
+    await ensureWeatherMetrics(area);
+    const all = await area.get(null);
+    assert.equal(all[WIDGETS_META_KEY].order.filter((i) => i === "weather:uv").length, 1);
+    assert.deepEqual(all[key("weather:uv")], metric("weather:uv", { enabled: false, tileSize: "wide" }));
+    assert.equal((await createWidgetsStore(area).getState()).items.length, 5);
+  });
+
+  it("raises columns for an interrupted run that left all four orphan items and no order entries", async () => {
+    const s = phase1Storage(["a"], { columns: 2 });
+    for (const id of WEATHER_METRIC_IDS) s[key(id)] = metric(id);
+    const area = createMemoryStorageArea(s);
+    await ensureWeatherMetrics(area);
+    const meta = (await area.get(WIDGETS_META_KEY))[WIDGETS_META_KEY];
+    assert.equal(meta.columns, 6);
+    assert.deepEqual(meta.order, ["a", ...WEATHER_METRIC_IDS]);
+  });
+
+  it("validates 200 favorites + 4 metrics after ensure", async () => {
+    const ids = Array.from({ length: 200 }, (_, i) => `f${i}`);
+    const area = createMemoryStorageArea(phase1Storage(ids));
+    await ensureWeatherMetrics(area);
+    assert.equal((await createWidgetsStore(area).getState()).items.length, 204);
+  });
+
+  it("writes nothing for a newer or invalid meta", async () => {
+    for (const bad of [metaOf(["a"], { version: 2 }), { version: 1, order: "x" }]) {
+      const area = createMemoryStorageArea({ [WIDGETS_META_KEY]: bad, [key("a")]: fav("a") });
+      const before = await area.get(null);
+      await ensureWeatherMetrics(area);
+      assert.deepEqual(await area.get(null), before);
+    }
+  });
+
+  it("rejects on a write failure and leaves no meta change", async () => {
+    const area = createMemoryStorageArea(phase1Storage(["a"]));
+    area.set = async () => { throw new Error("quota"); };
+    const before = await area.get(null);
+    await assert.rejects(ensureWeatherMetrics(area), /Chrome Sync/);
+    assert.deepEqual(await area.get(null), before);
+  });
+
+  it("produces each metric once when two runs race", async () => {
+    const area = createMemoryStorageArea(phase1Storage(["a"]));
+    await Promise.all([ensureWeatherMetrics(area), ensureWeatherMetrics(area)]);
+    const order = (await area.get(WIDGETS_META_KEY))[WIDGETS_META_KEY].order;
+    assert.equal(order.length, 5);
+    assert.equal(new Set(order).size, 5);
+  });
+});
+
+describe("migrateToWidgets over a newer meta", () => {
+  it("neither migrates nor cleans up legacy keys", async () => {
+    const sync = createMemoryStorageArea({
+      [WIDGETS_META_KEY]: metaOf(["a"], { version: 2 }),
+      quietTabFavoritesMeta: { version: 1, order: ["x"], createdAt: NOW, updatedAt: NOW },
+      "quietTabFavorite:x": favorite({ id: "x", type: undefined })
+    });
+    const before = await sync.get(null);
+    const result = await migrateToWidgets(createMemoryStorageArea(), sync);
+    assert.deepEqual(result, { migrated: false, newer: true });
+    assert.deepEqual(await sync.get(null), before);
   });
 });
