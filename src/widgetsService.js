@@ -1,4 +1,5 @@
 import { withWidgetsMutationLock } from "./widgetsStore.js";
+import { moveTargetIndex } from "./widgetsLayout.js";
 import {
   GRID_POSITIONS,
   MAX_FAVORITE_WIDGETS,
@@ -147,10 +148,6 @@ function createDefaultId() {
   return `fav-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
-
 function normalizeMoveDirection(direction) {
   if (typeof direction !== "number" || !Number.isFinite(direction)) {
     throw new Error("Move direction must be a finite number");
@@ -195,6 +192,7 @@ export function createWidgetsService({
 
     async addFavorite(input) {
       return withWidgetsMutationLock(async () => {
+        await store.assertWritable();
         const payload = inputObject(input);
         const state = await store.getState();
 
@@ -226,7 +224,11 @@ export function createWidgetsService({
 
         return store.setState({
           ...state,
-          items: [...state.items, item],
+          items: state.items.toSpliced(
+            state.items.findLastIndex((entry) => entry.type === "favorite") + 1,
+            0,
+            item
+          ),
           updatedAt: createdAt
         });
       });
@@ -234,6 +236,7 @@ export function createWidgetsService({
 
     async updateFavorite(id, input) {
       return withWidgetsMutationLock(async () => {
+        await store.assertWritable();
         const payload = inputObject(input);
         const state = await store.getState();
         const index = findFavoriteIndex(state, id);
@@ -300,6 +303,7 @@ export function createWidgetsService({
 
     async deleteFavorite(id) {
       return withWidgetsMutationLock(async () => {
+        await store.assertWritable();
         const state = await store.getState();
         const index = findFavoriteIndex(state, id);
 
@@ -316,36 +320,59 @@ export function createWidgetsService({
       });
     },
 
+    async updateWeatherMetric(id, input) {
+      return withWidgetsMutationLock(async () => {
+        await store.assertWritable();
+        const payload = inputObject(input);
+        const state = await store.getState();
+        const index = state.items.findIndex((item) => item.type === "weather-metric" && item.id === id);
+
+        if (index === -1) {
+          throw new Error("Weather tile not found");
+        }
+
+        const next = { ...state.items[index] };
+        if (Object.hasOwn(payload, "tileSize")) {
+          next.tileSize = normalizeTileSize(payload.tileSize);
+        }
+        if (Object.hasOwn(payload, "enabled")) {
+          if (typeof payload.enabled !== "boolean") {
+            throw new Error("Choose whether the weather tile is shown");
+          }
+          next.enabled = payload.enabled;
+        }
+
+        return store.setState({ ...state, items: state.items.with(index, next), updatedAt: now() });
+      });
+    },
+
     async moveWidget(id, direction) {
       return withWidgetsMutationLock(async () => {
+        await store.assertWritable();
         const state = await store.getState();
         const index = state.items.findIndex((item) => item.id === id);
 
         if (index === -1) {
-          throw new Error("Favorite not found");
+          throw new Error("Widget not found");
         }
 
         const step = normalizeMoveDirection(direction);
-        const nextIndex = clamp(index + step, 0, state.items.length - 1);
-        if (nextIndex === index) {
+        const target = moveTargetIndex(state.items, index, step);
+        if (target === -1) {
           return state;
         }
 
         const updatedAt = now();
         const items = [...state.items];
-        const [item] = items.splice(index, 1);
-        items.splice(nextIndex, 0, item);
-
-        return store.setState({
-          ...state,
-          items,
-          updatedAt
-        });
+        const [moved] = items.splice(index, 1);
+        items.splice(target, 0, moved);
+        return store.setState({ ...state, items, updatedAt });
       });
     },
 
     async setColumns(columns) {
       return withWidgetsMutationLock(async () => {
+        await store.assertWritable();
         const nextColumns = normalizeColumns(columns);
         const state = await store.getState();
         return store.setState({ ...state, columns: nextColumns, updatedAt: now() });
@@ -354,6 +381,7 @@ export function createWidgetsService({
 
     async setPosition(position) {
       return withWidgetsMutationLock(async () => {
+        await store.assertWritable();
         const nextPosition = normalizePosition(position);
         const state = await store.getState();
         return store.setState({ ...state, position: nextPosition, updatedAt: now() });

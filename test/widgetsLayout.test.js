@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 import {
   defaultColumnsForItems,
   gridLayout,
+  isRenderedWidget,
+  moveTargetIndex,
   panelDock,
   tileSpan
 } from "../src/widgetsLayout.js";
@@ -95,5 +97,30 @@ describe("panelDock", () => {
     assert.equal(dock.dock, "bottom");
     assert.equal(dock.maxHeight, 200);
     assert.equal(dock.overlaps, true);
+  });
+});
+
+const fav = (id) => ({ id, type: "favorite" });
+const met = (id, enabled = true) => ({ id: `weather:${id}`, type: "weather-metric", enabled });
+
+describe("moveTargetIndex", () => {
+  const items = [fav("f0"), fav("f1"), met("temperature"), met("precipitation", false), met("airQuality"), met("uv")];
+  it("skips disabled metrics when a rendered widget moves", () => {
+    assert.equal(moveTargetIndex(items, 2, 1), 4);   // temperature -> after airQuality
+    assert.equal(moveTargetIndex(items, 4, -1), 2);  // airQuality -> before temperature
+    assert.equal(moveTargetIndex(items, 2, -1), 1);
+  });
+  it("moves a disabled row exactly one step", () => {
+    assert.equal(moveTargetIndex(items, 3, 1), 4);
+    assert.equal(moveTargetIndex(items, 3, -1), 2);
+  });
+  it("returns -1 with no target", () => {
+    assert.equal(moveTargetIndex(items, 0, -1), -1);
+    assert.equal(moveTargetIndex(items, 5, 1), -1);
+    assert.equal(moveTargetIndex([fav("a"), met("uv", false)], 0, 1), -1, "only a disabled row follows");
+  });
+  it("classifies rendered widgets", () => {
+    assert.equal(isRenderedWidget(fav("a")), true);
+    assert.equal(isRenderedWidget(met("uv", false)), false);
   });
 });

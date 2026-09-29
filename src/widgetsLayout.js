@@ -43,3 +43,25 @@ export function panelDock({ position, barTop, barBottom, viewportHeight, inset, 
   const free = dock === "top" ? freeTop : freeBottom;
   return { dock, maxHeight: Math.max(minHeight, free), overlaps: free < minHeight };
 }
+
+export function isRenderedWidget(item) {
+  return item.type === "favorite" || item.enabled === true;
+}
+
+// A rendered widget jumps over the next rendered widget in `step` direction (disabled
+// metrics are transparent); a disabled row moves exactly one row. -1 = nowhere to go.
+export function moveTargetIndex(items, index, step) {
+  if (step === 0) {
+    return -1;
+  }
+  if (!isRenderedWidget(items[index])) {
+    const target = index + step;
+    return target >= 0 && target < items.length ? target : -1;
+  }
+  for (let i = index + step; i >= 0 && i < items.length; i += step) {
+    if (isRenderedWidget(items[i])) {
+      return i;
+    }
+  }
+  return -1;
+}
