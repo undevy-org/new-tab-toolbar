@@ -28,12 +28,12 @@ Both must pass before opening a pull request.
 ## Conventions
 
 - Render UI text only through DOM text nodes (`textContent`); never `innerHTML`.
-- The persisted favorites schema is validated by `isFavoritesState`; the
+- The persisted widgets schema is validated by `isWidgetsState`; the
   persisted weather schema is validated by `isWeatherLocation`/
   `isWeatherCache`. If you add a field, update the matching validator and
   its tests.
-- Follow the existing module boundaries: favorites persistence
-  (`favoritesStore.js`), favorites mutations (`favoritesService.js`),
+- Follow the existing module boundaries: widgets persistence
+  (`widgetsStore.js`), widgets mutations (`widgetsService.js`), grid layout rules (`widgetsLayout.js`),
   weather API client (`weatherApi.js`), weather persistence
   (`weatherStore.js`), weather mutations (`weatherService.js`), UI
   (`newtab.js`).

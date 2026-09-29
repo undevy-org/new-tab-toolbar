@@ -1,5 +1,10 @@
-import { createMutationLock } from "./mutationLock.js";
-import { MAX_FAVORITES } from "./favoritesStore.js";
+import { withWidgetsMutationLock } from "./widgetsStore.js";
+import {
+  GRID_POSITIONS,
+  MAX_FAVORITE_WIDGETS,
+  MAX_GRID_COLUMNS,
+  MIN_GRID_COLUMNS
+} from "./widgetsShared.js";
 import {
   BACKGROUND_COLOR_SOURCES,
   HEX_COLOR_VALIDATION_PATTERN,
@@ -9,8 +14,6 @@ import {
 } from "./favoritesShared.js";
 
 const URL_SCHEME_PATTERN = /^([a-z][a-z\d+.-]*):(.*)$/i;
-const FAVORITES_MUTATION_LOCK_NAME = "quiet-tab:favorites-mutation";
-const withFavoritesMutationLock = createMutationLock(FAVORITES_MUTATION_LOCK_NAME);
 
 function hasUrlScheme(value) {
   const match = value.match(URL_SCHEME_PATTERN);
@@ -156,7 +159,30 @@ function normalizeMoveDirection(direction) {
   return Math.sign(direction);
 }
 
-export function createFavoritesService({
+function findFavoriteIndex(state, id) {
+  return state.items.findIndex((item) => item.type === "favorite" && item.id === id);
+}
+
+function normalizeColumns(columns) {
+  // Number(null)/Number("")/Number([]) are 0 and are rejected by the range check;
+  // Number(undefined)/Number({}) are NaN and are rejected by isInteger.
+  const value = typeof columns === "string" ? Number(columns.trim() === "" ? NaN : columns) : Number(columns);
+  if (!Number.isInteger(value) || value < MIN_GRID_COLUMNS || value > MAX_GRID_COLUMNS) {
+    throw new Error(
+      `Choose a number of columns between ${MIN_GRID_COLUMNS} and ${MAX_GRID_COLUMNS}`
+    );
+  }
+  return value;
+}
+
+function normalizePosition(position) {
+  if (!GRID_POSITIONS.has(position)) {
+    throw new Error("Choose a supported grid position");
+  }
+  return position;
+}
+
+export function createWidgetsService({
   store,
   now = () => new Date().toISOString(),
   createId = createDefaultId,
@@ -168,18 +194,20 @@ export function createFavoritesService({
     },
 
     async addFavorite(input) {
-      return withFavoritesMutationLock(async () => {
+      return withWidgetsMutationLock(async () => {
         const payload = inputObject(input);
         const state = await store.getState();
 
-        if (state.items.length >= MAX_FAVORITES) {
-          throw new Error(`You can save up to ${MAX_FAVORITES} favorites`);
+        const favoriteCount = state.items.filter((item) => item.type === "favorite").length;
+        if (favoriteCount >= MAX_FAVORITE_WIDGETS) {
+          throw new Error(`You can save up to ${MAX_FAVORITE_WIDGETS} favorites`);
         }
 
         const createdAt = now();
         const normalizedUrl = normalizeFavoriteUrl(payload.url);
         const item = {
           id: createId(),
+          type: "favorite",
           url: normalizedUrl.url,
           label: normalizeLabel(payload.label, normalizedUrl.domain),
           domain: normalizedUrl.domain,
@@ -205,10 +233,10 @@ export function createFavoritesService({
     },
 
     async updateFavorite(id, input) {
-      return withFavoritesMutationLock(async () => {
+      return withWidgetsMutationLock(async () => {
         const payload = inputObject(input);
         const state = await store.getState();
-        const index = state.items.findIndex((item) => item.id === id);
+        const index = findFavoriteIndex(state, id);
 
         if (index === -1) {
           throw new Error("Favorite not found");
@@ -271,9 +299,9 @@ export function createFavoritesService({
     },
 
     async deleteFavorite(id) {
-      return withFavoritesMutationLock(async () => {
+      return withWidgetsMutationLock(async () => {
         const state = await store.getState();
-        const index = state.items.findIndex((item) => item.id === id);
+        const index = findFavoriteIndex(state, id);
 
         if (index === -1) {
           throw new Error("Favorite not found");
@@ -288,8 +316,8 @@ export function createFavoritesService({
       });
     },
 
-    async moveFavorite(id, direction) {
-      return withFavoritesMutationLock(async () => {
+    async moveWidget(id, direction) {
+      return withWidgetsMutationLock(async () => {
         const state = await store.getState();
         const index = state.items.findIndex((item) => item.id === id);
 
@@ -313,6 +341,22 @@ export function createFavoritesService({
           items,
           updatedAt
         });
+      });
+    },
+
+    async setColumns(columns) {
+      return withWidgetsMutationLock(async () => {
+        const nextColumns = normalizeColumns(columns);
+        const state = await store.getState();
+        return store.setState({ ...state, columns: nextColumns, updatedAt: now() });
+      });
+    },
+
+    async setPosition(position) {
+      return withWidgetsMutationLock(async () => {
+        const nextPosition = normalizePosition(position);
+        const state = await store.getState();
+        return store.setState({ ...state, position: nextPosition, updatedAt: now() });
       });
     }
   };

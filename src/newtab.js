@@ -18,8 +18,13 @@ import {
   startAdd,
   startEdit
 } from "./favoritesUiState.js";
-import { createFavoritesService } from "./favoritesService.js";
-import { createFavoritesStore, migrateLegacyFavorites } from "./favoritesStore.js";
+import { createWidgetsService } from "./widgetsService.js";
+import { createWidgetsStore, migrateToWidgets } from "./widgetsStore.js";
+import { gridLayout, panelDock, tileSpan } from "./widgetsLayout.js";
+import {
+  MAX_GRID_COLUMNS,
+  MIN_GRID_COLUMNS
+} from "./widgetsShared.js";
 import { searchCities, usAqiCategory, uvIndexLevel } from "./weatherApi.js";
 import {
   formatPm25,
@@ -47,6 +52,57 @@ const favoritesRoot = document.querySelector("#favorites");
 const favoritesPanelRoot = document.querySelector("#favorites-panel");
 const weatherRoot = document.querySelector("#weather");
 
+// Phase 1 only: the weather panel is still a separate fixed element at the bottom and
+// its height changes (tile row vs. the city form with suggestions). Publish the space it
+// needs so the favorites bar's bottom/center positions and its max height never overlap
+// it. Read-only with respect to weather; Phase 2 moves weather into the grid and
+// deletes this block and the --weather-reserve variable.
+if (weatherRoot && typeof ResizeObserver === "function") {
+  const publishWeatherReserve = () => {
+    const { height } = weatherRoot.getBoundingClientRect();
+    const bottomInset = Number.parseFloat(getComputedStyle(weatherRoot).bottom) || 0;
+    document.documentElement.style.setProperty(
+      "--weather-reserve",
+      `${Math.ceil(height + bottomInset + 8)}px`
+    );
+  };
+
+  new ResizeObserver(publishWeatherReserve).observe(weatherRoot);
+  window.addEventListener("resize", publishWeatherReserve);
+  publishWeatherReserve();
+}
+
+// The settings panel must never cover the bar it configures. Read-only measurement of the
+// bar: publish which edge the panel docks to and the height that is free on that side.
+const PANEL_MIN_HEIGHT = 200;
+const PANEL_BAR_GAP = 12;
+
+function publishPanelDock() {
+  if (!favoritesRoot || !favoritesPanelRoot) {
+    return;
+  }
+
+  const inset =
+    Number.parseFloat(getComputedStyle(favoritesPanelRoot).getPropertyValue("--panel-inset")) || 16;
+  const bar = favoritesRoot.getBoundingClientRect();
+  const { dock, maxHeight } = panelDock({
+    position: favoritesRoot.dataset.position ?? "top",
+    barTop: bar.top,
+    barBottom: bar.bottom,
+    viewportHeight: window.innerHeight,
+    inset,
+    gap: PANEL_BAR_GAP,
+    minHeight: PANEL_MIN_HEIGHT
+  });
+  favoritesPanelRoot.dataset.dock = dock;
+  favoritesPanelRoot.style.setProperty("--panel-max-height", `${Math.floor(maxHeight)}px`);
+}
+
+if (favoritesRoot && favoritesPanelRoot && typeof ResizeObserver === "function") {
+  new ResizeObserver(publishPanelDock).observe(favoritesRoot);
+  window.addEventListener("resize", publishPanelDock);
+}
+
 function createNode(tagName, className, textContent) {
   const node = document.createElement(tagName);
 
@@ -73,10 +129,10 @@ function createTooltip(triggerNode, text) {
   return tooltip;
 }
 
-function createStatus(text, { error = false, live = "polite" } = {}) {
+function createStatus(text, { error = false, live = "polite", full = false } = {}) {
   const status = createNode(
     "p",
-    error ? "status status--error" : "status",
+    `${error ? "status status--error" : "status"}${full ? " status--full" : ""}`,
     text
   );
 
@@ -98,13 +154,13 @@ function hasStorageArea(area) {
   return area && typeof area.get === "function" && typeof area.set === "function";
 }
 
-const favoritesStore = hasStorageArea(syncStorageArea)
-  ? createFavoritesStore(syncStorageArea)
+const widgetsStore = hasStorageArea(syncStorageArea)
+  ? createWidgetsStore(syncStorageArea)
   : null;
 
-const favoritesService = favoritesStore
-  ? createFavoritesService({
-      store: favoritesStore,
+const widgetsService = widgetsStore
+  ? createWidgetsService({
+      store: widgetsStore,
       defaultBackgroundColor: fallbackColorForDomain
     })
   : null;
@@ -123,12 +179,18 @@ const weatherService =
       })
     : null;
 
-let favoritesState = null;
+let widgetsState = null;
+// Set when the legacy → widgets migration fails. The favorites UI is then locked (no
+// gear, no mutations): an editable empty grid would let the user create widgets meta,
+// after which the still-present legacy data would be treated as stale and deleted.
+let widgetsMigrationFailed = false;
 let favoritesUi = createInitialFavoritesUiState();
 let favoritesError = "";
 let favoritesBusy = false;
 let favoritesGeneration = 0;
-let pendingGearFocus = false;
+// Selectors to try, in order, once the next non-busy render has finished, so keyboard focus
+// never falls back to <body> after a re-render replaced the control that had it.
+let pendingFocus = null;
 let weatherResult = null;
 let weatherUi = createInitialWeatherUiState();
 let weatherFormError = "";
@@ -158,14 +220,14 @@ function createFavoriteIconNode(model, item) {
   return createFavoriteLetterNode(item, "letter");
 }
 
-function createFavoriteTile(item) {
+function createFavoriteTile(item, columns) {
   const button = createNode("button", "favorite-tile");
   const iconModel = getFavoriteIconModel(item, { faviconBaseUrl });
 
   button.type = "button";
   button.dataset.favoriteAction = "open";
   button.dataset.favoriteId = item.id;
-  button.dataset.tileSize = item.tileSize === "wide" ? "wide" : "square";
+  button.dataset.tileSize = tileSpan(item.tileSize, columns) === 2 ? "wide" : "square";
   button.title = item.label;
   button.setAttribute("aria-label", `Open ${item.label}`);
   button.style.setProperty(
@@ -396,11 +458,11 @@ async function resolveAutoBackgroundColor(item) {
 }
 
 async function refreshAutoAccent(id) {
-  if (!favoritesService || !id) {
+  if (!widgetsService || !id) {
     return;
   }
 
-  const item = favoritesState?.items.find((entry) => entry.id === id);
+  const item = widgetsState?.items.find((entry) => entry.id === id);
   if (!item) {
     return;
   }
@@ -411,7 +473,7 @@ async function refreshAutoAccent(id) {
     // Re-read the item after the async resolve: the user may have switched it to
     // manual (or deleted it) while the favicon was being fetched/analyzed. A late
     // auto write must never clobber a manual color the user just chose.
-    const current = favoritesState?.items.find((entry) => entry.id === id);
+    const current = widgetsState?.items.find((entry) => entry.id === id);
     if (!current || current.backgroundColorSource !== "auto") {
       return;
     }
@@ -420,16 +482,66 @@ async function refreshAutoAccent(id) {
       return;
     }
 
-    const nextState = await favoritesService.updateFavorite(id, {
+    const nextState = await widgetsService.updateFavorite(id, {
       backgroundColor: autoColor,
       backgroundColorSource: "auto"
     });
 
-    favoritesState = nextState;
+    widgetsState = nextState;
     renderFavorites();
   } catch {
     // Auto-accent is best-effort; a canvas/CORS failure keeps the fallback accent
     // and must never disturb the displayed icon.
+  }
+}
+
+const GRID_POSITION_LABELS = { top: "Top", center: "Center", bottom: "Bottom" };
+
+function createGridSettingsRow(state) {
+  const section = createNode("div", "favorites-panel__grid-settings favorite-form");
+
+  const columns = createNode("input", "favorite-input");
+  columns.type = "number";
+  columns.name = "columns";
+  columns.min = String(MIN_GRID_COLUMNS);
+  columns.max = String(MAX_GRID_COLUMNS);
+  columns.step = "1";
+  columns.value = String(state.columns);
+  columns.dataset.gridSetting = "columns";
+
+  const position = createSegmentedControl(
+    "position",
+    ["top", "center", "bottom"].map((value) => [value, GRID_POSITION_LABELS[value]]),
+    state.position
+  );
+  for (const input of position.querySelectorAll("input")) {
+    input.dataset.gridSetting = "position";
+  }
+
+  const error = createNode("p", "status status--error");
+  error.dataset.gridError = "";
+  error.setAttribute("role", "alert");
+  error.hidden = true;
+
+  section.append(createFormRow("Columns", columns), createFormRow("Position", position), error);
+  return section;
+}
+
+// Puts the controls back in line with the stored state after a change succeeded (the
+// service normalizes input like " 5 ") or was rejected.
+function syncGridSettingInputs() {
+  if (!favoritesPanelRoot || !widgetsState) {
+    return;
+  }
+
+  const columns = favoritesPanelRoot.querySelector('[data-grid-setting="columns"]');
+  if (columns instanceof HTMLInputElement) {
+    columns.value = String(widgetsState.columns);
+  }
+  for (const radio of favoritesPanelRoot.querySelectorAll('[data-grid-setting="position"]')) {
+    if (radio instanceof HTMLInputElement) {
+      radio.checked = radio.value === widgetsState.position;
+    }
   }
 }
 
@@ -446,21 +558,21 @@ function createFavoritesPanelRow(item, index, itemCount) {
   const controls = createNode("div", "favorites-panel__controls");
   const disabled = favoritesBusy || isFormOpen(favoritesUi);
 
-  const left = createNode("button", "icon-button");
-  left.type = "button";
-  left.dataset.favoriteAction = "move-left";
-  left.dataset.favoriteId = item.id;
-  left.setAttribute("aria-label", `Move ${item.label} left`);
-  left.disabled = disabled || index === 0;
-  left.appendChild(createIconNode("chevronLeft"));
+  const earlier = createNode("button", "icon-button");
+  earlier.type = "button";
+  earlier.dataset.favoriteAction = "move-earlier";
+  earlier.dataset.favoriteId = item.id;
+  earlier.setAttribute("aria-label", `Move ${item.label} earlier`);
+  earlier.disabled = disabled || index === 0;
+  earlier.appendChild(createIconNode("chevronUp"));
 
-  const right = createNode("button", "icon-button");
-  right.type = "button";
-  right.dataset.favoriteAction = "move-right";
-  right.dataset.favoriteId = item.id;
-  right.setAttribute("aria-label", `Move ${item.label} right`);
-  right.disabled = disabled || index === itemCount - 1;
-  right.appendChild(createIconNode("chevronRight"));
+  const later = createNode("button", "icon-button");
+  later.type = "button";
+  later.dataset.favoriteAction = "move-later";
+  later.dataset.favoriteId = item.id;
+  later.setAttribute("aria-label", `Move ${item.label} later`);
+  later.disabled = disabled || index === itemCount - 1;
+  later.appendChild(createIconNode("chevronDown"));
 
   const edit = createNode("button", "icon-button");
   edit.type = "button";
@@ -470,7 +582,7 @@ function createFavoritesPanelRow(item, index, itemCount) {
   edit.disabled = disabled;
   edit.appendChild(createIconNode("pencil"));
 
-  controls.append(left, right, edit);
+  controls.append(earlier, later, edit);
   row.append(info, controls);
   return row;
 }
@@ -480,13 +592,24 @@ function renderFavoritesToolbar() {
     return;
   }
 
+  if (widgetsMigrationFailed) {
+    favoritesRoot.replaceChildren(
+      createStatus(favoritesError, { error: true, live: "assertive", full: true })
+    );
+    return;
+  }
+
+  const layout = gridLayout(widgetsState);
+  favoritesRoot.dataset.position = layout.position;
+
   const fragment = document.createDocumentFragment();
-  const items = favoritesState?.items ?? [];
+  const items = widgetsState?.items ?? [];
 
   if (items.length > 0) {
     const list = createNode("div", "favorites-grid");
+    list.style.setProperty("--columns", String(layout.columns));
     for (const item of items) {
-      list.appendChild(createFavoriteTile(item));
+      list.appendChild(createFavoriteTile(item, layout.columns));
     }
     fragment.appendChild(list);
   }
@@ -495,10 +618,25 @@ function renderFavoritesToolbar() {
   favoritesRoot.replaceChildren(fragment);
 }
 
+const GEAR_SELECTOR = '[data-favorite-action="open-settings"]';
+const HEADING_SELECTOR = "[data-panel-heading]";
+const ADD_BUTTON_SELECTOR = '[data-favorite-action="start-add"]';
+
+function formFieldSelector(kind) {
+  return `form[data-favorite-form="${kind}"] input[name="url"]`;
+}
+
+function itemActionSelector(action, id) {
+  return `[data-favorite-action="${action}"][data-favorite-id="${String(id).replace(/["\\]/g, "\\$&")}"]`;
+}
+
 function renderFavoritesPanel() {
   if (!favoritesPanelRoot) {
     return;
   }
+
+  favoritesPanelRoot.dataset.barPosition = gridLayout(widgetsState).position;
+  publishPanelDock();
 
   const open = isSettingsOpen(favoritesUi);
   favoritesPanelRoot.hidden = !open;
@@ -508,12 +646,18 @@ function renderFavoritesPanel() {
     return;
   }
 
+  const previousScrollTop =
+    favoritesPanelRoot.querySelector(".favorites-panel__body")?.scrollTop ?? 0;
+
   const fragment = document.createDocumentFragment();
-  const items = favoritesState?.items ?? [];
+  const items = widgetsState?.items ?? [];
 
   const top = createNode("div", "favorites-panel__top");
   const heading = createNode("div");
-  heading.appendChild(createNode("h2", null, "Quick links"));
+  const title = createNode("h2", null, "Quick links");
+  title.tabIndex = -1;
+  title.dataset.panelHeading = "";
+  heading.appendChild(title);
   heading.appendChild(
     createNode("p", null, "Add, reorder, and style your links — all from one place.")
   );
@@ -524,42 +668,70 @@ function renderFavoritesPanel() {
   top.append(heading, addButton);
   fragment.appendChild(top);
 
+  // Everything below the heading scrolls together inside the panel.
+  const body = createNode("div", "favorites-panel__body");
+
+  if (widgetsState) {
+    body.appendChild(createGridSettingsRow(widgetsState));
+  }
+
   if (isAdding(favoritesUi)) {
-    fragment.appendChild(createFavoriteForm(null));
+    body.appendChild(createFavoriteForm(null));
   }
 
   const currentEditingId = editingId(favoritesUi);
   const editingItem = items.find((item) => item.id === currentEditingId);
   if (editingItem) {
-    fragment.appendChild(createFavoriteForm(editingItem));
+    body.appendChild(createFavoriteForm(editingItem));
+  }
+
+  if (favoritesError) {
+    const errorNode = createStatus(favoritesError, { error: true, live: "assertive" });
+    errorNode.dataset.favoritesError = "";
+    body.appendChild(errorNode);
   }
 
   const listWrap = createNode("div", "favorites-panel__list");
   items.forEach((item, index) => {
     listWrap.appendChild(createFavoritesPanelRow(item, index, items.length));
   });
-  fragment.appendChild(listWrap);
-
-  if (favoritesError) {
-    fragment.appendChild(
-      createStatus(favoritesError, { error: true, live: "assertive" })
-    );
-  }
+  body.appendChild(listWrap);
+  fragment.appendChild(body);
 
   favoritesPanelRoot.replaceChildren(fragment);
+  body.scrollTop = previousScrollTop;
+}
+
+function applyPendingFocus() {
+  if (!pendingFocus || favoritesBusy) {
+    return;
+  }
+
+  const selectors = pendingFocus;
+  pendingFocus = null;
+
+  for (const selector of selectors) {
+    const target =
+      favoritesPanelRoot?.querySelector(selector) ?? favoritesRoot?.querySelector(selector);
+    if (target instanceof HTMLElement && !target.matches(":disabled")) {
+      target.focus();
+      return;
+    }
+  }
+}
+
+function revealFavoritesError() {
+  const errorNode = favoritesPanelRoot?.querySelector("[data-favorites-error]");
+  if (errorNode instanceof HTMLElement && typeof errorNode.scrollIntoView === "function") {
+    errorNode.scrollIntoView({ block: "nearest" });
+  }
 }
 
 function renderFavorites() {
   renderFavoritesToolbar();
   renderFavoritesPanel();
-
-  if (pendingGearFocus) {
-    pendingGearFocus = false;
-    const gear = favoritesRoot?.querySelector('[data-favorite-action="open-settings"]');
-    if (gear instanceof HTMLElement) {
-      gear.focus();
-    }
-  }
+  applyPendingFocus();
+  revealFavoritesError();
 }
 
 function setFavoritesBusy(nextBusy) {
@@ -586,22 +758,26 @@ function finishFavoritesAction(generation, applyResult) {
 
 if (favoritesRoot) {
   void (async () => {
-    if (!favoritesService) {
+    if (!widgetsService) {
       favoritesError = "Chrome APIs for favorites are unavailable.";
       renderFavorites();
       return;
     }
 
-    if (hasStorageArea(localStorageArea)) {
+    if (hasStorageArea(localStorageArea) && hasStorageArea(syncStorageArea)) {
       try {
-        await migrateLegacyFavorites(localStorageArea, favoritesStore);
+        await migrateToWidgets(localStorageArea, syncStorageArea);
       } catch (error) {
-        favoritesError = error instanceof Error ? error.message : String(error);
+        widgetsMigrationFailed = true;
+        favoritesError =
+          "Couldn't move your favorites to the new layout — Chrome Sync storage may be full or unavailable. Free up some sync space, then reload this tab to try again. Your favorites are kept.";
+        renderFavorites();
+        return;
       }
     }
 
     try {
-      favoritesState = await favoritesService.getState();
+      widgetsState = await widgetsService.getState();
       renderFavorites();
     } catch (error) {
       favoritesError = error instanceof Error ? error.message : String(error);
@@ -625,27 +801,35 @@ if (favoritesRoot) {
     if (action === "open-settings") {
       favoritesUi = openSettings(favoritesUi);
       favoritesError = "";
+      pendingFocus = [HEADING_SELECTOR];
       renderFavorites();
     } else if (action === "start-add") {
       favoritesUi = startAdd(favoritesUi);
       favoritesError = "";
+      pendingFocus = [formFieldSelector("add")];
       renderFavorites();
     } else if (action === "cancel") {
+      const cancelledId = editingId(favoritesUi);
       favoritesUi = cancelForm(favoritesUi);
       favoritesError = "";
+      pendingFocus = cancelledId
+        ? [itemActionSelector("edit", cancelledId), ADD_BUTTON_SELECTOR]
+        : [ADD_BUTTON_SELECTOR];
       renderFavorites();
     } else if (action === "edit") {
       const id = target.dataset.favoriteId;
       if (id) {
         favoritesUi = startEdit(favoritesUi, id);
         favoritesError = "";
+        pendingFocus = [formFieldSelector("edit")];
         renderFavorites();
       }
     } else if (action === "delete") {
+      pendingFocus = [ADD_BUTTON_SELECTOR];
       const generation = startFavoritesAction();
 
       void (async () => {
-        if (!favoritesService) {
+        if (!widgetsService) {
           finishFavoritesAction(generation, () => {
             favoritesError = "Chrome APIs for favorites are unavailable.";
           });
@@ -653,11 +837,11 @@ if (favoritesRoot) {
         }
 
         try {
-          const nextState = await favoritesService.deleteFavorite(
+          const nextState = await widgetsService.deleteFavorite(
             target.dataset.favoriteId
           );
           finishFavoritesAction(generation, () => {
-            favoritesState = nextState;
+            widgetsState = nextState;
             favoritesUi = cancelForm(favoritesUi);
             favoritesError = "";
           });
@@ -667,11 +851,19 @@ if (favoritesRoot) {
           });
         }
       })();
-    } else if (action === "move-left" || action === "move-right") {
+    } else if (action === "move-earlier" || action === "move-later") {
+      const movedId = target.dataset.favoriteId;
+      const otherMove = action === "move-earlier" ? "move-later" : "move-earlier";
+      pendingFocus = [
+        itemActionSelector(action, movedId),
+        itemActionSelector(otherMove, movedId),
+        itemActionSelector("edit", movedId),
+        ADD_BUTTON_SELECTOR
+      ];
       const generation = startFavoritesAction();
 
       void (async () => {
-        if (!favoritesService) {
+        if (!widgetsService) {
           finishFavoritesAction(generation, () => {
             favoritesError = "Chrome APIs for favorites are unavailable.";
           });
@@ -679,12 +871,12 @@ if (favoritesRoot) {
         }
 
         try {
-          const nextState = await favoritesService.moveFavorite(
+          const nextState = await widgetsService.moveWidget(
             target.dataset.favoriteId,
-            action === "move-left" ? -1 : 1
+            action === "move-earlier" ? -1 : 1
           );
           finishFavoritesAction(generation, () => {
-            favoritesState = nextState;
+            widgetsState = nextState;
             favoritesError = "";
           });
         } catch (error) {
@@ -694,7 +886,7 @@ if (favoritesRoot) {
         }
       })();
     } else if (action === "open") {
-      const favorite = favoritesState?.items.find(
+      const favorite = widgetsState?.items.find(
         (item) => item.id === target.dataset.favoriteId
       );
 
@@ -703,6 +895,46 @@ if (favoritesRoot) {
       }
     }
   }
+
+  favoritesPanelRoot?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || !widgetsService) {
+      return;
+    }
+
+    const setting = target.dataset.gridSetting;
+    if (!setting) {
+      return;
+    }
+
+    const value = target.value;
+
+    void (async () => {
+      try {
+        widgetsState =
+          setting === "columns"
+            ? await widgetsService.setColumns(value)
+            : await widgetsService.setPosition(value);
+
+        const errorNode = favoritesPanelRoot.querySelector("[data-grid-error]");
+        if (errorNode) {
+          errorNode.textContent = "";
+          errorNode.hidden = true;
+        }
+        renderFavoritesToolbar();
+        favoritesPanelRoot.dataset.barPosition = gridLayout(widgetsState).position;
+        publishPanelDock();
+      } catch (error) {
+        const errorNode = favoritesPanelRoot.querySelector("[data-grid-error]");
+        if (errorNode) {
+          errorNode.textContent = error instanceof Error ? error.message : String(error);
+          errorNode.hidden = false;
+        }
+      }
+
+      syncGridSettingInputs();
+    })();
+  });
 
   favoritesRoot.addEventListener("click", handleFavoritesClick);
   favoritesPanelRoot?.addEventListener("click", handleFavoritesClick);
@@ -715,7 +947,7 @@ if (favoritesRoot) {
     if (isSettingsOpen(favoritesUi)) {
       favoritesUi = closeSettings(favoritesUi);
       favoritesError = "";
-      pendingGearFocus = true;
+      pendingFocus = [GEAR_SELECTOR];
       renderFavorites();
     }
   });
@@ -738,7 +970,7 @@ if (favoritesRoot) {
 
     favoritesUi = closeSettings(favoritesUi);
     favoritesError = "";
-    pendingGearFocus = true;
+    pendingFocus = [GEAR_SELECTOR];
     renderFavorites();
   });
 
@@ -761,7 +993,7 @@ if (favoritesRoot) {
     const generation = startFavoritesAction();
 
     void (async () => {
-      if (!favoritesService) {
+      if (!widgetsService) {
         finishFavoritesAction(generation, () => {
           favoritesError = "Chrome APIs for favorites are unavailable.";
         });
@@ -773,12 +1005,13 @@ if (favoritesRoot) {
       try {
         if (form.dataset.favoriteForm === "edit") {
           const payload = readFavoriteFormPayload(data);
-          favoritesState = await favoritesService.updateFavorite(
+          widgetsState = await widgetsService.updateFavorite(
             form.dataset.favoriteId,
             payload
           );
 
           finishFavoritesAction(generation, () => {
+            pendingFocus = [itemActionSelector("edit", form.dataset.favoriteId), ADD_BUTTON_SELECTOR];
             favoritesUi = cancelForm(favoritesUi);
             favoritesError = "";
           });
@@ -790,10 +1023,11 @@ if (favoritesRoot) {
         }
 
         const payload = readFavoriteFormPayload(data);
-        favoritesState = await favoritesService.addFavorite(payload);
-        const added = favoritesState.items.at(-1);
+        widgetsState = await widgetsService.addFavorite(payload);
+        const added = widgetsState.items.at(-1);
 
         finishFavoritesAction(generation, () => {
+          pendingFocus = [ADD_BUTTON_SELECTOR];
           favoritesUi = cancelForm(favoritesUi);
           favoritesError = "";
         });
@@ -803,6 +1037,7 @@ if (favoritesRoot) {
         }
       } catch (error) {
         finishFavoritesAction(generation, () => {
+          pendingFocus = [formFieldSelector(form.dataset.favoriteForm)];
           favoritesError = error instanceof Error ? error.message : String(error);
         });
       }

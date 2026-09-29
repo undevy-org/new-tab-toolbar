@@ -1,19 +1,20 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { MAX_FAVORITES, createFavoritesStore, createInitialFavoritesState, isFavoritesState } from "../src/favoritesStore.js";
+import { createWidgetsStore, createInitialWidgetsState, isWidgetsState } from "../src/widgetsStore.js";
+import { MAX_FAVORITE_WIDGETS } from "../src/widgetsShared.js";
 import { createMemoryStorageArea } from "./memoryStorageArea.js";
 import {
-  createFavoritesService,
+  createWidgetsService,
   normalizeFavoriteUrl,
   normalizeNullableImageUrl
-} from "../src/favoritesService.js";
+} from "../src/widgetsService.js";
 
 const NOW = "2026-07-07T10:00:00.000Z";
 
 async function createHarness() {
   let id = 0;
-  const store = createFavoritesStore(createMemoryStorageArea(), { now: () => NOW });
-  const service = createFavoritesService({
+  const store = createWidgetsStore(createMemoryStorageArea(), { now: () => NOW });
+  const service = createWidgetsService({
     store,
     now: () => NOW,
     createId: () => `fav-${++id}`,
@@ -26,6 +27,7 @@ async function createHarness() {
 function favorite(overrides = {}) {
   return {
     id: "fav-1",
+    type: "favorite",
     url: "https://example.com/",
     label: "Example",
     domain: "example.com",
@@ -39,7 +41,7 @@ function favorite(overrides = {}) {
   };
 }
 
-describe("favoritesService", () => {
+describe("widgetsService", () => {
   describe("normalizeFavoriteUrl", () => {
     it("normalizes URLs without an explicit protocol", () => {
       assert.deepEqual(normalizeFavoriteUrl("example.com/path"), {
@@ -140,6 +142,7 @@ describe("favoritesService", () => {
     assert.deepEqual(state.items, [
       {
         id: "fav-1",
+        type: "favorite",
         url: "https://example.com/path",
         label: "example.com",
         domain: "example.com",
@@ -182,6 +185,7 @@ describe("favoritesService", () => {
 
     assert.deepEqual(state.items[0], {
       id: "fav-1",
+      type: "favorite",
       url: "https://news.ycombinator.com/item",
       label: "HN item",
       domain: "news.ycombinator.com",
@@ -282,25 +286,25 @@ describe("favoritesService", () => {
     await service.addFavorite({ url: "two.example.com" });
     await service.addFavorite({ url: "three.example.com" });
 
-    let state = await service.moveFavorite("fav-2", -1);
+    let state = await service.moveWidget("fav-2", -1);
     assert.deepEqual(
       state.items.map((item) => item.id),
       ["fav-2", "fav-1", "fav-3"]
     );
 
-    state = await service.moveFavorite("fav-2", -1);
+    state = await service.moveWidget("fav-2", -1);
     assert.deepEqual(
       state.items.map((item) => item.id),
       ["fav-2", "fav-1", "fav-3"]
     );
 
-    state = await service.moveFavorite("fav-2", 1);
+    state = await service.moveWidget("fav-2", 1);
     assert.deepEqual(
       state.items.map((item) => item.id),
       ["fav-1", "fav-2", "fav-3"]
     );
 
-    state = await service.moveFavorite("fav-3", 1);
+    state = await service.moveWidget("fav-3", 1);
     assert.deepEqual(
       state.items.map((item) => item.id),
       ["fav-1", "fav-2", "fav-3"]
@@ -314,11 +318,11 @@ describe("favoritesService", () => {
     await service.addFavorite({ url: "two.example.com" });
 
     await assert.rejects(
-      () => service.moveFavorite("fav-1"),
+      () => service.moveWidget("fav-1"),
       /Move direction must be a finite number/
     );
     await assert.rejects(
-      () => service.moveFavorite("fav-1", "left"),
+      () => service.moveWidget("fav-1", "left"),
       /Move direction must be a finite number/
     );
   });
@@ -331,7 +335,7 @@ describe("favoritesService", () => {
       /Favorite not found/
     );
     await assert.rejects(() => service.deleteFavorite("missing"), /Favorite not found/);
-    await assert.rejects(() => service.moveFavorite("missing", 1), /Favorite not found/);
+    await assert.rejects(() => service.moveWidget("missing", 1), /Favorite not found/);
   });
 
   it("rejects invalid favorite background colors", async () => {
@@ -345,7 +349,7 @@ describe("favoritesService", () => {
 
   it("rejects adding a favorite once the limit is reached", async () => {
     const { service, store } = await createHarness();
-    const items = Array.from({ length: MAX_FAVORITES }, (_, index) =>
+    const items = Array.from({ length: MAX_FAVORITE_WIDGETS }, (_, index) =>
       favorite({
         id: `fav-seed-${index}`,
         url: `https://example-${index}.com/`,
@@ -353,7 +357,7 @@ describe("favoritesService", () => {
       })
     );
     await store.setState({
-      version: 1,
+      version: 1, columns: 6, position: "top",
       items,
       createdAt: NOW,
       updatedAt: NOW
@@ -361,15 +365,15 @@ describe("favoritesService", () => {
 
     await assert.rejects(
       () => service.addFavorite({ url: "https://new.example.com" }),
-      new RegExp(`up to ${MAX_FAVORITES} favorites`)
+      new RegExp(`up to ${MAX_FAVORITE_WIDGETS} favorites`)
     );
-    assert.equal((await store.getState()).items.length, MAX_FAVORITES);
+    assert.equal((await store.getState()).items.length, MAX_FAVORITE_WIDGETS);
   });
 
   it("serializes simultaneous mutations from services sharing one store", async () => {
-    const store = createFavoritesStore(createMemoryStorageArea(), { now: () => NOW });
+    const store = createWidgetsStore(createMemoryStorageArea(), { now: () => NOW });
     await store.setState({
-      version: 1,
+      version: 1, columns: 6, position: "top",
       items: [
         favorite({ id: "fav-a", url: "https://a.example.com/", domain: "a.example.com" }),
         favorite({ id: "fav-b", url: "https://b.example.com/", domain: "b.example.com" }),
@@ -379,12 +383,12 @@ describe("favoritesService", () => {
       updatedAt: NOW
     });
 
-    const serviceA = createFavoritesService({
+    const serviceA = createWidgetsService({
       store,
       now: () => NOW,
       defaultBackgroundColor: () => "#24292f"
     });
-    const serviceB = createFavoritesService({
+    const serviceB = createWidgetsService({
       store,
       now: () => NOW,
       defaultBackgroundColor: () => "#24292f"
@@ -392,7 +396,7 @@ describe("favoritesService", () => {
 
     await Promise.all([
       serviceA.deleteFavorite("fav-a"),
-      serviceB.moveFavorite("fav-c", -1)
+      serviceB.moveWidget("fav-c", -1)
     ]);
 
     const stored = await store.getState();
@@ -407,27 +411,101 @@ describe("favoritesService", () => {
     await service.addFavorite({ url: "example.com" });
 
     await assert.rejects(
-      () => service.moveFavorite("missing", 1),
+      () => service.moveWidget("missing", 1),
       /Favorite not found/
     );
 
-    const state = await service.moveFavorite("fav-1", 1);
+    const state = await service.moveWidget("fav-1", 1);
     assert.deepEqual(
       state.items.map((item) => item.id),
       ["fav-1"]
     );
   });
+
+  it("tags added favorites with type: 'favorite'", async () => {
+    const { service } = await createHarness();
+    const state = await service.addFavorite({ url: "example.com" });
+    assert.equal(state.items[0].type, "favorite");
+  });
+
+  it("moveWidget reorders by a signed direction and is a no-op at the bounds", async () => {
+    const { service } = await createHarness();
+    await service.addFavorite({ url: "https://a.com" });
+    const afterB = await service.addFavorite({ url: "https://b.com" });
+    const [idA, idB] = afterB.items.map((item) => item.id);
+
+    const moved = await service.moveWidget(idB, -1);
+    assert.deepEqual(moved.items.map((item) => item.id), [idB, idA]);
+    const clamped = await service.moveWidget(idB, -1);
+    assert.deepEqual(clamped.items.map((item) => item.id), [idB, idA]);
+  });
+
+  it("setColumns accepts an in-range integer, coercing a numeric string from a form input", async () => {
+    const { service } = await createHarness();
+    assert.equal((await service.setColumns(4)).columns, 4);
+    assert.equal((await service.setColumns("8")).columns, 8);
+    assert.equal((await service.setColumns(" 5 ")).columns, 5);
+  });
+
+  it("setColumns rejects zero, decimals, out-of-range and non-numeric values (Review Focus #2)", async () => {
+    const { service, store } = await createHarness();
+    const before = await store.getState();
+
+    for (const bad of [0, -1, 13, 3.5, "", "abc", "1e1x", null, undefined, NaN, [], {}]) {
+      await assert.rejects(
+        () => service.setColumns(bad),
+        /Choose a number of columns between 1 and 12/,
+        String(bad)
+      );
+    }
+    assert.equal((await store.getState()).columns, before.columns, "state untouched");
+  });
+
+  it("setPosition accepts the three positions and rejects anything else", async () => {
+    const { service } = await createHarness();
+    for (const position of ["top", "bottom", "center"]) {
+      assert.equal((await service.setPosition(position)).position, position);
+    }
+    await assert.rejects(() => service.setPosition("middle"), /Choose a supported grid position/);
+    await assert.rejects(() => service.setPosition(undefined), /Choose a supported grid position/);
+  });
+
+  it("setColumns and setPosition keep the items and bump updatedAt", async () => {
+    let tick = 0;
+    const store = createWidgetsStore(createMemoryStorageArea(), { now: () => NOW });
+    const service = createWidgetsService({
+      store,
+      now: () => `2026-07-07T10:00:0${++tick}.000Z`,
+      createId: () => "fav-1",
+      defaultBackgroundColor: () => "#24292f"
+    });
+    const added = await service.addFavorite({ url: "example.com" });
+    const next = await service.setColumns(3);
+    assert.equal(next.items.length, 1);
+    assert.notEqual(next.updatedAt, added.updatedAt);
+  });
+
+  it("serializes setColumns with other mutations through the shared lock", async () => {
+    const { service } = await createHarness();
+    await service.addFavorite({ url: "https://a.com" });
+    await Promise.all([service.setColumns(3), service.setPosition("center"), service.addFavorite({ url: "https://b.com" })]);
+    const state = await service.getState();
+    assert.equal(state.columns, 3);
+    assert.equal(state.position, "center");
+    assert.equal(state.items.length, 2);
+  });
 });
 
 describe("stored backgroundColorSource enum survives the label rename", () => {
   it("accepts items whose backgroundColorSource is auto or manual", () => {
-    const base = createInitialFavoritesState("2026-07-11T00:00:00.000Z");
+    const base = createInitialWidgetsState("2026-07-11T00:00:00.000Z");
     for (const source of ["auto", "manual"]) {
       const state = {
         ...base,
         items: [
           {
             id: "fav-1",
+            type: "favorite",
             url: "https://example.com/",
             label: "Example",
             domain: "example.com",
@@ -440,17 +518,18 @@ describe("stored backgroundColorSource enum survives the label rename", () => {
           }
         ]
       };
-      assert.equal(isFavoritesState(state), true, `source=${source}`);
+      assert.equal(isWidgetsState(state), true, `source=${source}`);
     }
   });
 
   it("rejects a renamed/localized backgroundColorSource value", () => {
-    const base = createInitialFavoritesState("2026-07-11T00:00:00.000Z");
+    const base = createInitialWidgetsState("2026-07-11T00:00:00.000Z");
     const state = {
       ...base,
       items: [
         {
           id: "fav-1",
+          type: "favorite",
           url: "https://example.com/",
           label: "Example",
           domain: "example.com",
@@ -463,6 +542,6 @@ describe("stored backgroundColorSource enum survives the label rename", () => {
         }
       ]
     };
-    assert.equal(isFavoritesState(state), false);
+    assert.equal(isWidgetsState(state), false);
   });
 });

@@ -11,6 +11,9 @@
   --danger: #b42318;
   --focus: rgb(0 0 0 / 24%);
   --toolbar-h: 72px;
+  /* Space the standalone weather panel needs at the bottom; newtab.js overwrites this
+     with the measured value. Removed in Phase 2 when weather joins the grid. */
+  --weather-reserve: 96px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -50,7 +53,6 @@ body {
 .favorites-bar {
   position: fixed;
   z-index: 30;
-  top: 16px;
   left: 50%;
   display: flex;
   align-items: center;
@@ -59,33 +61,55 @@ body {
   max-width: calc(100vw - 32px);
   min-height: var(--toolbar-h);
   padding: 10px 12px;
-  transform: translateX(-50%);
   border: 1px solid var(--border);
   border-radius: 20px;
   background: color-mix(in srgb, var(--panel) 82%, transparent);
   box-shadow: 0 18px 48px rgb(0 0 0 / 22%);
   backdrop-filter: blur(20px) saturate(130%);
   --favorite-tile-height: 52px;
+  /* One inset variable, overridden on narrow screens. The position variants below read
+     it, so the responsive override cannot lose a specificity fight with them. */
+  --bar-inset: 16px;
+  /* bar padding (20px) + border (2px) */
+  --grid-max-height: calc(100vh - var(--weather-reserve) - var(--bar-inset) - 22px);
+}
+
+.favorites-bar[data-position="top"] {
+  top: var(--bar-inset);
+  transform: translateX(-50%);
+}
+
+/* Sits just above the standalone weather panel (Phase 1). */
+.favorites-bar[data-position="bottom"] {
+  bottom: var(--weather-reserve);
+  transform: translateX(-50%);
+}
+
+/* Centered in the space above the weather panel. */
+.favorites-bar[data-position="center"] {
+  top: calc(50% - var(--weather-reserve) / 2);
+  transform: translate(-50%, -50%);
+  --grid-max-height: calc(100vh - var(--weather-reserve) - 2 * var(--bar-inset) - 22px);
 }
 
 .favorites-grid {
-  display: flex;
+  display: grid;
   flex: 1;
+  grid-template-columns: repeat(var(--columns, 6), var(--favorite-tile-height));
+  grid-auto-flow: row;
   gap: 9px;
   min-width: 0;
   padding-block: 10px;
   margin-block: -10px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  max-height: var(--grid-max-height);
+  /* Vertical scroll when taller than the room available; tracks are fixed-width, so a
+     grid wider than the viewport also scrolls sideways as a fallback. */
+  overflow: auto;
   scrollbar-width: none;
 }
 
 .favorites-grid::-webkit-scrollbar {
   display: none;
-}
-
-.favorites-grid > .favorite-tile {
-  flex: 0 0 auto;
 }
 
 .favorite-tile {
@@ -112,8 +136,11 @@ body {
   transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
 
+/* newtab.js only emits data-tile-size="wide" when the grid has >= 2 columns (tileSpan),
+   so the 2-span always has a second track to land in. */
 .favorite-tile[data-tile-size="wide"] {
-  width: calc(var(--favorite-tile-height) * 2);
+  grid-column: span 2;
+  width: auto;
 }
 
 .favorite-tile:hover:not(:disabled),
@@ -156,6 +183,7 @@ body {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
+  align-self: flex-start;
   width: var(--favorite-tile-height);
   height: var(--favorite-tile-height);
   border: 1px solid var(--border);
@@ -171,14 +199,16 @@ body {
 }
 
 .favorites-panel {
+  --panel-inset: 16px;
   position: fixed;
   z-index: 40;
-  top: calc(var(--toolbar-h) + 28px);
+  top: var(--panel-inset);
   left: 50%;
   display: flex;
   flex-direction: column;
   width: min(640px, calc(100vw - 32px));
-  max-height: calc(100vh - var(--toolbar-h) - 56px);
+  /* newtab.js publishes the free height beside the bar; the fallback is the whole viewport. */
+  max-height: var(--panel-max-height, calc(100vh - 2 * var(--panel-inset)));
   overflow: hidden;
   padding: 20px;
   transform: translateX(-50%);
@@ -186,6 +216,12 @@ body {
   border-radius: 16px;
   background: var(--panel);
   box-shadow: 0 24px 70px rgb(0 0 0 / 32%);
+}
+
+/* Dock to the edge opposite the bar (newtab.js sets data-dock) so live grid changes stay visible. */
+.favorites-panel[data-dock="bottom"] {
+  top: auto;
+  bottom: var(--panel-inset);
 }
 
 .favorites-panel[hidden] {
@@ -212,12 +248,44 @@ body {
   font-size: 13px;
 }
 
+/* The grid settings reuse the .favorite-form card and rows; only the number input is
+   kept narrow (declared after .favorite-form__row > .favorite-input so it wins). */
+.favorites-panel__grid-settings .favorite-form__row > .favorite-input {
+  flex: 0 0 100px;
+}
+
+.favorites-panel__grid-settings > .status {
+  padding-bottom: 12px;
+}
+
+/* .status sets display: -webkit-box, which would otherwise defeat [hidden]. */
+.status[hidden] {
+  display: none;
+}
+
+/* Grid settings, form, error and list scroll together; the heading row stays put. */
+.favorites-panel__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Never let a child (notably the clamped .status, whose overflow: hidden makes its
+   automatic minimum size 0) shrink to fit: the body scrolls instead. */
+.favorites-panel__body > * {
+  flex: 0 0 auto;
+}
+
+.favorites-panel__body .status {
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+
 .favorites-panel__list {
   display: grid;
-  flex: 1 1 auto;
-  min-height: 0;
   gap: 2px;
-  overflow-y: auto;
 }
 
 .favorites-panel__row {
@@ -502,6 +570,14 @@ body {
   color: var(--muted);
 }
 
+/* Messages that must be read in full (e.g. the locked-migration recovery hint). */
+.status--full {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  white-space: normal;
+}
+
 .status--error {
   color: var(--danger);
 }
@@ -694,14 +770,15 @@ body {
   }
 
   .favorites-bar {
-    top: 10px;
+    --bar-inset: 10px;
     border-radius: 16px;
   }
 
   .favorites-panel {
-    top: calc(var(--toolbar-h) + 20px);
+    --panel-inset: 10px;
     padding: 16px;
   }
+
 
   .favorite-form {
     flex-direction: column;
