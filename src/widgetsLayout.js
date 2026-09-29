@@ -30,3 +30,16 @@ export function gridLayout(state) {
     position: state?.position ?? "top"
   };
 }
+
+// Where the settings panel docks and how tall it may grow so it never covers the bar it
+// configures: bar at the top => bottom edge, bar at the bottom => top edge, bar in the
+// middle => whichever side has more room. `minHeight` keeps the panel usable on very
+// short viewports; only then can it overlap the bar (`overlaps: true`).
+export function panelDock({ position, barTop, barBottom, viewportHeight, inset, gap, minHeight }) {
+  const freeTop = barTop - gap - inset;
+  const freeBottom = viewportHeight - barBottom - gap - inset;
+  const dock =
+    position === "top" ? "bottom" : position === "bottom" ? "top" : freeBottom > freeTop ? "bottom" : "top";
+  const free = dock === "top" ? freeTop : freeBottom;
+  return { dock, maxHeight: Math.max(minHeight, free), overlaps: free < minHeight };
+}

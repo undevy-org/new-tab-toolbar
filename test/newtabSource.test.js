@@ -237,9 +237,52 @@ describe("newtab favorites source", () => {
 
   it("docks the settings panel to the edge opposite the bar", async () => {
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
-    assert.match(css, /\.favorites-panel\[data-bar-position="top"\]\s*\{[^}]*bottom: var\(--panel-inset\);/s);
+    assert.match(css, /\.favorites-panel\[data-dock="bottom"\]\s*\{[^}]*bottom: var\(--panel-inset\);/s);
     const code = await source();
     assert.match(code, /favoritesPanelRoot\.dataset\.barPosition = gridLayout\(widgetsState\)\.position;/);
+  });
+
+  it("limits the panel to the free space beside the bar, published from a read-only measurement", async () => {
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /\.favorites-panel\s*\{[^}]*max-height: var\(--panel-max-height, calc\(100vh - 2 \* var\(--panel-inset\)\)\);/s);
+    const code = await source();
+    assert.match(code, /panelDock\(/);
+    assert.match(code, /favoritesRoot\.getBoundingClientRect\(\)/);
+    assert.match(code, /setProperty\("--panel-max-height"/);
+    assert.match(code, /favoritesPanelRoot\.dataset\.dock = /);
+    assert.match(code, /new ResizeObserver\(publishPanelDock\)\.observe\(favoritesRoot\)/);
+  });
+
+  it("scrolls the whole panel body (grid settings, form, error, list) inside the panel", async () => {
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /\.favorites-panel__body\s*\{[^}]*overflow-y: auto;/s);
+    assert.match(css, /\.favorites-panel__body\s*\{[^}]*min-height: 0;/s);
+    assert.doesNotMatch(css, /\.favorites-panel__list\s*\{[^}]*overflow-y: auto;/s);
+    assert.match(css, /\.favorites-panel__body \.status\s*\{[^}]*flex-shrink: 0;/s);
+    assert.match(css, /\.favorites-panel__body\s*\{[^}]*flex-direction: column;/s);
+    assert.match(css, /\.favorites-panel__body > \*\s*\{[^}]*flex: 0 0 auto;/s);
+    const code = await source();
+    assert.match(code, /"favorites-panel__body"/);
+  });
+
+  it("places the favorites error with the form, ahead of the list, and keeps the scroll position across re-renders", async () => {
+    const code = await source();
+    const panel = code.slice(code.indexOf("function renderFavoritesPanel"), code.indexOf("function renderFavorites()"));
+    assert.ok(panel.indexOf("favoritesError") < panel.indexOf('createNode("div", "favorites-panel__list")'), "error precedes the list");
+    assert.match(panel, /scrollTop/);
+    assert.match(code, /scrollIntoView\(\{ block: "nearest" \}\)/);
+  });
+
+  it("moves focus into the panel and back to a logical control after each re-render", async () => {
+    const code = await source();
+    assert.match(code, /let pendingFocus = null;/);
+    assert.match(code, /function applyPendingFocus\(\)/);
+    assert.match(code, /heading\.tabIndex = -1|tabIndex = -1/);
+    assert.doesNotMatch(code, /pendingGearFocus/);
+    assert.match(code, /\[data-favorite-action="start-add"\]/);
+    assert.match(code, /itemActionSelector\("edit", movedId\)/);
+    assert.match(code, /itemActionSelector\(action, movedId\)/);
+    assert.match(code, /title\.tabIndex = -1/);
   });
 
   it("renders the reorder buttons as move-earlier/move-later instead of spatial left/right", async () => {

@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leaves your data untouched if it fails.
 - A wide tile is shown as a square while the grid has a single column.
 - The favorites bar keeps clear of the weather panel in every position.
+- The Quick links settings panel no longer covers the bar it configures: it docks to
+  the edge opposite the bar (the roomier side when the bar is centered) and is limited to
+  the free space beside the bar, so grid changes stay visible.
+- The whole settings panel body (grid settings, add/edit form, error, list) scrolls
+  inside the panel, so Save/Add/Cancel are reachable on short windows.
+- Add/edit form errors (for example the 200-favorites limit) now show next to the form
+  instead of collapsing to zero height.
+- Keyboard focus moves into the settings panel when it opens and returns to a logical
+  control after Add link, Cancel, Edit, Move earlier/later, Save and Delete.
 
 ## [0.1.0] - 2026-09-27
 

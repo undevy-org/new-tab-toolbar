@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   defaultColumnsForItems,
   gridLayout,
+  panelDock,
   tileSpan
 } from "../src/widgetsLayout.js";
 
@@ -60,5 +61,39 @@ describe("gridLayout", () => {
   it("falls back to the defaults when state is missing or partial", () => {
     assert.deepEqual(gridLayout(null), { columns: 6, position: "top" });
     assert.deepEqual(gridLayout({}), { columns: 6, position: "top" });
+  });
+});
+
+describe("panelDock", () => {
+  const base = { viewportHeight: 800, inset: 16, gap: 12, minHeight: 200 };
+
+  it("docks to the bottom when the bar is at the top, limited to the space below the bar", () => {
+    const dock = panelDock({ ...base, position: "top", barTop: 16, barBottom: 151 });
+    assert.equal(dock.dock, "bottom");
+    assert.equal(dock.maxHeight, 800 - 151 - 12 - 16);
+  });
+
+  it("docks to the top when the bar is at the bottom, limited to the space above the bar", () => {
+    const dock = panelDock({ ...base, position: "bottom", barTop: 600, barBottom: 700 });
+    assert.equal(dock.dock, "top");
+    assert.equal(dock.maxHeight, 600 - 12 - 16);
+  });
+
+  it("docks a centered bar's panel to whichever side has more room", () => {
+    assert.deepEqual(panelDock({ ...base, position: "center", barTop: 350, barBottom: 450 }), {
+      dock: "top",
+      maxHeight: 350 - 12 - 16,
+      overlaps: false
+    });
+    const lower = panelDock({ ...base, position: "center", barTop: 100, barBottom: 300 });
+    assert.equal(lower.dock, "bottom");
+    assert.equal(lower.maxHeight, 800 - 300 - 12 - 16);
+  });
+
+  it("never returns less than the minimum height and flags the accepted overlap", () => {
+    const dock = panelDock({ ...base, position: "top", barTop: 16, barBottom: 700 });
+    assert.equal(dock.dock, "bottom");
+    assert.equal(dock.maxHeight, 200);
+    assert.equal(dock.overlaps, true);
   });
 });

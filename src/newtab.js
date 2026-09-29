@@ -20,7 +20,7 @@ import {
 } from "./favoritesUiState.js";
 import { createWidgetsService } from "./widgetsService.js";
 import { createWidgetsStore, migrateToWidgets } from "./widgetsStore.js";
-import { gridLayout, tileSpan } from "./widgetsLayout.js";
+import { gridLayout, panelDock, tileSpan } from "./widgetsLayout.js";
 import {
   MAX_GRID_COLUMNS,
   MIN_GRID_COLUMNS
@@ -70,6 +70,37 @@ if (weatherRoot && typeof ResizeObserver === "function") {
   new ResizeObserver(publishWeatherReserve).observe(weatherRoot);
   window.addEventListener("resize", publishWeatherReserve);
   publishWeatherReserve();
+}
+
+// The settings panel must never cover the bar it configures. Read-only measurement of the
+// bar: publish which edge the panel docks to and the height that is free on that side.
+const PANEL_MIN_HEIGHT = 200;
+const PANEL_BAR_GAP = 12;
+
+function publishPanelDock() {
+  if (!favoritesRoot || !favoritesPanelRoot) {
+    return;
+  }
+
+  const inset =
+    Number.parseFloat(getComputedStyle(favoritesPanelRoot).getPropertyValue("--panel-inset")) || 16;
+  const bar = favoritesRoot.getBoundingClientRect();
+  const { dock, maxHeight } = panelDock({
+    position: favoritesRoot.dataset.position ?? "top",
+    barTop: bar.top,
+    barBottom: bar.bottom,
+    viewportHeight: window.innerHeight,
+    inset,
+    gap: PANEL_BAR_GAP,
+    minHeight: PANEL_MIN_HEIGHT
+  });
+  favoritesPanelRoot.dataset.dock = dock;
+  favoritesPanelRoot.style.setProperty("--panel-max-height", `${Math.floor(maxHeight)}px`);
+}
+
+if (favoritesRoot && favoritesPanelRoot && typeof ResizeObserver === "function") {
+  new ResizeObserver(publishPanelDock).observe(favoritesRoot);
+  window.addEventListener("resize", publishPanelDock);
 }
 
 function createNode(tagName, className, textContent) {
@@ -157,7 +188,9 @@ let favoritesUi = createInitialFavoritesUiState();
 let favoritesError = "";
 let favoritesBusy = false;
 let favoritesGeneration = 0;
-let pendingGearFocus = false;
+// Selectors to try, in order, once the next non-busy render has finished, so keyboard focus
+// never falls back to <body> after a re-render replaced the control that had it.
+let pendingFocus = null;
 let weatherResult = null;
 let weatherUi = createInitialWeatherUiState();
 let weatherFormError = "";
@@ -585,12 +618,25 @@ function renderFavoritesToolbar() {
   favoritesRoot.replaceChildren(fragment);
 }
 
+const GEAR_SELECTOR = '[data-favorite-action="open-settings"]';
+const HEADING_SELECTOR = "[data-panel-heading]";
+const ADD_BUTTON_SELECTOR = '[data-favorite-action="start-add"]';
+
+function formFieldSelector(kind) {
+  return `form[data-favorite-form="${kind}"] input[name="url"]`;
+}
+
+function itemActionSelector(action, id) {
+  return `[data-favorite-action="${action}"][data-favorite-id="${String(id).replace(/["\\]/g, "\\$&")}"]`;
+}
+
 function renderFavoritesPanel() {
   if (!favoritesPanelRoot) {
     return;
   }
 
   favoritesPanelRoot.dataset.barPosition = gridLayout(widgetsState).position;
+  publishPanelDock();
 
   const open = isSettingsOpen(favoritesUi);
   favoritesPanelRoot.hidden = !open;
@@ -600,12 +646,18 @@ function renderFavoritesPanel() {
     return;
   }
 
+  const previousScrollTop =
+    favoritesPanelRoot.querySelector(".favorites-panel__body")?.scrollTop ?? 0;
+
   const fragment = document.createDocumentFragment();
   const items = widgetsState?.items ?? [];
 
   const top = createNode("div", "favorites-panel__top");
   const heading = createNode("div");
-  heading.appendChild(createNode("h2", null, "Quick links"));
+  const title = createNode("h2", null, "Quick links");
+  title.tabIndex = -1;
+  title.dataset.panelHeading = "";
+  heading.appendChild(title);
   heading.appendChild(
     createNode("p", null, "Add, reorder, and style your links — all from one place.")
   );
@@ -616,46 +668,70 @@ function renderFavoritesPanel() {
   top.append(heading, addButton);
   fragment.appendChild(top);
 
+  // Everything below the heading scrolls together inside the panel.
+  const body = createNode("div", "favorites-panel__body");
+
   if (widgetsState) {
-    fragment.appendChild(createGridSettingsRow(widgetsState));
+    body.appendChild(createGridSettingsRow(widgetsState));
   }
 
   if (isAdding(favoritesUi)) {
-    fragment.appendChild(createFavoriteForm(null));
+    body.appendChild(createFavoriteForm(null));
   }
 
   const currentEditingId = editingId(favoritesUi);
   const editingItem = items.find((item) => item.id === currentEditingId);
   if (editingItem) {
-    fragment.appendChild(createFavoriteForm(editingItem));
+    body.appendChild(createFavoriteForm(editingItem));
+  }
+
+  if (favoritesError) {
+    const errorNode = createStatus(favoritesError, { error: true, live: "assertive" });
+    errorNode.dataset.favoritesError = "";
+    body.appendChild(errorNode);
   }
 
   const listWrap = createNode("div", "favorites-panel__list");
   items.forEach((item, index) => {
     listWrap.appendChild(createFavoritesPanelRow(item, index, items.length));
   });
-  fragment.appendChild(listWrap);
-
-  if (favoritesError) {
-    fragment.appendChild(
-      createStatus(favoritesError, { error: true, live: "assertive" })
-    );
-  }
+  body.appendChild(listWrap);
+  fragment.appendChild(body);
 
   favoritesPanelRoot.replaceChildren(fragment);
+  body.scrollTop = previousScrollTop;
+}
+
+function applyPendingFocus() {
+  if (!pendingFocus || favoritesBusy) {
+    return;
+  }
+
+  const selectors = pendingFocus;
+  pendingFocus = null;
+
+  for (const selector of selectors) {
+    const target =
+      favoritesPanelRoot?.querySelector(selector) ?? favoritesRoot?.querySelector(selector);
+    if (target instanceof HTMLElement && !target.matches(":disabled")) {
+      target.focus();
+      return;
+    }
+  }
+}
+
+function revealFavoritesError() {
+  const errorNode = favoritesPanelRoot?.querySelector("[data-favorites-error]");
+  if (errorNode instanceof HTMLElement && typeof errorNode.scrollIntoView === "function") {
+    errorNode.scrollIntoView({ block: "nearest" });
+  }
 }
 
 function renderFavorites() {
   renderFavoritesToolbar();
   renderFavoritesPanel();
-
-  if (pendingGearFocus) {
-    pendingGearFocus = false;
-    const gear = favoritesRoot?.querySelector('[data-favorite-action="open-settings"]');
-    if (gear instanceof HTMLElement) {
-      gear.focus();
-    }
-  }
+  applyPendingFocus();
+  revealFavoritesError();
 }
 
 function setFavoritesBusy(nextBusy) {
@@ -725,23 +801,31 @@ if (favoritesRoot) {
     if (action === "open-settings") {
       favoritesUi = openSettings(favoritesUi);
       favoritesError = "";
+      pendingFocus = [HEADING_SELECTOR];
       renderFavorites();
     } else if (action === "start-add") {
       favoritesUi = startAdd(favoritesUi);
       favoritesError = "";
+      pendingFocus = [formFieldSelector("add")];
       renderFavorites();
     } else if (action === "cancel") {
+      const cancelledId = editingId(favoritesUi);
       favoritesUi = cancelForm(favoritesUi);
       favoritesError = "";
+      pendingFocus = cancelledId
+        ? [itemActionSelector("edit", cancelledId), ADD_BUTTON_SELECTOR]
+        : [ADD_BUTTON_SELECTOR];
       renderFavorites();
     } else if (action === "edit") {
       const id = target.dataset.favoriteId;
       if (id) {
         favoritesUi = startEdit(favoritesUi, id);
         favoritesError = "";
+        pendingFocus = [formFieldSelector("edit")];
         renderFavorites();
       }
     } else if (action === "delete") {
+      pendingFocus = [ADD_BUTTON_SELECTOR];
       const generation = startFavoritesAction();
 
       void (async () => {
@@ -768,6 +852,14 @@ if (favoritesRoot) {
         }
       })();
     } else if (action === "move-earlier" || action === "move-later") {
+      const movedId = target.dataset.favoriteId;
+      const otherMove = action === "move-earlier" ? "move-later" : "move-earlier";
+      pendingFocus = [
+        itemActionSelector(action, movedId),
+        itemActionSelector(otherMove, movedId),
+        itemActionSelector("edit", movedId),
+        ADD_BUTTON_SELECTOR
+      ];
       const generation = startFavoritesAction();
 
       void (async () => {
@@ -831,6 +923,7 @@ if (favoritesRoot) {
         }
         renderFavoritesToolbar();
         favoritesPanelRoot.dataset.barPosition = gridLayout(widgetsState).position;
+        publishPanelDock();
       } catch (error) {
         const errorNode = favoritesPanelRoot.querySelector("[data-grid-error]");
         if (errorNode) {
@@ -854,7 +947,7 @@ if (favoritesRoot) {
     if (isSettingsOpen(favoritesUi)) {
       favoritesUi = closeSettings(favoritesUi);
       favoritesError = "";
-      pendingGearFocus = true;
+      pendingFocus = [GEAR_SELECTOR];
       renderFavorites();
     }
   });
@@ -877,7 +970,7 @@ if (favoritesRoot) {
 
     favoritesUi = closeSettings(favoritesUi);
     favoritesError = "";
-    pendingGearFocus = true;
+    pendingFocus = [GEAR_SELECTOR];
     renderFavorites();
   });
 
@@ -918,6 +1011,7 @@ if (favoritesRoot) {
           );
 
           finishFavoritesAction(generation, () => {
+            pendingFocus = [itemActionSelector("edit", form.dataset.favoriteId), ADD_BUTTON_SELECTOR];
             favoritesUi = cancelForm(favoritesUi);
             favoritesError = "";
           });
@@ -933,6 +1027,7 @@ if (favoritesRoot) {
         const added = widgetsState.items.at(-1);
 
         finishFavoritesAction(generation, () => {
+          pendingFocus = [ADD_BUTTON_SELECTOR];
           favoritesUi = cancelForm(favoritesUi);
           favoritesError = "";
         });
@@ -942,6 +1037,7 @@ if (favoritesRoot) {
         }
       } catch (error) {
         finishFavoritesAction(generation, () => {
+          pendingFocus = [formFieldSelector(form.dataset.favoriteForm)];
           favoritesError = error instanceof Error ? error.message : String(error);
         });
       }
