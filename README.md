@@ -10,14 +10,16 @@ else.
 
 ## Features
 
-- Shows a personal quick-links toolbar pinned to the top of the new tab
-  page, with a single horizontally-scrolling row of tiles.
-- Manages links — add, edit, delete, and reorder — from a settings panel
-  opened with the gear button (closes on Escape or a click outside).
+- Shows a personal quick-links toolbar on the new tab page as a wrapping
+  grid of tiles (1-12 columns, at the top, center or bottom of the page).
+- Manages links — add, edit, delete, and reorder — from the Widgets settings
+  panel opened with the gear button (closes on Escape or a click outside).
 - Opens saved favorites in the current tab.
 - Uses site favicons with letter and custom-image fallbacks.
-- Shows current weather for a city you choose: temperature, UV index (with
-  a WHO-scale level label), today's rain probability, and air quality.
+- Shows current weather for a city you choose as tiles in the same grid:
+  temperature, UV index (with a WHO-scale level label), today's rain
+  probability, and air quality. Each weather tile can be resized, hidden, and
+  reordered together with your links.
 - Performs no background polling and has no analytics.
 
 ## Install
@@ -30,7 +32,7 @@ else.
 6. Open a new tab.
 
 The first launch shows an empty favorites bar and asks you to set a city
-for the weather panel.
+for the weather tiles (the "Set a city" tile opens the Widgets settings).
 
 ## Permissions And Privacy
 
@@ -70,8 +72,9 @@ Both must pass before opening a pull request. See
 manifest.json         Manifest V3 configuration
 src/newtab.html        New tab page markup
 src/newtab.css         New tab page styles
-src/newtab.js          Renders the favorites toolbar and weather panel
-src/favorite*.js       Favorites persistence, service, icon/color logic
+src/newtab.js          Renders the widget grid, tooltip layer and settings panel
+src/widgets*.js        Widgets persistence, service, shared constants, layout rules
+src/favorite*.js       Favorites UI state, icon/color logic
 src/weather*.js        Weather persistence, service, API client, presentation
 src/icons.js           Vendored SVG icon set
 src/mutationLock.js    Serializes concurrent storage writes
