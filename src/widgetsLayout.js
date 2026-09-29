@@ -70,9 +70,7 @@ export function moveTargetIndex(items, index, step) {
 // trigger and clamped so it never leaves the viewport. Pure so it is testable without a DOM.
 export function placeTooltip({ trigger, tooltip, viewport, gap = 8, margin = 8 }) {
   const spaceAbove = trigger.top - gap - margin;
-  const spaceBelow = viewport.height - trigger.bottom - gap - margin;
-  const side =
-    spaceAbove >= tooltip.height ? "top" : spaceBelow >= tooltip.height || spaceBelow >= spaceAbove ? "bottom" : "top";
+  const side = spaceAbove >= tooltip.height ? "top" : "bottom";
   const rawTop = side === "top" ? trigger.top - gap - tooltip.height : trigger.bottom + gap;
   const top = Math.min(Math.max(rawTop, margin), Math.max(margin, viewport.height - margin - tooltip.height));
   const centered = trigger.left + trigger.width / 2 - tooltip.width / 2;

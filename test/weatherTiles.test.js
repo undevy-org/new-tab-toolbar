@@ -70,4 +70,51 @@ describe("describeWeatherMetric", () => {
     assert.deepEqual(keys.map((k) => describeWeatherMetric({ metricKey: k, result: null, size: "square" }).label),
       ["Temperature", "Precipitation", "Air quality", "UV index"]);
   });
+
+  const sizes = ["square", "wide"];
+  const expectedTone = { temperature: "green", precipitation: "rain-2", airQuality: "green", uv: "orange" };
+  const descPrefix = {
+    temperature: "Currently 21°.",
+    precipitation: "Chance of rain for the rest of the day — 40%",
+    airQuality: "US AQI 40 (Good)",
+    uv: "Current UV index 3 (Moderate)."
+  };
+
+  it("loading is identical in shape for every metric and size", () => {
+    for (const k of keys) for (const z of sizes) {
+      const m = describeWeatherMetric({ metricKey: k, result: null, size: z });
+      assert.deepEqual([m.primary, m.secondary, m.tone, m.stale, m.busy, m.description],
+        ["…", null, null, false, true, "Loading weather…"]);
+    }
+  });
+
+  it("error is identical in shape for every metric and size", () => {
+    for (const k of keys) for (const z of sizes) {
+      const m = describeWeatherMetric({ metricKey: k, result: failed, size: z });
+      assert.deepEqual([m.primary, m.secondary, m.tone, m.stale, m.busy, m.description],
+        ["—", null, null, false, false, "Weather unavailable: boom"]);
+    }
+  });
+
+  it("ready sets the tone for each metric, not busy, not stale", () => {
+    for (const k of keys) for (const z of sizes) {
+      const m = describeWeatherMetric({ metricKey: k, result: ready, size: z });
+      assert.equal(m.tone, expectedTone[k]);
+      assert.deepEqual([m.stale, m.busy], [false, false]);
+      assert.ok(m.description.startsWith(descPrefix[k]), m.description);
+    }
+  });
+
+  it("stale keeps the data, tone and secondary of ready and only prefixes the description", () => {
+    for (const k of keys) for (const z of sizes) {
+      const r = describeWeatherMetric({ metricKey: k, result: ready, size: z });
+      const s = describeWeatherMetric({ metricKey: k, result: stale, size: z });
+      assert.equal(s.stale, true);
+      assert.equal(s.busy, false);
+      assert.equal(s.tone, expectedTone[k]);
+      assert.equal(s.primary, r.primary);
+      assert.equal(s.secondary, r.secondary);
+      assert.equal(s.description, `Couldn't refresh - showing saved data. ${r.description}`);
+    }
+  });
 });

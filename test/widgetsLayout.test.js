@@ -151,5 +151,24 @@ describe("placeTooltip", () => {
   it("keeps the tooltip inside the viewport vertically when neither side fits well", () => {
     const p = placeTooltip({ trigger: trig(100, 5, 52, 590), tooltip: { width: 100, height: 80 }, viewport: { width: 320, height: 600 } });
     assert.ok(p.top >= 8 && p.top + 80 <= 600 - 8);
+    assert.deepEqual(p, { left: 76, top: 512, side: "bottom" });
+  });
+  it("switches side exactly at tooltip + gap + margin of room above", () => {
+    const at = placeTooltip({ trigger: trig(600, 76), tooltip: tip, viewport: vp });
+    assert.deepEqual([at.side, at.top], ["top", 8]);
+    assert.equal(placeTooltip({ trigger: trig(600, 75), tooltip: tip, viewport: vp }).side, "bottom");
+  });
+  it("stays on top near the viewport bottom when there is no room below", () => {
+    const p = placeTooltip({ trigger: trig(600, 740), tooltip: tip, viewport: vp });
+    assert.equal(p.side, "top");
+  });
+  it("goes below (and is clamped) when above does not fit, even if below fits worse", () => {
+    const p = placeTooltip({
+      trigger: { left: 100, top: 40, width: 52, bottom: 92 },
+      tooltip: { width: 100, height: 80 },
+      viewport: { width: 320, height: 100 }
+    });
+    assert.equal(p.side, "bottom");
+    assert.equal(p.top, 12);
   });
 });
