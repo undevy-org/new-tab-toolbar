@@ -570,6 +570,14 @@ body {
   color: var(--muted);
 }
 
+/* Messages that must be read in full (e.g. the locked-migration recovery hint). */
+.status--full {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  white-space: normal;
+}
+
 .status--error {
   color: var(--danger);
 }

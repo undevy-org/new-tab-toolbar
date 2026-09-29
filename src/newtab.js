@@ -129,10 +129,10 @@ function createTooltip(triggerNode, text) {
   return tooltip;
 }
 
-function createStatus(text, { error = false, live = "polite" } = {}) {
+function createStatus(text, { error = false, live = "polite", full = false } = {}) {
   const status = createNode(
     "p",
-    error ? "status status--error" : "status",
+    `${error ? "status status--error" : "status"}${full ? " status--full" : ""}`,
     text
   );
 
@@ -594,7 +594,7 @@ function renderFavoritesToolbar() {
 
   if (widgetsMigrationFailed) {
     favoritesRoot.replaceChildren(
-      createStatus(favoritesError, { error: true, live: "assertive" })
+      createStatus(favoritesError, { error: true, live: "assertive", full: true })
     );
     return;
   }

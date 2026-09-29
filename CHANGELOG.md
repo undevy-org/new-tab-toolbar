@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `quietTabWidget:<id>`), preparing for weather tiles to join the same grid. Existing
   favorites are migrated automatically on first open; the migration is resumable and
   leaves your data untouched if it fails.
+- The "couldn't move your favorites" message shown when a failed migration locks the favorites bar is no longer clipped to two lines, so the "reload this tab" recovery advice is always readable on narrow screens.
 - A wide tile is shown as a square while the grid has a single column.
 - The favorites bar keeps clear of the weather panel in every position.
 - The Quick links settings panel no longer covers the bar it configures: it docks to

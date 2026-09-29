@@ -253,6 +253,17 @@ describe("newtab favorites source", () => {
     assert.match(code, /new ResizeObserver\(publishPanelDock\)\.observe\(favoritesRoot\)/);
   });
 
+  it("shows the locked-migration message in full, without the status line clamp", async () => {
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /\.status--full\s*\{[^}]*-webkit-line-clamp: unset;/s);
+    assert.match(css, /\.status--full\s*\{[^}]*overflow: visible;/s);
+    assert.match(css, /\.status--full\s*\{[^}]*white-space: normal;/s);
+    assert.match(css, /\.status--full\s*\{[^}]*display: block;/s);
+    const code = await source();
+    assert.match(code, /createStatus\(favoritesError, \{ error: true, live: "assertive", full: true \}\)/);
+    assert.match(code, /status--full/);
+  });
+
   it("scrolls the whole panel body (grid settings, form, error, list) inside the panel", async () => {
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
     assert.match(css, /\.favorites-panel__body\s*\{[^}]*overflow-y: auto;/s);
