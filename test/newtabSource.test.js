@@ -95,45 +95,30 @@ describe("newtab favorites source", () => {
     assert.doesNotMatch(css, /\.favorites-bar\s*\{[^}]*920px/s);
     const mobileBlock = css.slice(css.indexOf("@media (max-width: 600px)"));
     assert.doesNotMatch(mobileBlock, /\.favorites-bar\s*\{[^}]*max-width:/s);
-    assert.match(css, /\.favorites-bar\s*\{[^}]*--favorite-tile-height: 52px;/s);
-    assert.doesNotMatch(css, /\.favorites-grid\s*\{[^}]*--favorite-tile-height:\s*\d/s);
-    assert.match(css, /\.favorites-grid\s*\{[^}]*grid-template-columns: repeat\(var\(--columns, 6\), var\(--favorite-tile-height\)\);/s);
+    assert.match(css, /:root\s*\{[^}]*--tile-height: 52px;/s);
+    assert.doesNotMatch(css, /\.favorites-bar\s*\{[^}]*--tile-height:/s, "a copy on the bar would shadow the :root media overrides");
+    assert.doesNotMatch(css, /\.favorites-grid\s*\{[^}]*--tile-height:\s*\d/s);
+    assert.doesNotMatch(css, /--favorite-tile-height/);
+    assert.match(css, /\.favorites-grid\s*\{[^}]*grid-template-columns: repeat\(var\(--columns, 6\), var\(--tile-height\)\);/s);
     assert.match(css, /\.favorites-panel\s*\{[^}]*z-index: 40;/s);
   });
 
-  it("anchors the weather toolbar to the viewport and scales its tiles on mobile", async () => {
+  it("scales one tile height for favorites, weather tiles and the gear, and has no weather panel", async () => {
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
 
-    assert.match(
-      css,
-      /\.weather-panel\s*\{[^}]*position: fixed;[^}]*bottom: 16px;[^}]*width: fit-content;[^}]*max-width: calc\(100vw - 32px\);[^}]*--weather-tile-height: 52px;[^}]*--favorite-tile-height: var\(--weather-tile-height\);/s
-    );
-    assert.match(
-      css,
-      /\.weather-tile--wide\s*\{[^}]*width: calc\(var\(--weather-tile-height\) \* 2\);/s
-    );
+    assert.doesNotMatch(css, /\.weather-panel/);
+    assert.doesNotMatch(css, /--weather-tile-height/);
+    assert.doesNotMatch(css, /--weather-reserve/);
 
     const mobileBlock = css.slice(css.indexOf("@media (max-width: 600px)"));
-    assert.match(
-      mobileBlock,
-      /\.weather-panel\s*\{[^}]*bottom: 10px;[^}]*gap: 4px;[^}]*max-width: calc\(100vw - 20px\);[^}]*--weather-tile-height: 44px;/s
-    );
-    assert.match(
-      css,
-      /@media \(max-width: 360px\)\s*\{[\s\S]*?\.weather-panel\s*\{[^}]*--weather-tile-height: 36px;/
-    );
-    assert.match(
-      css,
-      /\.weather-tile\s*\{[^}]*flex: 0 0 var\(--weather-tile-height\);/s
-    );
-    assert.match(
-      css,
-      /\.weather-tile--wide\s*\{[^}]*flex-basis: calc\(var\(--weather-tile-height\) \* 2\);/s
-    );
-    assert.match(
-      css,
-      /\.weather-tile__values\s*\{[^}]*max-width: 100%;[^}]*overflow: hidden;/s
-    );
+    assert.match(mobileBlock, /:root\s*\{[^}]*--tile-height: 44px;/s);
+    assert.match(css, /@media \(max-width: 360px\)\s*\{[\s\S]*?:root\s*\{[^}]*--tile-height: 36px;/);
+    assert.match(css, /\.weather-tile\s*\{[^}]*width: var\(--tile-height\);[^}]*height: var\(--tile-height\);/s);
+    assert.match(css, /\.weather-tile\[data-tile-size="wide"\]\s*\{[^}]*grid-column: span 2;/s);
+    assert.match(css, /\.city-hint-tile\[data-tile-size="wide"\]\s*\{[^}]*grid-column: span 2;/s);
+    assert.match(css, /\.weather-tile__values\s*\{[^}]*max-width: 100%;[^}]*overflow: hidden;/s);
+    assert.match(css, /\.weather-tile__secondary\s*\{[^}]*color: var\(--text\);/s);
+    assert.match(css, /\.sr-only\s*\{/);
   });
 
   it("renders tile size from data and reuses the shared icon module for the gear and panel controls", async () => {
@@ -204,14 +189,15 @@ describe("newtab favorites source", () => {
 
   it("skips the empty favorites-grid box when there are no favorites, so the gear sits flush against the bar padding", async () => {
     const code = await source();
-    assert.match(code, /if \(items\.length > 0\) \{\s*const list = createNode\("div", "favorites-grid"\);/);
+    assert.match(code, /if \(list\.childElementCount > 0\) \{\s*fragment\.appendChild\(list\);/);
   });
 
-  it("positions the bar with data-position variants that read --bar-inset and the weather reserve", async () => {
+  it("positions the bar with data-position variants that read --bar-inset and no weather reserve", async () => {
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
     assert.match(css, /\.favorites-bar\[data-position="top"\]\s*\{[^}]*top: var\(--bar-inset\);/s);
-    assert.match(css, /\.favorites-bar\[data-position="bottom"\]\s*\{[^}]*bottom: var\(--weather-reserve\);/s);
-    assert.match(css, /\.favorites-bar\[data-position="center"\]\s*\{[^}]*top: calc\(50% - var\(--weather-reserve\) \/ 2\);/s);
+    assert.match(css, /\.favorites-bar\[data-position="bottom"\]\s*\{[^}]*bottom: var\(--bar-inset\);/s);
+    assert.match(css, /\.favorites-bar\[data-position="center"\]\s*\{[^}]*top: 50%;/s);
+    assert.doesNotMatch(css, /--weather-reserve/);
     assert.doesNotMatch(css, /\.favorites-bar\s*\{[^}]*\btop:/s, "the base rule no longer pins top");
     assert.match(css, /\.favorites-bar\s*\{[^}]*--bar-inset: 16px;/s);
   });
@@ -226,7 +212,7 @@ describe("newtab favorites source", () => {
   it("spans a wide tile over grid columns instead of a fixed pixel width", async () => {
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
     assert.match(css, /\.favorite-tile\[data-tile-size="wide"\]\s*\{[^}]*grid-column: span 2;/s);
-    assert.doesNotMatch(css, /\.favorite-tile\[data-tile-size="wide"\]\s*\{[^}]*calc\(var\(--favorite-tile-height\) \* 2\)/s);
+    assert.doesNotMatch(css, /\.favorite-tile\[data-tile-size="wide"\]\s*\{[^}]*calc\(var\(--tile-height\) \* 2\)/s);
   });
 
   it("scrolls the grid in both axes instead of clipping it, and caps its height", async () => {
@@ -326,10 +312,21 @@ describe("newtab favorites source", () => {
     assert.match(code, /if \(widgetsMigrationFailed\) \{\s*favoritesRoot\.replaceChildren\(/);
   });
 
-  it("publishes the weather panel's height as --weather-reserve without touching weather rendering", async () => {
+  it("no longer publishes a weather reserve: weather lives in the grid", async () => {
     const code = await source();
-    assert.match(code, /new ResizeObserver\(publishWeatherReserve\)\.observe\(weatherRoot\)/);
-    assert.match(code, /setProperty\(\s*"--weather-reserve"/);
+    assert.doesNotMatch(code, /ResizeObserver\(publishWeatherReserve\)/);
+    assert.doesNotMatch(code, /--weather-reserve/);
+    assert.match(code, /createWeatherMetricTile\(item, layout\.columns, view\)/);
+  });
+
+  it("locks the bar with the newer-version message before anything else, and keeps focus across grid re-renders", async () => {
+    const code = await source();
+    assert.match(code, /if \(widgetsNewer\) \{\s*favoritesRoot\.replaceChildren\(\s*createStatus\(NEWER_WIDGETS_MESSAGE/);
+    assert.ok(code.indexOf("if (widgetsNewer)") < code.indexOf("if (widgetsMigrationFailed) {\n    favoritesRoot"));
+    assert.match(code, /inspectWidgetsMeta\(rawMeta\) === "newer"/);
+    assert.match(code, /await ensureWeatherMetrics\(syncStorageArea\)/);
+    assert.match(code, /widgetsEnsureFailed = true;/);
+    assert.match(code, /closest\("\[data-widget-id\], \.favorite-settings"\)/);
   });
 
   it("starts the bar at a known position before the first render", async () => {

@@ -15,10 +15,12 @@ async function css() {
 }
 
 describe("newtab weather source", () => {
-  it("renders the weather panel into its own root", async () => {
+  it("renders weather as grid tiles from weatherTiles.js instead of a separate root", async () => {
     const code = await source();
-    assert.match(code, /querySelector\("#weather"\)/);
-    assert.match(code, /if \(weatherRoot\) \{/);
+    assert.doesNotMatch(code, /querySelector\("#weather"\)/);
+    assert.doesNotMatch(code, /weatherRoot/);
+    assert.match(code, /from "\.\/weatherTiles\.js"/);
+    assert.match(code, /describeWeatherMetric\(\{ metricKey: weatherMetricKey\(item\.id\)/);
   });
 
   it("wires weatherApi/weatherStore/weatherService/weatherUiState modules", async () => {
@@ -31,13 +33,15 @@ describe("newtab weather source", () => {
 
   it("initializes weather independently of the favorites boot", async () => {
     const code = await source();
-    assert.match(code, /weatherResult = await weatherService\.initialize\(\);/);
+    assert.match(code, /result = await weatherService\.initialize\(\);/);
+    assert.match(code, /weatherResult = result;/);
+    assert.match(code, /void startWeather\(\);/);
   });
 
   it("submits the city form through setCity and keeps the form open on error", async () => {
     const code = await source();
     assert.match(code, /form\.dataset\.weatherForm !== "city"/);
-    assert.match(code, /await weatherService\.setCity\(cityName\)/);
+    assert.match(code, /changeCity\(\(\) => weatherService\.setCity\(cityName\)\)/);
     assert.match(code, /weatherFormError = error instanceof Error/);
   });
 
@@ -52,136 +56,96 @@ describe("newtab weather source", () => {
   it("blocks weather actions while a request is in flight", async () => {
     const code = await source();
     assert.match(code, /let weatherBusy = false;/);
-    assert.match(code, /\|\| weatherBusy\)\s*\{\s*return;/);
+    assert.match(code, /weatherBusy\) return;/);
   });
 
-  it("renders the weather toolbar as its own section, with no leftover queue markup", async () => {
+  it("has no weather panel markup, and labels the bar and panel as widgets", async () => {
     const markup = await html();
-    assert.match(
-      markup,
-      /<section class="weather-panel" id="weather" aria-live="polite">/
-    );
-    assert.doesNotMatch(
-      markup,
-      /<section class="panel weather-panel" id="weather" aria-live="polite">/
-    );
+    assert.doesNotMatch(markup, /id="weather"/);
+    assert.doesNotMatch(markup, /weather-panel/);
+    assert.match(markup, /<nav class="favorites-bar" id="favorites" aria-label="Widgets"/);
+    assert.match(markup, /aria-label="Widgets settings"/);
+    assert.match(markup, /data-position="top"/);
     assert.doesNotMatch(markup, /id="app"/);
     assert.doesNotMatch(markup, /<main\b/);
   });
 
-  it("renders temperature, rain, air, and UV tiles in toolbar order", async () => {
-    const code = await source();
-    const tilesStart = code.indexOf("function renderWeatherTiles(data)");
-    const tilesEnd = code.indexOf("function renderWeather()", tilesStart);
-    const tiles = code.slice(tilesStart, tilesEnd);
+  it("describes temperature, rain, air, and UV tiles in toolbar order", async () => {
+    const tiles = await readFile(new URL("../src/weatherTiles.js", import.meta.url), "utf8");
 
-    assert.ok(tilesStart > -1 && tilesEnd > tilesStart);
     assert.deepEqual(
       [...tiles.matchAll(/tone: (\w+)\(/g)].map((match) => match[1]),
       ["temperatureTone", "rainTone", "usAqiTone", "uvTone"]
     );
     assert.deepEqual(
-      [...tiles.matchAll(/size: "(square|wide)"/g)].map((match) => match[1]),
-      ["square", "wide", "wide", "square"]
+      [...tiles.matchAll(/metricKey === "(\w+)"/g)].map((match) => match[1]),
+      ["temperature", "precipitation", "airQuality"]
     );
     assert.match(
       tiles,
       /Currently \$\{formatTemperature\(data\.temperature\)\}°\. Today at 15:00 — \$\{formatTemperature\(data\.temperatureTodayAt15\)\}°, yesterday at 15:00 — \$\{formatTemperature\(data\.temperatureYesterdayAt15\)\}°\./
     );
-    assert.match(
-      tiles,
-      /Chance of rain for the rest of the day — \$\{rainPrimary\}, expected from \$\{data\.precipitationStartHour\}\./
-    );
-    assert.match(tiles, /Chance of rain for the rest of the day — \$\{rainPrimary\}\./);
-    assert.match(
-      tiles,
-      /US AQI \$\{data\.usAqi\} \(\$\{usAqiCategory\(data\.usAqi\)\}\), PM2\.5 \$\{formatPm25\(data\.pm2_5\)\} µg\/m³\./
-    );
-    assert.match(
-      tiles,
-      /Current UV index \$\{data\.uvIndex\} \(\$\{uvIndexLevel\(data\.uvIndex\)\}\)\. Today's peak — \$\{data\.uvIndexMax\} \(\$\{uvIndexLevel\(data\.uvIndexMax\)\}\)\./
-    );
+    assert.match(tiles, /Chance of rain for the rest of the day — \$\{primary\}, expected from \$\{start\}\./);
+    assert.match(tiles, /US AQI \$\{data\.usAqi\} \(\$\{usAqiCategory\(data\.usAqi\)\}\), PM2\.5 \$\{formatPm25\(data\.pm2_5\)\} µg\/m³\./);
+    assert.match(tiles, /Current UV index \$\{data\.uvIndex\} \(\$\{uvIndexLevel\(data\.uvIndex\)\}\)\. Today's peak/);
   });
 
-  it("builds focusable weather tiles with reusable nested tooltips", async () => {
+  it("builds focusable weather tiles described by a screen-reader-only text", async () => {
     const code = await source();
-    const weatherBlockIndex = code.indexOf("if (weatherRoot) {");
-    const tooltipIndex = code.indexOf("function createTooltip(triggerNode, text)");
+    const start = code.indexOf("function createWeatherMetricTile(");
+    const end = code.indexOf("function createCityHintTile(", start);
+    const tile = code.slice(start, end);
 
-    assert.ok(tooltipIndex > -1 && tooltipIndex < weatherBlockIndex);
-    assert.match(code, /let tooltipIdSeq = 0;/);
-    assert.match(code, /triggerNode\.dataset\.tooltipTrigger = "";/);
-    assert.match(code, /tooltip\.id = `tooltip-\$\{tooltipIdSeq\+\+\}`;/);
-    assert.match(code, /tooltip\.setAttribute\("role", "tooltip"\);/);
-    assert.match(code, /triggerNode\.setAttribute\("aria-describedby", tooltip\.id\);/);
-    assert.match(code, /triggerNode\.appendChild\(tooltip\);/);
-    assert.doesNotMatch(code, /triggerNode\.after\(tooltip\)/);
-    assert.match(
-      code,
-      /function createWeatherTile\(\{ size, tone, primary, secondary = null, tooltipText \}\) \{[\s\S]*?tile\.dataset\.weatherTone = tone;[\s\S]*?tile\.tabIndex = 0;[\s\S]*?createTooltip\(tile, tooltipText\);/
-    );
+    assert.ok(start > -1 && end > start);
+    assert.match(tile, /tile\.tabIndex = 0;/);
+    assert.match(tile, /tile\.setAttribute\("role", "group"\);/);
+    assert.match(tile, /tile\.setAttribute\("aria-label", model\.label\);/);
+    assert.match(tile, /createNode\("span", "sr-only", model\.description\)/);
+    assert.match(tile, /description\.dataset\.tooltipText = "";/);
+    assert.match(tile, /tile\.setAttribute\("aria-describedby", description\.id\);/);
+    assert.match(tile, /tile\.dataset\.tooltipTrigger = "";/);
+    assert.match(tile, /tile\.dataset\.widgetId = item\.id;/);
+    assert.doesNotMatch(code, /function createTooltip\(/);
   });
 
-  it("renders the ready or stale toolbar without city or country text and reuses the settings gear", async () => {
+  it("shows the city and the change-city control in the settings Weather block, not on the tiles", async () => {
     const code = await source();
-    const readyStart = code.indexOf("const { status, data, error } = weatherResult;");
-    const readyEnd = code.indexOf("weatherRoot.replaceChildren(fragment);", readyStart);
-    const readyState = code.slice(readyStart, readyEnd);
+    const start = code.indexOf("function createWeatherMetricTile(");
+    const end = code.indexOf("function createCityHintTile(", start);
+    const tile = code.slice(start, end);
+    const blockStart = code.indexOf("function mountWeatherBlockContent(");
+    const block = code.slice(blockStart);
 
-    assert.ok(readyStart > -1 && readyEnd > readyStart);
-    assert.match(
-      readyState,
-      /const gear = createNode\("button", "favorite-settings"\);[\s\S]*?gear\.type = "button";[\s\S]*?gear\.dataset\.weatherAction = "edit-city";[\s\S]*?gear\.setAttribute\("aria-label", "Change city"\);[\s\S]*?gear\.appendChild\(createIconNode\("settings", \{ size: 20 \}\)\);/
-    );
-    assert.match(
-      readyState,
-      /if \(status === "ready" \|\| status === "stale"\) \{\s*fragment\.appendChild\(renderWeatherTiles\(data\)\);\s*\}/
-    );
-    assert.doesNotMatch(readyState, /location\.(?:name|country)/);
+    assert.doesNotMatch(tile, /location\.(?:name|country)/);
+    assert.match(block, /`City: \$\{location\.name\}`/);
+    assert.match(block, /change\.dataset\.weatherAction = "edit-city";/);
+    assert.match(block, /createIconButton\("button", "Change city", "settings"\)/);
+    assert.match(code, /favoritesPanelRoot\?\.addEventListener\("click"/);
+    assert.match(code, /favoritesPanelRoot\?\.addEventListener\("submit"/);
   });
 
-  it("styles wide weather tiles from the shared weather height custom property", async () => {
+  it("styles wide weather tiles by spanning two grid columns of the shared tile height", async () => {
     const styles = await css();
-    assert.match(
-      styles,
-      /\.weather-tile--wide\s*\{[^}]*width: calc\(var\(--weather-tile-height\) \* 2\);/s
-    );
+    assert.match(styles, /\.weather-tile\[data-tile-size="wide"\]\s*\{[^}]*grid-column: span 2;/s);
+    assert.doesNotMatch(styles, /\.weather-tile--wide/);
+    assert.doesNotMatch(styles, /--weather-tile-height/);
   });
 
-  it("keeps edge weather tooltips inside the viewport and layers stale feedback above the toolbar", async () => {
+  it("leaves tooltip placement to the shared layer: no per-tile tooltip boxes or edge rules remain", async () => {
     const styles = await css();
-    const mobileBlock = styles.slice(styles.indexOf("@media (max-width: 600px)"));
-
-    assert.match(
-      styles,
-      /\.weather-tile:first-child > \.tooltip\s*\{[^}]*left: 0;[^}]*transform: none;/s
-    );
-    assert.match(
-      styles,
-      /\.weather-tile:last-child > \.tooltip\s*\{[^}]*left: auto;[^}]*right: 0;[^}]*transform: none;/s
-    );
-    assert.match(
-      mobileBlock,
-      /\.weather-tile:nth-child\(2\) > \.tooltip\s*\{[^}]*left: calc\(-1 \* \(var\(--weather-tile-height\) \+ 4px\)\);[^}]*transform: none;/s
-    );
-    assert.match(
-      mobileBlock,
-      /\.weather-tile:last-child > \.tooltip\s*\{[^}]*right: calc\(-1 \* \(var\(--weather-tile-height\) \+ 4px\)\);/s
-    );
-    assert.match(
-      styles,
-      /\.weather-status\s*\{[^}]*position: absolute;[^}]*z-index: 10;[^}]*bottom: calc\(100% \+ 8px\);/s
-    );
-    assert.match(styles, /\.tooltip\s*\{[^}]*z-index: 20;/s);
+    assert.doesNotMatch(styles, /\.weather-tile:first-child > \.tooltip/);
+    assert.doesNotMatch(styles, /\.weather-tile:last-child > \.tooltip/);
+    assert.doesNotMatch(styles, /\.weather-tile:nth-child\(2\) > \.tooltip/);
+    assert.doesNotMatch(styles, /\.weather-status/);
   });
 
-  it("marks stale feedback so it does not become a toolbar flex item", async () => {
+  it("marks stale tiles with data-stale and a dashed border instead of a floating status", async () => {
     const code = await source();
+    const styles = await css();
 
-    assert.match(
-      code,
-      /if \(status === "stale"\) \{\s*const staleStatus = createStatus\("Couldn't refresh"\);\s*staleStatus\.classList\.add\("weather-status"\);\s*fragment\.appendChild\(staleStatus\);\s*\}/
-    );
+    assert.match(code, /if \(model\.stale\) tile\.dataset\.stale = "true";/);
+    assert.match(styles, /\.weather-tile\[data-stale="true"\]\s*\{[^}]*border-style: dashed;/s);
+    assert.match(code, /Couldn't refresh weather - showing saved data/);
   });
 
   it("wires searchCities for live city suggestions with debounce, minimum length, and request cancellation", async () => {
@@ -195,7 +159,7 @@ describe("newtab weather source", () => {
   it("resets suggestion state on every fresh mount of the city form and guards stale async responses", async () => {
     const code = await source();
     const formStart = code.indexOf("function createWeatherForm(location) {");
-    const formEnd = code.indexOf("function createWeatherTile(");
+    const formEnd = code.indexOf("function createWeatherMetricTile(");
     const form = code.slice(formStart, formEnd);
 
     assert.ok(formStart > -1 && formEnd > formStart);
@@ -208,13 +172,13 @@ describe("newtab weather source", () => {
   it("selects a suggested city without a separate geocoding round-trip", async () => {
     const code = await source();
     assert.match(code, /"select-city"/);
-    assert.match(code, /await weatherService\.selectLocation\(location\)/);
+    assert.match(code, /weatherService\.selectLocation\(\{/);
   });
 
   it("keeps the input focused when clicking a suggestion, so the click is not lost to a blur race", async () => {
     const code = await source();
     const formStart = code.indexOf("function createWeatherForm(location) {");
-    const formEnd = code.indexOf("function createWeatherTile(");
+    const formEnd = code.indexOf("function createWeatherMetricTile(");
     const form = code.slice(formStart, formEnd);
 
     assert.ok(formStart > -1 && formEnd > formStart);
@@ -224,30 +188,33 @@ describe("newtab weather source", () => {
     );
   });
 
-  it("cancels a pending suggestion request when the field blurs or Escape is pressed", async () => {
+  it("cancels a pending suggestion request when the field blurs or Escape is pressed (Escape is central)", async () => {
     const code = await source();
     const formStart = code.indexOf("function createWeatherForm(location) {");
-    const formEnd = code.indexOf("function createWeatherTile(");
+    const formEnd = code.indexOf("function createWeatherMetricTile(");
     const form = code.slice(formStart, formEnd);
 
     const helperStart = form.indexOf("function cancelPendingSuggestionRequest()");
-    const keydownStart = form.indexOf('input.addEventListener("keydown"');
     const blurStart = form.indexOf('input.addEventListener("blur"');
-    const helperBody = form.slice(helperStart, keydownStart);
-    const keydownHandler = form.slice(keydownStart, blurStart);
+    const helperBody = form.slice(helperStart, blurStart);
     const blurHandler = form.slice(blurStart);
 
-    assert.ok(helperStart > -1 && keydownStart > helperStart && blurStart > keydownStart);
+    assert.ok(helperStart > -1 && blurStart > helperStart);
+    assert.doesNotMatch(form, /input\.addEventListener\("keydown"/);
     assert.match(helperBody, /clearTimeout\(debounceTimer\)/);
     assert.match(helperBody, /abortController\.abort\(\)/);
-    assert.match(keydownHandler, /cancelPendingSuggestionRequest\(\)/);
     assert.match(blurHandler, /cancelPendingSuggestionRequest\(\)/);
+    assert.match(form, /activeCityForm = \{ cancelPending: cancelPendingSuggestionRequest, renderSuggestions: renderSuggestionsList \};/);
+    assert.match(
+      code,
+      /if \(isSuggestionsOpen\(weatherUi\)\) \{\s*activeCityForm\?\.cancelPending\(\);\s*weatherUi = hideSuggestions\(weatherUi\);\s*activeCityForm\?\.renderSuggestions\(\);/
+    );
   });
 
   it("disambiguates suggestions with the same name using admin1", async () => {
     const code = await source();
     const formStart = code.indexOf("function createWeatherForm(location) {");
-    const formEnd = code.indexOf("function createWeatherTile(");
+    const formEnd = code.indexOf("function createWeatherMetricTile(");
     const form = code.slice(formStart, formEnd);
 
     assert.ok(formStart > -1 && formEnd > formStart);
@@ -256,6 +223,15 @@ describe("newtab weather source", () => {
       /const labelParts = \[suggestion\.name, suggestion\.admin1, suggestion\.country\]\.filter\([\s\S]*?\(part\) => part[\s\S]*?\);/
     );
     assert.match(form, /const label = labelParts\.join\(", "\);/);
+  });
+
+  it("never replaces a mounted city form or a stale first load when weather results arrive late", async () => {
+    const code = await source();
+
+    assert.match(code, /if \(formHost\.dataset\.kind === kind\) return;/);
+    assert.match(code, /renderFavoritesToolbar\(\);\s*syncWeatherBlock\(\);/);
+    assert.match(code, /if \(generation !== weatherGeneration\) \{\s*return;\s*\}/);
+    assert.match(code, /if \(weatherChanging && currentLocation\(\)\) return null;/);
   });
 
   it("styles the city suggestion dropdown", async () => {
