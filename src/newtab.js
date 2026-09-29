@@ -26,7 +26,7 @@ import {
   inspectWidgetsMeta,
   migrateToWidgets
 } from "./widgetsStore.js";
-import { gridLayout, panelDock, placeTooltip, tileSpan } from "./widgetsLayout.js";
+import { gridLayout, moveTargetIndex, panelDock, placeTooltip, tileSpan } from "./widgetsLayout.js";
 import {
   MAX_GRID_COLUMNS,
   MIN_GRID_COLUMNS,
@@ -607,7 +607,8 @@ function syncGridSettingInputs() {
   }
 }
 
-function createFavoritesPanelRow(item, index, itemCount) {
+function createFavoritesPanelRow(item, items) {
+  const index = items.indexOf(item);
   const row = createNode("div", "favorites-panel__row");
 
   const info = createNode("div", "favorites-panel__item");
@@ -625,7 +626,7 @@ function createFavoritesPanelRow(item, index, itemCount) {
   earlier.dataset.favoriteAction = "move-earlier";
   earlier.dataset.favoriteId = item.id;
   earlier.setAttribute("aria-label", `Move ${item.label} earlier`);
-  earlier.disabled = disabled || index === 0;
+  earlier.disabled = disabled || moveTargetIndex(items, index, -1) === -1;
   earlier.appendChild(createIconNode("chevronUp"));
 
   const later = createNode("button", "icon-button");
@@ -633,7 +634,7 @@ function createFavoritesPanelRow(item, index, itemCount) {
   later.dataset.favoriteAction = "move-later";
   later.dataset.favoriteId = item.id;
   later.setAttribute("aria-label", `Move ${item.label} later`);
-  later.disabled = disabled || index === itemCount - 1;
+  later.disabled = disabled || moveTargetIndex(items, index, 1) === -1;
   later.appendChild(createIconNode("chevronDown"));
 
   const edit = createNode("button", "icon-button");
@@ -647,6 +648,86 @@ function createFavoritesPanelRow(item, index, itemCount) {
   controls.append(earlier, later, edit);
   row.append(info, controls);
   return row;
+}
+
+const METRIC_LABELS = { temperature: "Temperature", precipitation: "Precipitation", airQuality: "Air quality", uv: "UV index" };
+
+function createMetricMoveButtons(item, items, disabled) {
+  const index = items.indexOf(item);
+  const make = (action, label, icon, blocked) => {
+    const button = createNode("button", "icon-button");
+    button.type = "button";
+    button.dataset.favoriteAction = action;
+    button.dataset.favoriteId = item.id;
+    button.setAttribute("aria-label", `Move ${label} ${action === "move-earlier" ? "earlier" : "later"}`);
+    button.disabled = disabled || blocked;
+    button.appendChild(createIconNode(icon));
+    return button;
+  };
+  const label = METRIC_LABELS[weatherMetricKey(item.id)];
+  return [
+    make("move-earlier", label, "chevronUp", moveTargetIndex(items, index, -1) === -1),
+    make("move-later", label, "chevronDown", moveTargetIndex(items, index, 1) === -1)
+  ];
+}
+
+function createWeatherMetricRow(item, items) {
+  const label = METRIC_LABELS[weatherMetricKey(item.id)];
+  const row = createNode("div", "favorites-panel__row");
+  row.dataset.metricRow = "";
+  row.dataset.metricId = item.id;
+
+  const info = createNode("div", "favorites-panel__item");
+  const text = createNode("div");
+  text.appendChild(createNode("strong", null, label));
+  const badge = createNode("span", "badge", "Hidden");
+  badge.dataset.hiddenBadge = "";
+  text.appendChild(badge);
+  info.appendChild(text);
+
+  const controls = createNode("div", "favorites-panel__controls");
+  const show = createNode("label", "metric-show");
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.dataset.metricSetting = "enabled";
+  checkbox.dataset.metricId = item.id;
+  checkbox.setAttribute("aria-label", `Show ${label}`);
+  show.append(checkbox, createNode("span", null, "Show"));
+
+  const size = createSegmentedControl(`tileSize-${item.id}`, [["square", "Square"], ["wide", "Wide 2:1"]], item.tileSize);
+  size.setAttribute("aria-label", `${label} tile size`);
+  for (const input of size.querySelectorAll("input")) {
+    input.dataset.metricSetting = "tileSize";
+    input.dataset.metricId = item.id;
+  }
+
+  controls.append(show, size, ...createMetricMoveButtons(item, items, favoritesBusy || isFormOpen(favoritesUi)));
+  row.append(info, controls);
+  applyMetricRowState(row, item);
+  return row;
+}
+
+function applyMetricRowState(row, item) {
+  row.dataset.hidden = String(!item.enabled);
+  row.querySelector("[data-hidden-badge]").hidden = item.enabled;
+  row.querySelector('[data-metric-setting="enabled"]').checked = item.enabled;
+  for (const radio of row.querySelectorAll('[data-metric-setting="tileSize"]')) radio.checked = radio.value === item.tileSize;
+}
+
+// In-place sync so an open add/edit form keeps its contents and focus stays on the used control.
+function syncMetricRows() {
+  for (const row of favoritesPanelRoot?.querySelectorAll("[data-metric-row]") ?? []) {
+    const item = widgetsState?.items.find((entry) => entry.id === row.dataset.metricId);
+    if (item) applyMetricRowState(row, item);
+  }
+}
+
+function showMetricError(message) {
+  metricErrorText = message; // module state: survives a panel rebuild, cleared by the next successful metric action
+  const node = favoritesPanelRoot?.querySelector("[data-metric-error]");
+  if (!node) return;
+  node.textContent = message;
+  node.hidden = message === "";
 }
 
 function createWeatherForm(location) {
@@ -711,6 +792,11 @@ function createWeatherForm(location) {
       button.dataset.cityLatitude = String(suggestion.latitude);
       button.dataset.cityLongitude = String(suggestion.longitude);
       suggestionsList.appendChild(button);
+    }
+
+    // On a short window the list can sit below the visible part of the panel body: bring it into view.
+    if (suggestionsList.isConnected && typeof suggestionsList.scrollIntoView === "function") {
+      suggestionsList.scrollIntoView({ block: "nearest" });
     }
   }
 
@@ -977,8 +1063,10 @@ function renderFavoritesPanel() {
   }
 
   const listWrap = createNode("div", "favorites-panel__list");
-  items.forEach((item, index) => {
-    listWrap.appendChild(createFavoritesPanelRow(item, index, items.length));
+  items.forEach((item) => {
+    listWrap.appendChild(
+      item.type === "favorite" ? createFavoritesPanelRow(item, items) : createWeatherMetricRow(item, items)
+    );
   });
   body.appendChild(listWrap);
   fragment.appendChild(body);
@@ -1202,10 +1290,16 @@ if (favoritesRoot) {
           finishFavoritesAction(generation, () => {
             widgetsState = nextState;
             favoritesError = "";
+            metricErrorText = "";
           });
         } catch (error) {
           finishFavoritesAction(generation, () => {
-            favoritesError = error instanceof Error ? error.message : String(error);
+            const message = error instanceof Error ? error.message : String(error);
+            if (String(movedId).startsWith("weather:")) {
+              metricErrorText = message;
+            } else {
+              favoritesError = message;
+            }
           });
         }
       })();
@@ -1223,6 +1317,23 @@ if (favoritesRoot) {
   favoritesPanelRoot?.addEventListener("change", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLInputElement) || !widgetsService) {
+      return;
+    }
+
+    const metricSetting = target.dataset.metricSetting;
+    if (metricSetting) {
+      const id = target.dataset.metricId;
+      const patch = metricSetting === "enabled" ? { enabled: target.checked } : { tileSize: target.value };
+      void (async () => {
+        try {
+          widgetsState = await widgetsService.updateWeatherMetric(id, patch);
+          showMetricError("");
+          renderFavoritesToolbar();
+        } catch (error) {
+          showMetricError(error instanceof Error ? error.message : String(error));
+        }
+        syncMetricRows();
+      })();
       return;
     }
 
@@ -1362,8 +1473,9 @@ if (favoritesRoot) {
         }
 
         const payload = readFavoriteFormPayload(data);
+        const previousIds = new Set(widgetsState.items.map((item) => item.id));
         widgetsState = await widgetsService.addFavorite(payload);
-        const added = widgetsState.items.at(-1);
+        const added = widgetsState.items.find((item) => !previousIds.has(item.id));
 
         finishFavoritesAction(generation, () => {
           pendingFocus = [ADD_BUTTON_SELECTOR];

@@ -354,4 +354,46 @@ describe("newtab favorites source", () => {
     assert.doesNotMatch(css, /:last-child > \.tooltip/);
     assert.doesNotMatch(css, /\[data-tooltip-trigger\]:(hover|focus-visible) > \.tooltip/);
   });
+  it("routes metric controls through updateWeatherMetric with absolute values and re-syncs the rows in place", async () => {
+    const code = await source();
+    assert.match(code, /updateWeatherMetric\(/);
+    assert.match(code, /\{ enabled: target\.checked \}/);
+    assert.match(code, /\{ tileSize: target\.value \}/);
+    assert.match(code, /function syncMetricRows\(\)/);
+    assert.match(code, /moveTargetIndex\(items, index, -1\) === -1/);
+  });
+
+  it("finds the newly added favorite by id difference, never as the last item", async () => {
+    const code = await source();
+    assert.doesNotMatch(code, /items\.at\(-1\)/);
+    assert.match(code, /const previousIds = new Set\(widgetsState\.items\.map\(\(item\) => item\.id\)\);/);
+    assert.match(code, /find\(\(item\) => !previousIds\.has\(item\.id\)\)/);
+    assert.ok(code.indexOf("const previousIds") < code.indexOf("await widgetsService.addFavorite(payload)"));
+  });
+
+  it("uses the Widgets terminology and names the metric controls", async () => {
+    const code = await source();
+    assert.match(code, /"Manage widgets"/);
+    assert.match(code, /createNode\("h2", null, "Widgets"\)/);
+    assert.match(code, /`Show \$\{label\}`/);
+    assert.match(code, /`\$\{label\} tile size`/);
+  });
+
+  it("orders the weather status by priority: no APIs, ensure failed, error, stale", async () => {
+    const code = await source();
+    const model = code.slice(code.indexOf("function weatherStatusModel()"));
+    const positions = [
+      "Chrome APIs for weather are unavailable.",
+      "widgetsEnsureFailed",
+      'view?.status === "error"',
+      'view?.status === "stale"'
+    ].map((needle) => model.indexOf(needle));
+    assert.ok(positions.every((position) => position >= 0), positions.join());
+    assert.deepEqual([...positions].sort((a, b) => a - b), positions);
+  });
+
+  it("keeps metric move errors in the metric slot", async () => {
+    const code = await source();
+    assert.match(code, /startsWith\("weather:"\)\) \{\s*metricErrorText = message;/);
+  });
 });

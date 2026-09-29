@@ -314,6 +314,44 @@ body {
   gap: 6px;
 }
 
+.favorites-panel__item .badge {
+  display: inline-block;
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.favorites-panel__item .badge[hidden] {
+  display: none;
+}
+
+.metric-show {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.metric-show input {
+  width: 20px;
+  height: 20px;
+}
+
+.favorites-panel__row[data-hidden="true"] strong {
+  color: var(--muted);
+}
+
+.favorites-panel__row[data-metric-row] {
+  flex-wrap: wrap;
+}
+
+.favorites-panel__row[data-metric-row] .favorites-panel__controls {
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+}
+
 .icon-button {
   display: inline-flex;
   align-items: center;
@@ -722,6 +760,7 @@ body {
 .weather-block__city {
   margin: 0;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .weather-form {
