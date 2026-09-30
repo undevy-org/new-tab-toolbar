@@ -992,17 +992,29 @@ function attachCityModalListeners(root) {
   });
 }
 
+let cityModalShownThisLoad = false; // the automatic prompt never reopens a modal that was already shown this page load
+
 function showCityModal(mode, openerSelector) {
   if (cityModalRoot || isCityModalOpen(weatherUi) || !weatherService || !document.body) return false; // one modal at a time
+  cityModalError = "";
+  let root = null;
+  try {
+    root = buildCityModal(mode, weatherLocationError ? null : currentLocation());
+    attachCityModalListeners(root); // before any focus() so the focusin below is seen
+    document.body.appendChild(root);
+  } catch (error) {
+    // Nothing half-open: a failed build must not leave the UI state "open" and block every later open.
+    root?.remove();
+    activeCityForm = null;
+    throw error;
+  }
+  cityModalRoot = root;
+  cityModalShownThisLoad = true;
   weatherUi = openCityModalState(weatherUi, mode);
   cityModalOpener = openerSelector;
-  cityModalError = "";
   cityModalHadFocus = false;
   cityModalOpenedAt = performance.now();
   hideTooltip();
-  cityModalRoot = buildCityModal(mode, weatherLocationError ? null : currentLocation());
-  attachCityModalListeners(cityModalRoot); // before any focus() so the focusin below is seen
-  document.body.appendChild(cityModalRoot);
   if (favoritesRoot) favoritesRoot.inert = true;
   if (favoritesPanelRoot) favoritesPanelRoot.inert = true;
   if (mode === "change") cityModalRoot.querySelector(CITY_INPUT_SELECTOR)?.focus(); // first-run never steals focus
@@ -1043,7 +1055,7 @@ function onFirstRunDismissed() {
 // Evaluated once per page load, after the first grid render, on live state (spec § Storage and the automatic-show rule).
 // First-run open never moves focus (D2): showCityModal only focuses in change mode.
 function maybeAutoShowCityPrompt({ flagRead, dismissed }) {
-  if (cityModalRoot) return; // the user opened the modal meanwhile: never replace or duplicate it
+  if (cityModalRoot || cityModalShownThisLoad) return; // a modal was opened meanwhile (or already shown and closed): never replace, duplicate or reopen it
   const items = widgetsState?.items ?? [];
   const show = shouldAutoShowCityPrompt({
     locationRead: weatherLocationKnown && !weatherLocationError,
@@ -1383,7 +1395,11 @@ if (favoritesRoot) {
         flagRead = false; // fail closed: an unreadable flag never shows the modal
       }
     }
-    maybeAutoShowCityPrompt({ flagRead, dismissed });
+    try {
+      maybeAutoShowCityPrompt({ flagRead, dismissed });
+    } catch {
+      // the automatic prompt is best-effort; a failure must not surface as an unhandled rejection
+    }
   })();
 
   function handleFavoritesClick(event) {
@@ -1609,7 +1625,10 @@ if (favoritesRoot) {
     const controls = [...cityModalRoot.querySelectorAll("input, button")].filter(
       (el) => !el.disabled && el.dataset.weatherAction !== "select-city"
     );
-    if (controls.length === 0) return;
+    if (controls.length === 0) {
+      event.preventDefault(); // busy: nothing to enter, focus stays on body and never leaves the page
+      return;
+    }
     const first = controls[0];
     const last = controls[controls.length - 1];
     const active = document.activeElement;

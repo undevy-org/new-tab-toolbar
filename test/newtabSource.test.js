@@ -424,7 +424,8 @@ describe("newtab city modal source", () => {
     assert.match(code, /dialog\.setAttribute\("role", "dialog"\);/);
     assert.match(code, /dialog\.setAttribute\("aria-modal", "true"\);/);
     assert.match(code, /dialog\.setAttribute\("aria-labelledby", "city-modal-title"\);/);
-    assert.match(code, /document\.body\.appendChild\(cityModalRoot\);/);
+    assert.match(code, /document\.body\.appendChild\(root\);/);
+    assert.match(code, /cityModalRoot = root;/);
     assert.match(code, /cityModalRoot\.remove\(\);/);
   });
 
@@ -469,6 +470,21 @@ describe("newtab city modal source", () => {
     const trap = between(code, 'if (event.key !== "Tab" || !cityModalRoot) return;', "});");
     assert.match(trap, /el\.dataset\.weatherAction !== "select-city"/);
     assert.match(trap, /!el\.disabled/);
+  });
+
+  it("keeps Tab on the page (preventDefault) when every modal control is disabled", async () => {
+    const code = await source();
+    const trap = between(code, 'if (event.key !== "Tab" || !cityModalRoot) return;', "});");
+    assert.match(trap, /if \(controls\.length === 0\) \{\s*event\.preventDefault\(\);[^\n]*\s*return;\s*\}/);
+  });
+
+  it("the automatic prompt never reopens a modal already shown this page load", async () => {
+    const code = await source();
+    assert.match(code, /let cityModalShownThisLoad = false;/);
+    const auto = between(code, "function maybeAutoShowCityPrompt(", "const items");
+    assert.match(auto, /cityModalShownThisLoad/);
+    const show = between(code, "function showCityModal(", "// `dismiss` is set");
+    assert.match(show, /cityModalShownThisLoad = true;/);
   });
 
   it("ignores backdrop clicks right after opening and remembers focus inside the modal", async () => {
@@ -561,7 +577,7 @@ describe("newtab first-run city prompt source", () => {
     const start = code.indexOf("function maybeAutoShowCityPrompt(");
     assert.ok(start >= 0);
     const body = code.slice(start, code.indexOf("\n}\n", start));
-    assert.match(body, /^function maybeAutoShowCityPrompt\(\{ flagRead, dismissed \}\) \{\s*if \(cityModalRoot\) return;/);
+    assert.match(body, /^function maybeAutoShowCityPrompt\(\{ flagRead, dismissed \}\) \{\s*if \(cityModalRoot \|\| cityModalShownThisLoad\) return;/);
     for (const part of [
       "locationRead: weatherLocationKnown && !weatherLocationError",
       "hasLocation: Boolean(weatherLocation)",
