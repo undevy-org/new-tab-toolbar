@@ -520,3 +520,73 @@ describe("newtab city modal source", () => {
     assert.doesNotMatch(css, /\.city-modal[^{]*\{[^}]*transition/s);
   });
 });
+
+describe("newtab first-run city prompt source", () => {
+  function bootstrap(code) {
+    const start = code.indexOf("if (favoritesRoot) {\n  void (async () => {");
+    assert.ok(start >= 0, "bootstrap start");
+    return code.slice(start, code.indexOf("})();", start));
+  }
+
+  it("evaluates the automatic prompt exactly once, in the bootstrap, after the first render", async () => {
+    const code = await source();
+    assert.equal(code.match(/maybeAutoShowCityPrompt\(\{ flagRead, dismissed \}\);/g)?.length, 1); // the one call (the definition has no semicolon)
+    assert.equal(code.match(/maybeAutoShowCityPrompt\(/g)?.length, 2); // definition + one call
+    const boot = bootstrap(code);
+    const call = boot.indexOf("maybeAutoShowCityPrompt({ flagRead, dismissed });");
+    assert.ok(call > 0, "called from the bootstrap");
+    const lastRender = boot.lastIndexOf("renderFavorites();", call);
+    const startWeather = boot.lastIndexOf("void startWeather();", call);
+    assert.ok(lastRender > 0 && startWeather > lastRender && call > startWeather, "render, then weather, then the prompt");
+    assert.ok(boot.indexOf("weatherPromptStore.isDismissed()") > startWeather, "the flag is read after the first render");
+  });
+
+  it("fails closed when the flag cannot be read", async () => {
+    const boot = bootstrap(await source());
+    assert.match(boot, /let flagRead = false;/);
+    assert.match(boot, /catch \{\s*flagRead = false;/);
+    assert.match(boot, /dismissed = await weatherPromptStore\.isDismissed\(\);\s*flagRead = true;/);
+  });
+
+  it("builds the prompt store only with local storage and writes the flag silently", async () => {
+    const code = await source();
+    assert.match(code, /import \{ shouldAutoShowCityPrompt \} from "\.\/cityPrompt\.js";/);
+    assert.match(code, /const weatherPromptStore = hasStorageArea\(localStorageArea\) \? createWeatherPromptStore\(localStorageArea\) : null;/);
+    assert.match(code, /weatherPromptStore\.dismiss\(\)\.catch\(/);
+    assert.doesNotMatch(code, /onFirstRunDismissed\(\) \{\}/);
+  });
+
+  it("feeds the pure rule with live state and never replaces an open modal", async () => {
+    const code = await source();
+    const start = code.indexOf("function maybeAutoShowCityPrompt(");
+    assert.ok(start >= 0);
+    const body = code.slice(start, code.indexOf("\n}\n", start));
+    assert.match(body, /^function maybeAutoShowCityPrompt\(\{ flagRead, dismissed \}\) \{\s*if \(cityModalRoot\) return;/);
+    for (const part of [
+      "locationRead: weatherLocationKnown && !weatherLocationError",
+      "hasLocation: Boolean(weatherLocation)",
+      'item.type === "weather-metric" && item.enabled === true',
+      "weatherAvailable: Boolean(weatherService && weatherPromptStore)",
+      "gridLocked: widgetsNewer || widgetsMigrationFailed"
+    ]) {
+      assert.ok(body.includes(part), part);
+    }
+  });
+
+  it("opens the first-run modal from one place and never calls focus() on that path", async () => {
+    const code = await source();
+    assert.equal(code.match(/showCityModal\("first-run"/g)?.length, 1);
+    assert.match(code, /if \(show\) showCityModal\("first-run", null\);/);
+    const start = code.indexOf("function showCityModal(");
+    const guard = code.indexOf('if (mode === "change")', start);
+    assert.ok(start >= 0 && guard > start);
+    assert.doesNotMatch(code.slice(start, guard), /\.focus\(/); // no focus() call before the change-mode guard
+    const guardLine = code.slice(guard, code.indexOf("\n", guard));
+    assert.match(guardLine, /\.focus\(\)/);
+  });
+
+  it("adds no storage change listener (tabs do not observe each other)", async () => {
+    const code = await source();
+    assert.doesNotMatch(code, /storage\.onChanged/);
+  });
+});

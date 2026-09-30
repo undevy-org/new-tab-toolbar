@@ -35,7 +35,8 @@ import {
 } from "./widgetsShared.js";
 import { searchCities } from "./weatherApi.js";
 import { createWeatherService } from "./weatherService.js";
-import { createWeatherCacheStore, createWeatherLocationStore } from "./weatherStore.js";
+import { shouldAutoShowCityPrompt } from "./cityPrompt.js";
+import { createWeatherCacheStore, createWeatherLocationStore, createWeatherPromptStore } from "./weatherStore.js";
 import { describeWeatherMetric } from "./weatherTiles.js";
 import {
   cityModalMode,
@@ -214,6 +215,7 @@ const weatherLocationStore = hasStorageArea(syncStorageArea)
 const weatherCacheStore = hasStorageArea(localStorageArea)
   ? createWeatherCacheStore(localStorageArea)
   : null;
+const weatherPromptStore = hasStorageArea(localStorageArea) ? createWeatherPromptStore(localStorageArea) : null;
 const weatherService =
   weatherLocationStore && weatherCacheStore
     ? createWeatherService({
@@ -1033,7 +1035,27 @@ function hideCityModal({ dismiss = false } = {}) {
   cityModalOpener = null;
 }
 
-function onFirstRunDismissed() {} // wired to the flag store in Task 3
+// D3/D5: any close of the automatic modal records the dismissal; a failed write is silent (the modal shows again next time).
+function onFirstRunDismissed() {
+  if (weatherPromptStore) void weatherPromptStore.dismiss().catch(() => {});
+}
+
+// Evaluated once per page load, after the first grid render, on live state (spec § Storage and the automatic-show rule).
+// First-run open never moves focus (D2): showCityModal only focuses in change mode.
+function maybeAutoShowCityPrompt({ flagRead, dismissed }) {
+  if (cityModalRoot) return; // the user opened the modal meanwhile: never replace or duplicate it
+  const items = widgetsState?.items ?? [];
+  const show = shouldAutoShowCityPrompt({
+    locationRead: weatherLocationKnown && !weatherLocationError,
+    hasLocation: Boolean(weatherLocation),
+    flagRead,
+    dismissed,
+    anyMetricEnabled: items.some((item) => item.type === "weather-metric" && item.enabled === true),
+    weatherAvailable: Boolean(weatherService && weatherPromptStore),
+    gridLocked: widgetsNewer || widgetsMigrationFailed
+  });
+  if (show) showCityModal("first-run", null);
+}
 
 function createWeatherMetricTile(item, columns, view) {
   const effectiveSize = tileSpan(item.tileSize, columns) === 2 ? "wide" : "square";
@@ -1349,6 +1371,19 @@ if (favoritesRoot) {
 
     renderFavorites();
     void startWeather();
+
+    // The flag is read after the first render so it never delays the grid.
+    let flagRead = false;
+    let dismissed = false;
+    if (weatherPromptStore) {
+      try {
+        dismissed = await weatherPromptStore.isDismissed();
+        flagRead = true;
+      } catch {
+        flagRead = false; // fail closed: an unreadable flag never shows the modal
+      }
+    }
+    maybeAutoShowCityPrompt({ flagRead, dismissed });
   })();
 
   function handleFavoritesClick(event) {
