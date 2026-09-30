@@ -133,6 +133,8 @@ the forecast arrives.
   stored city was read and is unset, the flag was read and is not set, at least one
   weather tile is shown, weather is available, and the grid is not locked (newer
   meta or failed migration). Any unknown input (a failed read) means it does not open.
+  It never replaces, duplicates or reopens a modal that was already opened (and closed)
+  during this page load.
 - **Dismissal.** Closing the first-run modal by any route (Not now, Escape, a click
   on the backdrop) writes the flag; a failed write is silent, so the modal may show
   again next time. Choosing a city does not write it (a city being set is what
@@ -142,7 +144,8 @@ the forecast arrives.
   modal is the only interactive region.
 - **Focus.** In change mode focus moves to the city field at once; the first-run
   modal never takes focus by itself. Tab wraps inside the modal, and Tab from `body`
-  or outside it enters the modal (suggestion buttons are mouse-only and skipped).
+  or outside it enters the modal (suggestion buttons are mouse-only and skipped);
+  while a request runs every control is disabled, so Tab does nothing and focus stays on `body`.
   On close, focus returns to the control that opened it (change mode), falling
   back to the Weather block button and then the gear button; a first-run modal
   returns focus to the gear button only if focus was inside it.

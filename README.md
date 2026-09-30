@@ -33,7 +33,7 @@ else.
 
 The first launch shows an empty favorites bar and asks you to set a city
 for the weather tiles in a small dialog (you can close it and set a city
-later with the "Set a city" tile or "Change city" in the Widgets settings).
+later with the "Set a city" tile or the "Set a city" / "Change city" button in the Widgets settings).
 
 ## Permissions And Privacy
 
