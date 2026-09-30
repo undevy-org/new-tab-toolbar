@@ -133,7 +133,7 @@ describe("newtab weather source", () => {
     assert.match(block, /button\.textContent = location \? "Change city" : "Set a city";/);
     assert.doesNotMatch(block, /createIconButton\(/);
     assert.match(code, /favoritesPanelRoot\?\.addEventListener\("click"/);
-    assert.match(code, /favoritesPanelRoot\?\.addEventListener\("submit"/);
+    assert.match(code, /\broot\.addEventListener\("submit"[\s\S]{0,200}dataset\.weatherForm !== "city"/);
   });
 
   it("styles wide weather tiles by spanning two grid columns of the shared tile height", async () => {
