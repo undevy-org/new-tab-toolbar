@@ -806,6 +806,51 @@ body {
   outline-offset: 2px;
 }
 
+.weather-block__action {
+  display: flex;
+}
+
+/* City modal: above the panel (z-index 40) and the tooltip layer (60). No transitions. */
+.city-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.city-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 50%);
+}
+
+.city-modal__dialog {
+  position: relative;
+  box-sizing: border-box;
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 32%);
+}
+
+.city-modal__title { margin: 0 0 8px; font-size: 18px; }
+.city-modal__description, .city-modal__current { margin: 0 0 12px; color: var(--muted); overflow-wrap: anywhere; }
+.city-modal .weather-form__row { flex-wrap: wrap; }
+.city-modal :is(button, input):focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.city-modal .status--full { display: block; -webkit-line-clamp: unset; line-clamp: unset; overflow: visible; overflow-wrap: anywhere; }
+/* The rule above must not defeat [hidden] on the empty error slot. */
+.city-modal .status--full[hidden] { display: none; }
+.city-modal .favorite-input::placeholder { color: var(--muted); opacity: 1; }
+
 @media (max-width: 600px) {
   :root {
     --toolbar-h: 64px;

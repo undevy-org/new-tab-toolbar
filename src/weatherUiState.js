@@ -1,23 +1,9 @@
-// Pure UI-state machine for the weather panel's city form: whether the city
-// modal is open (in "first-run" or "change" mode), and the live city-suggestion
-// dropdown (candidate list plus whether it's open). Unlike favoritesUiState
-// there is no add/edit distinction — the same form covers first-time setup
-// and later city changes.
+// Pure UI-state machine for the city modal: whether it is open (in "first-run"
+// or "change" mode), and the live city-suggestion list of its form (candidate
+// list plus whether it's open). Opening or closing the modal drops the list.
 
 export function createInitialWeatherUiState() {
-  return { editing: false, suggestions: [], suggestionsOpen: false, modal: null };
-}
-
-export function startEditingCity(state) {
-  return { ...state, editing: true };
-}
-
-export function stopEditingCity(state) {
-  return { ...state, editing: false };
-}
-
-export function isEditingCity(state) {
-  return state.editing === true;
+  return { suggestions: [], suggestionsOpen: false, modal: null };
 }
 
 export function showSuggestions(state, suggestions) {

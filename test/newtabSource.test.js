@@ -405,3 +405,118 @@ describe("newtab favorites source", () => {
     assert.match(code, /startsWith\("weather:"\)\) \{\s*metricErrorText = message;/);
   });
 });
+
+describe("newtab city modal source", () => {
+  const between = (code, from, to) => {
+    const start = code.indexOf(from);
+    const end = code.indexOf(to, start + from.length);
+    assert.ok(start > -1 && end > start, `${from} .. ${to}`);
+    return code.slice(start, end);
+  };
+
+  it("renders the modal as its own dialog root under body, present only while open", async () => {
+    const code = await source();
+    assert.match(code, /function showCityModal\(mode, openerSelector\)/);
+    assert.match(code, /function hideCityModal\(\{ dismiss = false \} = \{\}\)/);
+    assert.match(code, /function syncCityModal\(\)/);
+    assert.match(code, /function attachCityModalListeners\(root\)/);
+    assert.match(code, /root\.id = "city-modal";/);
+    assert.match(code, /dialog\.setAttribute\("role", "dialog"\);/);
+    assert.match(code, /dialog\.setAttribute\("aria-modal", "true"\);/);
+    assert.match(code, /dialog\.setAttribute\("aria-labelledby", "city-modal-title"\);/);
+    assert.match(code, /document\.body\.appendChild\(cityModalRoot\);/);
+    assert.match(code, /cityModalRoot\.remove\(\);/);
+  });
+
+  it("makes the bar and the panel inert while the modal is open and restores them on close", async () => {
+    const code = await source();
+    const show = between(code, "function showCityModal(", "function hideCityModal(");
+    const hide = between(code, "function hideCityModal(", "function onFirstRunDismissed(");
+    assert.match(show, /favoritesRoot\.inert = true;/);
+    assert.match(show, /favoritesPanelRoot\.inert = true;/);
+    assert.match(show, /hideTooltip\(\);/);
+    assert.match(hide, /favoritesRoot\.inert = false;/);
+    assert.match(hide, /favoritesPanelRoot\.inert = false;/);
+    assert.match(hide, /cityModalHadFocus/);
+  });
+
+  it("focuses the field only in change mode and returns focus to the opener, looked up at close time", async () => {
+    const code = await source();
+    const show = between(code, "function showCityModal(", "function hideCityModal(");
+    assert.match(show, /if \(mode === "change"\) cityModalRoot\.querySelector\(CITY_INPUT_SELECTOR\)\?\.focus\(\);/);
+    assert.match(code, /pendingFocus = \[cityModalOpener, OPEN_CITY_MODAL_SELECTOR, GEAR_SELECTOR\]\.filter\(Boolean\);/);
+    assert.match(code, /showCityModal\("change", HINT_TILE_SELECTOR\)/);
+    assert.match(code, /const HINT_TILE_SELECTOR = '\[data-widget-id="weather:hint"\]';/);
+    assert.doesNotMatch(code, /CHANGE_CITY_SELECTOR/);
+  });
+
+  it("orders the single Escape handler: tooltip, suggestions, modal, then the panel", async () => {
+    const code = await source();
+    const handler = between(code, 'if (event.key !== "Escape")', 'addEventListener("pointerdown"');
+    const order = ["hideTooltipIfVisible()", "isSuggestionsOpen(weatherUi)", "cityModalRoot", "favoritesBusy"].map((n) => handler.indexOf(n));
+    assert.ok(order.every((i) => i >= 0), order.join());
+    assert.deepEqual([...order].sort((a, b) => a - b), order);
+    assert.match(handler, /if \(cityModalRoot\) \{\s*if \(!weatherBusy\) hideCityModal\(\{ dismiss: true \}\);\s*return;\s*\}/);
+  });
+
+  it("never closes the panel on an outside pointerdown while the modal is open", async () => {
+    const code = await source();
+    assert.match(code, /addEventListener\("pointerdown", \(event\) => \{\s*if \(cityModalRoot\) return;/);
+  });
+
+  it("traps Tab inside the modal and leaves suggestion buttons out of the cycle", async () => {
+    const code = await source();
+    const trap = between(code, 'if (event.key !== "Tab" || !cityModalRoot) return;', "});");
+    assert.match(trap, /el\.dataset\.weatherAction !== "select-city"/);
+    assert.match(trap, /!el\.disabled/);
+  });
+
+  it("ignores backdrop clicks right after opening and remembers focus inside the modal", async () => {
+    const code = await source();
+    const listeners = between(code, "function attachCityModalListeners(root)", "function showCityModal(");
+    assert.match(code, /const CITY_MODAL_BACKDROP_GUARD_MS = 300;/);
+    assert.match(listeners, /addEventListener\("focusin"/);
+    assert.match(listeners, /cityModalHadFocus = true;/);
+    assert.match(listeners, /performance\.now\(\) - cityModalOpenedAt >= CITY_MODAL_BACKDROP_GUARD_MS/);
+    assert.match(listeners, /\[data-city-modal-backdrop\]/);
+    assert.match(listeners, /addEventListener\("click"/);
+    assert.doesNotMatch(listeners, /addEventListener\("(?:mousedown|pointerup)"/);
+  });
+
+  it("runs a city change without rebuilding the panel, with a timeout, clearing suggestions first", async () => {
+    const code = await source();
+    const change = between(code, "function changeCity(run)", "favoritesPanelRoot?.addEventListener(\"click\"");
+    assert.doesNotMatch(change, /renderFavoritesPanel\(\)/);
+    assert.match(change, /activeCityForm\?\.cancelPending\(\);/);
+    assert.match(change, /activeCityForm\?\.renderSuggestions\(\);/);
+    assert.match(change, /await withTimeout\(run\(\)\)/);
+    assert.match(change, /weatherLocationError = "";/);
+    assert.match(change, /cityModalError = "";\s*syncCityModal\(\);\s*renderFavoritesToolbar\(\);/);
+    assert.match(code, /const CITY_REQUEST_TIMEOUT_MS = 15000;/);
+    assert.match(code, /The request took too long\. Check your connection and try again\./);
+  });
+
+  it("builds the modal with text-only buttons, a novalidate form and the approved strings, never innerHTML", async () => {
+    const code = await source();
+    const modal = between(code, "function createCityForm(mode)", "function createWeatherMetricTile(");
+    assert.doesNotMatch(modal, /innerHTML/);
+    assert.doesNotMatch(modal, /createIconButton\(/);
+    assert.match(modal, /form\.noValidate = true;/);
+    assert.doesNotMatch(modal, /input\.required/);
+    assert.match(modal, /input\.value = "";/);
+    assert.match(modal, /errorNode\.setAttribute\("role", "alert"\);/);
+    for (const text of ["Enter a city name", "Show weather on your new tab?", "Not now", "Change city", "Set a city", "No city set.", "Current: "]) {
+      assert.ok(code.includes(text), text);
+    }
+  });
+
+  it("styles the modal above the panel and tooltip, with a readable placeholder and a visible focus ring", async () => {
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /\.city-modal \{[^}]*position: fixed;[^}]*z-index: 100;/s);
+    assert.match(css, /\.city-modal__backdrop \{[^}]*background: rgb\(0 0 0 \/ 50%\);/s);
+    assert.match(css, /\.city-modal__dialog \{[^}]*width: min\(420px, calc\(100vw - 32px\)\);[^}]*max-height: calc\(100vh - 32px\);[^}]*overflow-y: auto;/s);
+    assert.match(css, /\.city-modal \.favorite-input::placeholder \{[^}]*color: var\(--muted\);[^}]*opacity: 1;/s);
+    assert.match(css, /\.city-modal :is\(button, input\):focus-visible \{[^}]*outline: 2px solid var\(--text\);[^}]*outline-offset: 2px;/s);
+    assert.doesNotMatch(css, /\.city-modal[^{]*\{[^}]*transition/s);
+  });
+});
