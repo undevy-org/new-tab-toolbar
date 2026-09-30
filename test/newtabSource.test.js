@@ -587,6 +587,6 @@ describe("newtab first-run city prompt source", () => {
 
   it("adds no storage change listener (tabs do not observe each other)", async () => {
     const code = await source();
-    assert.doesNotMatch(code, /storage\.onChanged/);
+    assert.doesNotMatch(code, /onChanged/);
   });
 });
