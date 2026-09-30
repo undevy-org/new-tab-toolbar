@@ -6,14 +6,14 @@ Quiet Tab is a Manifest V3 extension with no service worker. The new tab page
 (`src/newtab.js`) owns rendering directly. Favorites and the four weather tiles
 are widgets of one grid (widgets store and service); live weather data has its
 own small service/store pair. The widgets layout and the chosen weather city
-persist to `chrome.storage.sync`; the weather forecast cache persists to
-`chrome.storage.local`.
+persist to `chrome.storage.sync`; the weather forecast cache and a per-device
+"city prompt dismissed" flag persist to `chrome.storage.local`.
 
 ## Components
 
 | File | Responsibility |
 | --- | --- |
-| `src/newtab.js` | Renders the widget grid (favorites, weather tiles, the "Set a city" hint tile), the shared tooltip layer, and the Widgets settings panel with its Weather block (city form), and wires their controls to the services. The only file that touches the DOM. |
+| `src/newtab.js` | Renders the widget grid (favorites, weather tiles, the "Set a city" hint tile), the shared tooltip layer, the Widgets settings panel with its Weather block (current city and a button that opens the modal), and the city modal (form, suggestions, error line; present in the DOM only while open), and wires their controls to the services. The only file that touches the DOM. |
 | `src/widgetsStore.js` | Validates, reads, and writes persisted widgets state (favorites and weather metrics plus grid columns/position), sharded across `chrome.storage.sync` keys; also holds the chunked, resumable migration from the old favorites-only storage, `ensureWeatherMetrics`, `inspectWidgetsMeta` and the newer-version write guard (`assertWritable`). |
 | `src/widgetsService.js` | Implements add/update/delete for favorites, `updateWeatherMetric` (size, shown/hidden), move for any widget, and set columns/position, with input normalization, all serialized through a mutation lock; every mutation checks `assertWritable` first. |
 | `src/widgetsShared.js` | Shared widget/grid constants (types, weather metric ids and default sizes, positions, column bounds, caps, lock name, newer-version message). |
@@ -23,11 +23,12 @@ persist to `chrome.storage.sync`; the weather forecast cache persists to
 | `src/favoriteIcon.js` | Chooses a favicon, custom image, or letter icon for a tile. |
 | `src/favoriteColor.js` | Derives a tile's accent color from its domain or a sampled icon. |
 | `src/weatherApi.js` | Calls Open-Meteo's forecast, air-quality, and geocoding endpoints, normalizes responses, and maps UV index and US AQI values to scale labels. |
-| `src/weatherStore.js` | Validates, reads, and writes the chosen location and the forecast cache. |
+| `src/weatherStore.js` | Validates, reads, and writes the chosen location and the forecast cache, and reads/writes the per-device city-prompt-dismissed flag. |
+| `src/cityPrompt.js` | Pure rule for whether the first-run city modal opens by itself on this page load. |
 | `src/weatherService.js` | Serves a fresh cached forecast or fetches and caches a new one; resolves a typed city name to a location. |
 | `src/weatherPresentation.js` | Formats readings and picks each tile's color tone. |
 | `src/weatherTiles.js` | Pure presentation of one weather tile (label, primary and secondary text, tone, description) for the loading, ready, stale and error states. |
-| `src/weatherUiState.js` | Pure state for the city form (open or closed). |
+| `src/weatherUiState.js` | Pure state for the city modal (closed, or open in first-run or change mode) and its live suggestion list. |
 | `src/icons.js` | Vendored, static SVG icon set. |
 | `src/mutationLock.js` | Serializes mutations with the Web Locks API, with a promise-chain fallback. |
 | `src/storeUtils.js` | Shared validation and cloning helpers. |
@@ -100,7 +101,9 @@ to installs of the same published extension.
 
 The chosen location (`quietTabWeatherLocation`: name, country, latitude,
 longitude) is stored in `chrome.storage.sync`. The last forecast
-(`quietTabWeatherCache`) is stored in `chrome.storage.local`.
+(`quietTabWeatherCache`) and the city-prompt flag (`quietTabWeatherPromptDismissed`)
+are stored in `chrome.storage.local`. Only the exact value `true` counts as
+dismissed; the flag is per device and not synced.
 
 Weather values are not part of the widgets store. Each metric tile in the grid is
 matched to the forecast by its metric id at render time; the grid re-renders when
@@ -108,15 +111,43 @@ the forecast arrives.
 
 1. `initialize()` reads the location. With none set, no weather tile is drawn and
    the grid shows one "Set a city" hint tile (unless all four metrics are hidden)
-   that opens the Widgets panel on the city field.
+   that opens the city modal.
 2. If the cache belongs to the same location and is under 30 minutes old, it
    is shown without any network request.
 3. Otherwise the service fetches the forecast and air quality in parallel and
    caches the result. If that fails but an older cache for the same location
    exists, the tiles show it marked as stale (dashed border). With no cache the
    tiles show an unavailable state and the panel's Weather block shows the error.
-4. Setting a city, from the Weather block of the settings panel, geocodes the typed name (Open-Meteo returns English place
-   names), stores the resolved location, and fetches a fresh forecast.
+4. Setting a city, from the city modal, geocodes the typed name (Open-Meteo returns English place
+   names), stores the resolved location, and fetches a fresh forecast; picking a
+   suggestion skips the geocoding request. The modal is opened by the hint tile or
+   the Weather block's "Set a city" / "Change city" button (change mode), or
+   automatically (first-run mode). While a request runs the field and buttons are
+   disabled; on failure the modal stays open, keeps the typed text and shows the
+   error, and an empty name shows a message without a request.
+
+### City modal
+
+- **First-run rule.** After the first grid render, once per page load,
+  `shouldAutoShowCityPrompt` opens the modal in first-run mode only when the
+  stored city was read and is unset, the flag was read and is not set, at least one
+  weather tile is shown, weather is available, and the grid is not locked (newer
+  meta or failed migration). Any unknown input (a failed read) means it does not open.
+- **Dismissal.** Closing the first-run modal by any route (Not now, Escape, a click
+  on the backdrop) writes the flag; a failed write is silent, so the modal may show
+  again next time. Choosing a city does not write it (a city being set is what
+  stops the modal). Leaving the tab without closing the modal is not a dismissal.
+  Backdrop clicks in the first 300 ms after opening are ignored.
+- **Background.** While open, the grid and the settings panel are `inert`, so the
+  modal is the only interactive region.
+- **Focus.** In change mode focus moves to the city field at once; the first-run
+  modal never takes focus by itself. Tab wraps inside the modal, and Tab from `body`
+  or outside it enters the modal (suggestion buttons are mouse-only and skipped).
+  On close, focus returns to the control that opened it (change mode), falling
+  back to the Weather block button and then the gear button; a first-run modal
+  returns focus to the gear button only if focus was inside it.
+- **Busy.** While a city request runs the modal ignores every closing gesture,
+  and Escape does nothing at all (it does not close the panel behind it).
 
 ## Tooltips
 
@@ -126,7 +157,7 @@ pointer hover and on keyboard focus (`:focus-visible`), copies the text of the
 tile's hidden description node, and is placed by `placeTooltip`: above the tile
 when there is room, otherwise below, centered on the tile and clamped to an 8px
 margin inside the viewport. It hides on leave, blur, Escape (first in the Escape
-priority: tooltip, then city suggestions, then the panel), grid scroll (except the
+priority: tooltip, then city suggestions, then the city modal, then the panel), grid scroll (except the
 scroll caused by focusing a tile), wheel, touch scroll, window resize and every
 grid render.
 

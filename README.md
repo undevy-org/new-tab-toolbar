@@ -32,14 +32,15 @@ else.
 6. Open a new tab.
 
 The first launch shows an empty favorites bar and asks you to set a city
-for the weather tiles (the "Set a city" tile opens the Widgets settings).
+for the weather tiles in a small dialog (you can close it and set a city
+later with the "Set a city" tile or "Change city" in the Widgets settings).
 
 ## Permissions And Privacy
 
 The manifest requests only:
 
 - `storage` to persist favorites and your chosen weather city via Chrome
-  Sync, and a short-lived weather cache locally;
+  Sync, and a short-lived weather cache and one prompt flag locally;
 - `favicon` to display site favicons in the favorites bar;
 - host access to Open-Meteo's forecast, air-quality, and geocoding
   endpoints to fetch weather for the city you choose.
@@ -48,8 +49,9 @@ Favorites and the chosen weather city are stored in `chrome.storage.sync`,
 so they follow you to any other Chromium browser signed into the same Google
 account with sync enabled and running this same extension — that's Chrome's
 own built-in sync, not a project-run service. Favorites are not Chrome
-bookmarks. A short-lived weather cache is stored in `chrome.storage.local`,
-on this browser profile only.
+bookmarks. A short-lived weather cache and a flag noting that you closed the
+first-run city prompt are stored in `chrome.storage.local`, on this browser
+profile only.
 
 There is no remote content feed of any kind — no news, no analytics, no
 telemetry. See [Privacy](docs/privacy.md) for details.
