@@ -38,26 +38,30 @@ describe("newtab weather source", () => {
     assert.match(code, /void startWeather\(\);/);
   });
 
-  it("submits the city form through setCity and keeps the form open on error", async () => {
+  it("submits the modal's city form through setCity and keeps the modal open with the error on failure", async () => {
     const code = await source();
     assert.match(code, /form\.dataset\.weatherForm !== "city"/);
     assert.match(code, /changeCity\(\(\) => weatherService\.setCity\(cityName\)\)/);
-    assert.match(code, /weatherFormError = error instanceof Error/);
+    assert.match(code, /cityModalError = error instanceof Error/);
+    assert.doesNotMatch(code, /weatherFormError/);
   });
 
-  it("supports editing and cancelling the city via data-weather-action", async () => {
+  it("opens the city modal via data-weather-action and closes it from its own dismiss button, with no editing state", async () => {
     const code = await source();
-    assert.match(code, /"edit-city"/);
-    assert.match(code, /"cancel-edit-city"/);
-    assert.match(code, /startEditingCity\(weatherUi\)/);
-    assert.match(code, /stopEditingCity\(weatherUi\)/);
+    assert.match(code, /dataset\.weatherAction = "open-city-modal"/);
+    assert.match(code, /showCityModal\("change", OPEN_CITY_MODAL_SELECTOR\)/);
+    assert.match(code, /dataset\.cityModalAction = mode === "first-run" \? "dismiss" : "cancel"/);
+    assert.doesNotMatch(code, /"edit-city"/);
+    assert.doesNotMatch(code, /"cancel-edit-city"/);
+    assert.doesNotMatch(code, /startEditingCity|stopEditingCity|isEditingCity/);
   });
 
   it("blocks weather actions while a request is in flight", async () => {
     const code = await source();
     assert.match(code, /let weatherBusy = false;/);
     assert.match(code, /\|\| weatherBusy\) return;/);
-    assert.match(code, /if \(weatherBusy \|\| !weatherService \|\| !cityName\) return;/);
+    assert.match(code, /if \(weatherBusy \|\| !weatherService\) return;/);
+    assert.match(code, /if \(!cityName\) \{\s*cityModalError = "Enter a city name";/);
   });
 
   it("has no weather panel markup, and labels the bar and panel as widgets", async () => {
@@ -125,10 +129,11 @@ describe("newtab weather source", () => {
 
     assert.doesNotMatch(tile, /location\.(?:name|country)/);
     assert.match(block, /`City: \$\{location\.name\}`/);
-    assert.match(block, /change\.dataset\.weatherAction = "edit-city";/);
-    assert.match(block, /createIconButton\("button", "Change city", "settings"\)/);
+    assert.match(block, /button\.dataset\.weatherAction = "open-city-modal";/);
+    assert.match(block, /button\.textContent = location \? "Change city" : "Set a city";/);
+    assert.doesNotMatch(block, /createIconButton\(/);
     assert.match(code, /favoritesPanelRoot\?\.addEventListener\("click"/);
-    assert.match(code, /favoritesPanelRoot\?\.addEventListener\("submit"/);
+    assert.match(code, /\broot\.addEventListener\("submit"[\s\S]{0,200}dataset\.weatherForm !== "city"/);
   });
 
   it("styles wide weather tiles by spanning two grid columns of the shared tile height", async () => {
@@ -165,7 +170,7 @@ describe("newtab weather source", () => {
 
   it("resets suggestion state on every fresh mount of the city form and guards stale async responses", async () => {
     const code = await source();
-    const formStart = code.indexOf("function createWeatherForm(location) {");
+    const formStart = code.indexOf("function createCityForm(mode) {");
     const formEnd = code.indexOf("function createWeatherMetricTile(");
     const form = code.slice(formStart, formEnd);
 
@@ -184,7 +189,7 @@ describe("newtab weather source", () => {
 
   it("keeps the input focused when clicking a suggestion, so the click is not lost to a blur race", async () => {
     const code = await source();
-    const formStart = code.indexOf("function createWeatherForm(location) {");
+    const formStart = code.indexOf("function createCityForm(mode) {");
     const formEnd = code.indexOf("function createWeatherMetricTile(");
     const form = code.slice(formStart, formEnd);
 
@@ -197,7 +202,7 @@ describe("newtab weather source", () => {
 
   it("cancels a pending suggestion request when the field blurs or Escape is pressed (Escape is central)", async () => {
     const code = await source();
-    const formStart = code.indexOf("function createWeatherForm(location) {");
+    const formStart = code.indexOf("function createCityForm(mode) {");
     const formEnd = code.indexOf("function createWeatherMetricTile(");
     const form = code.slice(formStart, formEnd);
 
@@ -220,7 +225,7 @@ describe("newtab weather source", () => {
 
   it("disambiguates suggestions with the same name using admin1", async () => {
     const code = await source();
-    const formStart = code.indexOf("function createWeatherForm(location) {");
+    const formStart = code.indexOf("function createCityForm(mode) {");
     const formEnd = code.indexOf("function createWeatherMetricTile(");
     const form = code.slice(formStart, formEnd);
 
@@ -235,10 +240,11 @@ describe("newtab weather source", () => {
   it("never replaces a mounted city form or a stale first load when weather results arrive late", async () => {
     const code = await source();
 
-    assert.match(code, /if \(formHost\.dataset\.kind === kind\) return;/);
+    assert.doesNotMatch(code, /formHost/);
+    assert.match(code, /if \(!button\) \{/);
     assert.match(code, /renderFavoritesToolbar\(\);\s*syncWeatherBlock\(\);/);
     assert.match(code, /if \(generation !== weatherGeneration\) \{\s*return;\s*\}/);
-    assert.match(code, /const result = await run\(\);[\s\S]*?weatherGeneration \+= 1;\s*weatherResult = result;/);
+    assert.match(code, /const result = await withTimeout\(run\(\)\);[\s\S]*?weatherGeneration \+= 1;\s*weatherResult = result;/);
     assert.doesNotMatch(code, /function changeCity\(run\) \{\s*weatherGeneration \+= 1;/);
     assert.match(code, /if \(weatherChanging && currentLocation\(\)\) return null;/);
   });

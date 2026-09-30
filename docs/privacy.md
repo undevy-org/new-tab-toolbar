@@ -20,8 +20,12 @@ user, are loaded by the new tab page so they can be displayed as tile icons.
 
 ## Data Stored
 
-The extension stores a short-lived weather forecast cache in
-`chrome.storage.local`, scoped to this browser profile only.
+The extension stores the following in `chrome.storage.local`, scoped to this
+browser profile only:
+
+- a short-lived weather forecast cache;
+- one flag recording that you closed the first-run city prompt on this device
+  (it holds no personal data and is not synced).
 
 The extension stores the following in `chrome.storage.sync`:
 

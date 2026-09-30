@@ -35,17 +35,19 @@ import {
 } from "./widgetsShared.js";
 import { searchCities } from "./weatherApi.js";
 import { createWeatherService } from "./weatherService.js";
-import { createWeatherCacheStore, createWeatherLocationStore } from "./weatherStore.js";
+import { shouldAutoShowCityPrompt } from "./cityPrompt.js";
+import { createWeatherCacheStore, createWeatherLocationStore, createWeatherPromptStore } from "./weatherStore.js";
 import { describeWeatherMetric } from "./weatherTiles.js";
 import {
+  cityModalMode,
   citySuggestions,
+  closeCityModal as closeCityModalState,
   createInitialWeatherUiState,
   hideSuggestions,
-  isEditingCity,
+  isCityModalOpen,
   isSuggestionsOpen,
-  showSuggestions,
-  startEditingCity,
-  stopEditingCity
+  openCityModal as openCityModalState,
+  showSuggestions
 } from "./weatherUiState.js";
 
 const favoritesRoot = document.querySelector("#favorites");
@@ -213,6 +215,7 @@ const weatherLocationStore = hasStorageArea(syncStorageArea)
 const weatherCacheStore = hasStorageArea(localStorageArea)
   ? createWeatherCacheStore(localStorageArea)
   : null;
+const weatherPromptStore = hasStorageArea(localStorageArea) ? createWeatherPromptStore(localStorageArea) : null;
 const weatherService =
   weatherLocationStore && weatherCacheStore
     ? createWeatherService({
@@ -245,9 +248,16 @@ let metricWritesPending = 0; // metric writes in flight; controls are re-synced 
 let metricErrorText = ""; // write-error slot of the metric controls; module state so a panel rebuild keeps it
 let activeCityForm = null; // { cancelPending, renderSuggestions } of the mounted city form
 let weatherUi = createInitialWeatherUiState();
-let weatherFormError = "";
 let weatherBusy = false;
 let weatherFormGeneration = 0;
+// The city modal (present in the DOM only while open) and what it needs across renders.
+let cityModalRoot = null;
+let cityModalOpener = null; // selector of the control that opened it, looked up again at close time
+let cityModalError = "";
+let cityModalOpenedAt = 0;
+let cityModalHadFocus = false; // D14: focus was inside the modal at some point since it opened
+const CITY_MODAL_BACKDROP_GUARD_MS = 300;
+const CITY_REQUEST_TIMEOUT_MS = 15000;
 
 function effectiveWeatherResult() {
   // Changing an existing city shows loading; the first city keeps the hint tile until the request finishes.
@@ -740,21 +750,21 @@ function showMetricError(message) {
   node.hidden = message === "";
 }
 
-function createWeatherForm(location) {
+function createCityForm(mode) {
   weatherFormGeneration += 1;
   const formGeneration = weatherFormGeneration;
   weatherUi = hideSuggestions(weatherUi);
 
   const form = createNode("form", "weather-form");
   form.dataset.weatherForm = "city";
+  form.noValidate = true;
 
   const input = createNode("input", "favorite-input");
   input.name = "city";
   input.type = "text";
   input.id = "weather-city-input";
   input.placeholder = "City";
-  input.value = location ? location.name : "";
-  input.required = true;
+  input.value = "";
   input.autocomplete = "off";
   input.disabled = weatherBusy;
 
@@ -764,18 +774,15 @@ function createWeatherForm(location) {
   const row = createNode("div", "weather-form__row");
   row.appendChild(input);
 
-  const save = createIconButton("button button--primary", "Save", "check");
+  const save = createNode("button", "button button--primary", "Save");
   save.type = "submit";
   save.disabled = weatherBusy;
-  row.appendChild(save);
 
-  if (location) {
-    const cancel = createIconButton("button", "Cancel", "x");
-    cancel.type = "button";
-    cancel.dataset.weatherAction = "cancel-edit-city";
-    cancel.disabled = weatherBusy;
-    row.appendChild(cancel);
-  }
+  const dismiss = createNode("button", "button", mode === "first-run" ? "Not now" : "Cancel");
+  dismiss.type = "button";
+  dismiss.dataset.cityModalAction = mode === "first-run" ? "dismiss" : "cancel";
+  dismiss.disabled = weatherBusy;
+  row.append(save, dismiss);
 
   form.append(cityLabel, row);
 
@@ -882,8 +889,184 @@ function createWeatherForm(location) {
     }, 150);
   });
 
+  const errorNode = createNode("p", "status status--error status--full", cityModalError);
+  errorNode.dataset.cityModalError = "";
+  errorNode.setAttribute("role", "alert");
+  errorNode.hidden = cityModalError === "";
+  form.appendChild(errorNode);
+
   activeCityForm = { cancelPending: cancelPendingSuggestionRequest, renderSuggestions: renderSuggestionsList };
   return form;
+}
+
+function buildCityModal(mode, location) {
+  const root = createNode("div", "city-modal");
+  root.id = "city-modal";
+  const backdrop = createNode("div", "city-modal__backdrop");
+  backdrop.dataset.cityModalBackdrop = "";
+  const dialog = createNode("div", "city-modal__dialog");
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-modal", "true");
+  dialog.setAttribute("aria-labelledby", "city-modal-title");
+
+  const title = createNode("h2", "city-modal__title", mode === "first-run" ? "Show weather on your new tab?" : location ? "Change city" : "Set a city");
+  title.id = "city-modal-title";
+  dialog.appendChild(title);
+
+  if (mode === "first-run") {
+    const description = createNode(
+      "p",
+      "city-modal__description",
+      "Pick a city to see local weather next to your links. Weather is optional: skip this and you can add a city later in Widgets."
+    );
+    description.id = "city-modal-description";
+    dialog.setAttribute("aria-describedby", description.id);
+    dialog.appendChild(description);
+  } else if (location) {
+    const current = createNode("p", "city-modal__current", `Current: ${location.name}`);
+    current.dataset.cityModalCurrent = "";
+    dialog.appendChild(current);
+  }
+
+  dialog.appendChild(createCityForm(mode));
+  root.append(backdrop, dialog);
+  return root;
+}
+
+// Disables the controls while a city request runs and mirrors the error slot; never rebuilds the form.
+function syncCityModal() {
+  if (!cityModalRoot) return;
+  for (const control of cityModalRoot.querySelectorAll("input, button")) {
+    if (control.dataset.weatherAction !== "select-city") control.disabled = weatherBusy;
+  }
+  cityModalRoot.querySelector('[role="dialog"]').setAttribute("aria-busy", String(weatherBusy)); // spec: aria-busy while a request runs
+  const errorNode = cityModalRoot.querySelector("[data-city-modal-error]");
+  errorNode.textContent = cityModalError;
+  errorNode.hidden = cityModalError === "";
+}
+
+// One listener per event on the modal root (backdrop, dismiss button, suggestions, submit).
+function attachCityModalListeners(root) {
+  root.addEventListener("focusin", () => {
+    cityModalHadFocus = true;
+  });
+
+  root.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || weatherBusy) return;
+    // A drag from the field that ends over the backdrop targets the modal root, not the backdrop: ignored.
+    if (target.matches("[data-city-modal-backdrop]")) {
+      if (performance.now() - cityModalOpenedAt >= CITY_MODAL_BACKDROP_GUARD_MS) hideCityModal({ dismiss: true });
+      return;
+    }
+    if (target.closest("[data-city-modal-action]")) {
+      hideCityModal({ dismiss: true });
+      return;
+    }
+    const suggestion = target.closest('[data-weather-action="select-city"]');
+    if (suggestion instanceof HTMLElement && weatherService) {
+      changeCity(() =>
+        weatherService.selectLocation({
+          name: suggestion.dataset.cityName,
+          country: suggestion.dataset.cityCountry ?? "",
+          latitude: Number(suggestion.dataset.cityLatitude),
+          longitude: Number(suggestion.dataset.cityLongitude)
+        })
+      );
+    }
+  });
+
+  root.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || form.dataset.weatherForm !== "city") return;
+    event.preventDefault();
+    if (weatherBusy || !weatherService) return;
+    const cityName = String(new FormData(form).get("city") ?? "").trim();
+    if (!cityName) {
+      cityModalError = "Enter a city name";
+      syncCityModal();
+      form.querySelector(CITY_INPUT_SELECTOR)?.focus();
+      return;
+    }
+    changeCity(() => weatherService.setCity(cityName));
+  });
+}
+
+let cityModalShownThisLoad = false; // the automatic prompt never reopens a modal that was already shown this page load
+
+function showCityModal(mode, openerSelector) {
+  if (cityModalRoot || isCityModalOpen(weatherUi) || !weatherService || !document.body) return false; // one modal at a time
+  cityModalError = "";
+  let root = null;
+  try {
+    root = buildCityModal(mode, weatherLocationError ? null : currentLocation());
+    attachCityModalListeners(root); // before any focus() so the focusin below is seen
+    document.body.appendChild(root);
+  } catch (error) {
+    // Nothing half-open: a failed build must not leave the UI state "open" and block every later open.
+    root?.remove();
+    activeCityForm = null;
+    throw error;
+  }
+  cityModalRoot = root;
+  cityModalShownThisLoad = true;
+  weatherUi = openCityModalState(weatherUi, mode);
+  cityModalOpener = openerSelector;
+  cityModalHadFocus = false;
+  cityModalOpenedAt = performance.now();
+  hideTooltip();
+  if (favoritesRoot) favoritesRoot.inert = true;
+  if (favoritesPanelRoot) favoritesPanelRoot.inert = true;
+  if (mode === "change") cityModalRoot.querySelector(CITY_INPUT_SELECTOR)?.focus(); // first-run never steals focus
+  return true;
+}
+
+// `dismiss` is set by Escape/backdrop/"Not now"/"Cancel"; only a first-run dismissal writes the flag (Task 3).
+function hideCityModal({ dismiss = false } = {}) {
+  if (!cityModalRoot) return;
+  const mode = cityModalMode(weatherUi);
+  const focusWasInside = cityModalHadFocus || cityModalRoot.contains(document.activeElement); // D14: a running request or a backdrop click may already have moved focus to body
+  activeCityForm?.cancelPending();
+  activeCityForm = null;
+  weatherFormGeneration += 1; // late suggestion responses are ignored
+  cityModalRoot.remove();
+  cityModalRoot = null;
+  weatherUi = closeCityModalState(weatherUi);
+  cityModalError = "";
+  cityModalHadFocus = false;
+  if (favoritesRoot) favoritesRoot.inert = false;
+  if (favoritesPanelRoot) favoritesPanelRoot.inert = false;
+  if (dismiss && mode === "first-run") onFirstRunDismissed();
+  if (mode === "change") {
+    pendingFocus = [cityModalOpener, OPEN_CITY_MODAL_SELECTOR, GEAR_SELECTOR].filter(Boolean);
+    applyPendingFocus();
+  } else if (focusWasInside) {
+    pendingFocus = [GEAR_SELECTOR];
+    applyPendingFocus();
+  }
+  cityModalOpener = null;
+}
+
+// D3/D5: any close of the automatic modal records the dismissal; a failed write is silent (the modal shows again next time).
+function onFirstRunDismissed() {
+  if (weatherPromptStore) void weatherPromptStore.dismiss().catch(() => {});
+}
+
+// Evaluated once per page load, after the first grid render, on live state (spec § Storage and the automatic-show rule).
+// First-run open never moves focus (D2): showCityModal only focuses in change mode.
+function maybeAutoShowCityPrompt({ flagRead, dismissed }) {
+  if (cityModalRoot || cityModalShownThisLoad) return; // a modal was opened meanwhile (or already shown and closed): never replace, duplicate or reopen it
+  const items = widgetsState?.items ?? [];
+  const show = shouldAutoShowCityPrompt({
+    locationRead: weatherLocationKnown && !weatherLocationError,
+    hasLocation: Boolean(weatherLocation),
+    flagRead,
+    dismissed,
+    anyMetricEnabled: items.some((item) => item.type === "weather-metric" && item.enabled === true),
+    weatherAvailable: Boolean(weatherService && weatherPromptStore),
+    gridLocked: widgetsNewer || widgetsMigrationFailed
+  });
+  if (show) showCityModal("first-run", null);
 }
 
 function createWeatherMetricTile(item, columns, view) {
@@ -1200,6 +1383,23 @@ if (favoritesRoot) {
 
     renderFavorites();
     void startWeather();
+
+    // The flag is read after the first render so it never delays the grid.
+    let flagRead = false;
+    let dismissed = false;
+    if (weatherPromptStore) {
+      try {
+        dismissed = await weatherPromptStore.isDismissed();
+        flagRead = true;
+      } catch {
+        flagRead = false; // fail closed: an unreadable flag never shows the modal
+      }
+    }
+    try {
+      maybeAutoShowCityPrompt({ flagRead, dismissed });
+    } catch {
+      // the automatic prompt is best-effort; a failure must not surface as an unhandled rejection
+    }
   })();
 
   function handleFavoritesClick(event) {
@@ -1216,10 +1416,7 @@ if (favoritesRoot) {
     const action = target.dataset.favoriteAction;
 
     if (action === "set-city") {
-      favoritesUi = openSettings(favoritesUi);
-      favoritesError = "";
-      pendingFocus = [CITY_INPUT_SELECTOR];
-      renderFavorites();
+      showCityModal("change", HINT_TILE_SELECTOR);
     } else if (action === "open-settings") {
       favoritesUi = openSettings(favoritesUi);
       favoritesError = "";
@@ -1403,6 +1600,12 @@ if (favoritesRoot) {
       return;
     }
 
+    // The modal is the layer above the panel; while a city request runs Escape does nothing at all (I1).
+    if (cityModalRoot) {
+      if (!weatherBusy) hideCityModal({ dismiss: true });
+      return;
+    }
+
     if (favoritesBusy) {
       return;
     }
@@ -1415,7 +1618,34 @@ if (favoritesRoot) {
     }
   });
 
+  // Tab inside the open modal wraps; from body or outside it enters the modal (I3).
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab" || !cityModalRoot) return;
+    // Suggestion buttons are mouse-only: never a wrap target (a Tab from the field closes the list via blur).
+    const controls = [...cityModalRoot.querySelectorAll("input, button")].filter(
+      (el) => !el.disabled && el.dataset.weatherAction !== "select-city"
+    );
+    if (controls.length === 0) {
+      event.preventDefault(); // busy: nothing to enter, focus stays on body and never leaves the page
+      return;
+    }
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    const active = document.activeElement;
+    if (!(active instanceof Element) || !cityModalRoot.contains(active)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    } else if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+
   document.addEventListener("pointerdown", (event) => {
+    if (cityModalRoot) return; // an outside click never closes the panel while the modal is open
     if (!isSettingsOpen(favoritesUi) || favoritesBusy) {
       return;
     }
@@ -1509,8 +1739,9 @@ if (favoritesRoot) {
   });
 }
 
-const CHANGE_CITY_SELECTOR = '[data-weather-action="edit-city"]';
 const CITY_INPUT_SELECTOR = 'input[name="city"]';
+const OPEN_CITY_MODAL_SELECTOR = '[data-weather-action="open-city-modal"]';
+const HINT_TILE_SELECTOR = '[data-widget-id="weather:hint"]';
 
 function weatherStatusModel() {
   if (!weatherService) return { text: "Chrome APIs for weather are unavailable.", role: "alert" };
@@ -1541,22 +1772,22 @@ function createWeatherBlock() {
   metricError.textContent = metricErrorText;
   metricError.hidden = metricErrorText === "";
   block.appendChild(metricError);
-  block.appendChild(createNode("div", "weather-block__form"));
+  block.appendChild(createNode("div", "weather-block__action"));
   mountWeatherBlockContent(block);
   return block;
 }
 
-// Updates the city line and status slot in place; never replaces a mounted city form.
+// Updates the city line, the status slot and the city button in place (the button node is reused so focus survives).
 function syncWeatherBlock() {
   const block = favoritesPanelRoot?.querySelector(".weather-block");
   if (block) mountWeatherBlockContent(block);
 }
 
 function mountWeatherBlockContent(block) {
-  const location = currentLocation();
+  const location = weatherLocationError ? null : currentLocation(); // I2: a read error counts as no location
   const cityLine = block.querySelector("[data-weather-city]");
-  cityLine.textContent = location ? `City: ${location.name}` : "";
-  cityLine.hidden = !location; // no line without a city (spec § Settings panel)
+  cityLine.textContent = location ? `City: ${location.name}` : weatherLocationError ? "" : "No city set.";
+  cityLine.hidden = cityLine.textContent === ""; // the read error is shown by the status line instead
   const status = block.querySelector("[data-weather-status]");
   const model = weatherStatusModel();
   status.textContent = model?.text ?? "";
@@ -1566,20 +1797,19 @@ function mountWeatherBlockContent(block) {
     status.classList.toggle("status--error", model.role === "alert");
   }
 
-  const formHost = block.querySelector(".weather-block__form");
-  const kind = !weatherService ? "none" : !location || isEditingCity(weatherUi) ? "form" : "button";
-  if (formHost.dataset.kind === kind) return; // same kind: leave the node alone (typed text, suggestions, focus)
-  formHost.dataset.kind = kind;
-  formHost.replaceChildren();
-  if (kind === "form") {
-    formHost.appendChild(createWeatherForm(location));
-    if (weatherFormError) formHost.appendChild(createStatus(weatherFormError, { error: true, live: "assertive" }));
-  } else if (kind === "button") {
-    const change = createIconButton("button", "Change city", "settings");
-    change.type = "button";
-    change.dataset.weatherAction = "edit-city";
-    formHost.appendChild(change);
+  const actionHost = block.querySelector(".weather-block__action");
+  if (!weatherService) {
+    actionHost.replaceChildren();
+    return;
   }
+  let button = actionHost.querySelector(OPEN_CITY_MODAL_SELECTOR);
+  if (!button) {
+    button = createNode("button", "button");
+    button.type = "button";
+    button.dataset.weatherAction = "open-city-modal";
+    actionHost.replaceChildren(button);
+  }
+  button.textContent = location ? "Change city" : "Set a city";
 }
 
 async function startWeather() {
@@ -1610,29 +1840,59 @@ async function startWeather() {
   syncWeatherBlock();
 }
 
+// D15: a city request that has not finished after CITY_REQUEST_TIMEOUT_MS is treated as failed; a later result is ignored.
+function withTimeout(promise) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("The request took too long. Check your connection and try again.")),
+      CITY_REQUEST_TIMEOUT_MS
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 function changeCity(run) {
   weatherBusy = true;
   weatherChanging = true;
+  // Cancel the debounce and any in-flight suggestion request and empty the list: nothing rebuilds the form now.
+  activeCityForm?.cancelPending();
   weatherUi = hideSuggestions(weatherUi);
+  activeCityForm?.renderSuggestions();
+  cityModalError = "";
+  syncCityModal();
   renderFavoritesToolbar();
   void (async () => {
+    let ok = false;
     try {
-      const result = await run();
+      const result = await withTimeout(run());
       // Only a successful change makes an earlier in-flight boot load stale; a failed one leaves it valid.
       weatherGeneration += 1;
       weatherResult = result;
-      weatherUi = stopEditingCity(weatherUi);
-      weatherFormError = "";
       weatherLocation = weatherResult.location ?? weatherLocation;
+      weatherLocationError = ""; // a successful selection clears an earlier read error
+      ok = true;
     } catch (error) {
-      weatherFormError = error instanceof Error ? error.message : String(error);
+      cityModalError = error instanceof Error ? error.message : String(error);
     } finally {
       weatherBusy = false;
       weatherChanging = false;
       renderFavoritesToolbar();
-      renderFavoritesPanel(); // rebuild: the form is done
-      pendingFocus = [CHANGE_CITY_SELECTOR, CITY_INPUT_SELECTOR];
-      applyPendingFocus();
+      syncWeatherBlock();
+      if (ok) {
+        hideCityModal(); // selection never writes the flag
+      } else {
+        syncCityModal();
+        cityModalRoot?.querySelector(CITY_INPUT_SELECTOR)?.focus();
+      }
     }
   })();
 }
@@ -1640,34 +1900,7 @@ function changeCity(run) {
 favoritesPanelRoot?.addEventListener("click", (event) => {
   const target = event.target instanceof Element ? event.target.closest("[data-weather-action]") : null;
   if (!(target instanceof HTMLElement) || weatherBusy) return;
-  const action = target.dataset.weatherAction;
-  if (action === "edit-city") {
-    weatherUi = startEditingCity(weatherUi);
-    weatherFormError = "";
-    syncWeatherBlock();
-    favoritesPanelRoot.querySelector(CITY_INPUT_SELECTOR)?.focus();
-  } else if (action === "cancel-edit-city") {
-    weatherUi = stopEditingCity(weatherUi);
-    weatherFormError = "";
-    syncWeatherBlock();
-    favoritesPanelRoot.querySelector(CHANGE_CITY_SELECTOR)?.focus();
-  } else if (action === "select-city") {
-    changeCity(() =>
-      weatherService.selectLocation({
-        name: target.dataset.cityName,
-        country: target.dataset.cityCountry ?? "",
-        latitude: Number(target.dataset.cityLatitude),
-        longitude: Number(target.dataset.cityLongitude)
-      })
-    );
+  if (target.dataset.weatherAction === "open-city-modal") {
+    showCityModal("change", OPEN_CITY_MODAL_SELECTOR);
   }
-});
-
-favoritesPanelRoot?.addEventListener("submit", (event) => {
-  const form = event.target;
-  if (!(form instanceof HTMLFormElement) || form.dataset.weatherForm !== "city") return;
-  event.preventDefault();
-  const cityName = String(new FormData(form).get("city") ?? "").trim();
-  if (weatherBusy || !weatherService || !cityName) return;
-  changeCity(() => weatherService.setCity(cityName));
 });
