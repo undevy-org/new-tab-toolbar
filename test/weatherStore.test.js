@@ -4,8 +4,10 @@ import { createMemoryStorageArea } from "./memoryStorageArea.js";
 import {
   WEATHER_CACHE_STORAGE_KEY,
   WEATHER_LOCATION_STORAGE_KEY,
+  WEATHER_PROMPT_DISMISSED_KEY,
   createWeatherCacheStore,
   createWeatherLocationStore,
+  createWeatherPromptStore,
   isWeatherCache,
   isWeatherLocation
 } from "../src/weatherStore.js";
@@ -175,5 +177,29 @@ describe("isWeatherLocation / isWeatherCache", () => {
 
     assert.equal(isWeatherCache({ version: 3, ...missingUsAqi }), false);
     assert.equal(isWeatherCache({ version: 3, ...cache(), unexpected: true }), false);
+  });
+});
+
+describe("weather prompt store", () => {
+  it("is not dismissed for a missing key, false or garbage values", async () => {
+    for (const value of [undefined, false, "true", 1, null, {}]) {
+      const area = createMemoryStorageArea(value === undefined ? {} : { [WEATHER_PROMPT_DISMISSED_KEY]: value });
+      assert.equal(await createWeatherPromptStore(area).isDismissed(), false, String(value));
+    }
+  });
+
+  it("dismiss() writes exactly true under the documented key and isDismissed() reads it", async () => {
+    const area = createMemoryStorageArea();
+    const store = createWeatherPromptStore(area);
+    await store.dismiss();
+    assert.deepEqual(await area.get(null), { quietTabWeatherPromptDismissed: true });
+    assert.equal(await store.isDismissed(), true);
+  });
+
+  it("propagates read and write rejections", async () => {
+    const failing = { get: async () => { throw new Error("read failed"); }, set: async () => { throw new Error("write failed"); } };
+    const store = createWeatherPromptStore(failing);
+    await assert.rejects(store.isDismissed(), /read failed/);
+    await assert.rejects(store.dismiss(), /write failed/);
   });
 });

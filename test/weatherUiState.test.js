@@ -2,10 +2,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   citySuggestions,
+  cityModalMode,
+  closeCityModal,
   createInitialWeatherUiState,
   hideSuggestions,
   isEditingCity,
+  isCityModalOpen,
   isSuggestionsOpen,
+  openCityModal,
   showSuggestions,
   startEditingCity,
   stopEditingCity
@@ -60,5 +64,29 @@ describe("weatherUiState", () => {
     let state = createInitialWeatherUiState();
     state = showSuggestions(state, []);
     assert.equal(isSuggestionsOpen(state), false);
+  });
+});
+
+describe("city modal state", () => {
+  it("starts closed", () => {
+    const state = createInitialWeatherUiState();
+    assert.equal(isCityModalOpen(state), false);
+    assert.equal(cityModalMode(state), null);
+  });
+
+  it("opens in either mode and closes, dropping suggestions", () => {
+    let state = showSuggestions(createInitialWeatherUiState(), [{ name: "Tbilisi" }]);
+    state = openCityModal(state, "first-run");
+    assert.equal(isCityModalOpen(state), true);
+    assert.equal(cityModalMode(state), "first-run");
+    assert.equal(isSuggestionsOpen(state), false);
+
+    state = closeCityModal(openCityModal(state, "change"));
+    assert.equal(isCityModalOpen(state), false);
+    assert.equal(cityModalMode(state), null);
+  });
+
+  it("rejects an unknown mode", () => {
+    assert.throws(() => openCityModal(createInitialWeatherUiState(), "other"), /mode/);
   });
 });

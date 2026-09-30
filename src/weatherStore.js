@@ -110,3 +110,18 @@ export function createWeatherCacheStore(storageArea) {
     }
   };
 }
+
+export const WEATHER_PROMPT_DISMISSED_KEY = "quietTabWeatherPromptDismissed";
+
+// Per-device "the user closed the first-run city modal" flag. Only the exact value `true` counts.
+export function createWeatherPromptStore(storageArea) {
+  return {
+    async isDismissed() {
+      const result = await storageArea.get(WEATHER_PROMPT_DISMISSED_KEY);
+      return result?.[WEATHER_PROMPT_DISMISSED_KEY] === true;
+    },
+    async dismiss() {
+      await storageArea.set({ [WEATHER_PROMPT_DISMISSED_KEY]: true });
+    }
+  };
+}
