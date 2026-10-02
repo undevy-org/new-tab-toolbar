@@ -27,7 +27,7 @@ export function defaultColumnsForItems(items) {
 export function gridLayout(state) {
   return {
     columns: state?.columns ?? DEFAULT_GRID_COLUMNS,
-    position: state?.position ?? "top"
+    position: state?.position ?? "center"
   };
 }
 
@@ -48,18 +48,22 @@ export function isRenderedWidget(item) {
   return item.type === "favorite" || item.enabled === true;
 }
 
-// A rendered widget jumps over the next rendered widget in `step` direction (disabled
-// metrics are transparent); a disabled row moves exactly one row. -1 = nowhere to go.
+// Links above weather: stable partition of the single stored order (no storage change).
+export function groupWidgets(items) {
+  return [...items.filter((item) => item.type === "favorite"), ...items.filter((item) => item.type !== "favorite")];
+}
+
+// A rendered widget jumps over the next rendered widget of the SAME group in `step` direction
+// (disabled metrics are transparent); a disabled row moves exactly one same-group row. -1 = nowhere to go.
 export function moveTargetIndex(items, index, step) {
   if (step === 0) {
     return -1;
   }
-  if (!isRenderedWidget(items[index])) {
-    const target = index + step;
-    return target >= 0 && target < items.length ? target : -1;
-  }
+  const isFavorite = items[index].type === "favorite";
+  const sameGroup = (item) => (item.type === "favorite") === isFavorite;
+  const needRendered = isRenderedWidget(items[index]);
   for (let i = index + step; i >= 0 && i < items.length; i += step) {
-    if (isRenderedWidget(items[i])) {
+    if (sameGroup(items[i]) && (!needRendered || isRenderedWidget(items[i]))) {
       return i;
     }
   }

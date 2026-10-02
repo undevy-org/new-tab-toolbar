@@ -70,7 +70,7 @@ describe("newtab weather source", () => {
     assert.doesNotMatch(markup, /weather-panel/);
     assert.match(markup, /<nav class="favorites-bar" id="favorites" aria-label="Widgets"/);
     assert.match(markup, /aria-label="Widgets settings"/);
-    assert.match(markup, /data-position="top"/);
+    assert.doesNotMatch(markup, /data-position/);
     assert.doesNotMatch(markup, /id="app"/);
     assert.doesNotMatch(markup, /<main\b/);
   });
@@ -128,10 +128,13 @@ describe("newtab weather source", () => {
     const block = code.slice(blockStart);
 
     assert.doesNotMatch(tile, /location\.(?:name|country)/);
-    assert.match(block, /`City: \$\{location\.name\}`/);
+    assert.match(block, /const cityLine = block\.querySelector\("\[data-weather-city\]"\);/);
+    assert.match(block, /const cityLabel = block\.querySelector\("\[data-weather-city-label\]"\);/);
+    assert.match(block, /cityLine\.textContent = location \? location\.name : weatherLocationError \? "" : "No city set";/);
+    assert.match(block, /cityLabel\.hidden = !location;/);
     assert.match(block, /button\.dataset\.weatherAction = "open-city-modal";/);
-    assert.match(block, /button\.textContent = location \? "Change city" : "Set a city";/);
-    assert.doesNotMatch(block, /createIconButton\(/);
+    assert.match(block, /button = createNode\("button", "button"\);/);
+    assert.match(block, /button\.replaceChildren\(createIconNode\("mapPin"\), document\.createTextNode\(location \? "Change city" : "Set a city"\)\);/);
     assert.match(code, /favoritesPanelRoot\?\.addEventListener\("click"/);
     assert.match(code, /\broot\.addEventListener\("submit"[\s\S]{0,200}dataset\.weatherForm !== "city"/);
   });
@@ -196,31 +199,123 @@ describe("newtab weather source", () => {
     assert.ok(formStart > -1 && formEnd > formStart);
     assert.match(
       form,
-      /suggestionsList\.addEventListener\("mousedown", \(event\) => \{\s*event\.preventDefault\(\);\s*\}\);/
+      /suggestionsList\.addEventListener\("mousedown", \(event\) => \{\s*event\.preventDefault\(\);[^\n]*\n/
     );
+    // A press on an item also cancels the pending request, so a late response never replaces the list under the press.
+    const press = form.slice(form.indexOf('suggestionsList.addEventListener("mousedown"'), form.indexOf("});", form.indexOf('suggestionsList.addEventListener("mousedown"')));
+    assert.match(press, /closest\("\.weather-form__suggestion"\)\) cancelPendingSuggestionRequest\(\);/);
   });
 
-  it("cancels a pending suggestion request when the field blurs or Escape is pressed (Escape is central)", async () => {
+  it("cancels a pending suggestion request when focus leaves the field wrapper or Escape is pressed (Escape is central)", async () => {
     const code = await source();
     const formStart = code.indexOf("function createCityForm(mode) {");
     const formEnd = code.indexOf("function createWeatherMetricTile(");
     const form = code.slice(formStart, formEnd);
 
     const helperStart = form.indexOf("function cancelPendingSuggestionRequest()");
-    const blurStart = form.indexOf('input.addEventListener("blur"');
-    const helperBody = form.slice(helperStart, blurStart);
-    const blurHandler = form.slice(blurStart);
-
-    assert.ok(helperStart > -1 && blurStart > helperStart);
-    assert.doesNotMatch(form, /input\.addEventListener\("keydown"/);
+    const helperBody = form.slice(helperStart, form.indexOf('input.addEventListener("input"'));
+    assert.ok(helperStart > -1);
     assert.match(helperBody, /clearTimeout\(debounceTimer\)/);
     assert.match(helperBody, /abortController\.abort\(\)/);
-    assert.match(blurHandler, /cancelPendingSuggestionRequest\(\)/);
-    assert.match(form, /activeCityForm = \{ cancelPending: cancelPendingSuggestionRequest, renderSuggestions: renderSuggestionsList \};/);
+
+    // The old 150 ms blur timer is gone: the field wrapper's focusout closes the list only when focus leaves the wrapper.
+    assert.doesNotMatch(form, /input\.addEventListener\("blur"/);
+    const focusoutStart = form.indexOf('field.addEventListener("focusout"');
+    assert.ok(focusoutStart > -1);
+    const focusout = form.slice(focusoutStart, form.indexOf("});", focusoutStart));
+    assert.match(focusout, /field\.contains\(event\.relatedTarget\)\) return;/);
+    assert.match(focusout, /if \(!document\.hasFocus\(\)\) return;/);
+    assert.match(focusout, /cancelPendingSuggestionRequest\(\)/);
+    assert.match(form, /suggestionsList\.addEventListener\("focusin", cancelPendingSuggestionRequest\)/);
+
+    const keydownStart = form.indexOf('input.addEventListener("keydown"');
+    assert.ok(keydownStart > -1);
+    const keydownHandler = form.slice(keydownStart, form.indexOf('suggestionsList.addEventListener("keydown"'));
+    assert.doesNotMatch(keydownHandler, /Escape/);
+
+    const formObject = form.slice(form.indexOf("activeCityForm = {"));
+    for (const key of ["cancelPending", "renderSuggestions", "refresh", "place", "focusField", "dispose", "choose", "chosen", "recentlyChosen"]) {
+      assert.match(formObject, new RegExp(`\\b${key}\\b`), key);
+    }
     assert.match(
       code,
-      /if \(isSuggestionsOpen\(weatherUi\)\) \{\s*activeCityForm\?\.cancelPending\(\);\s*weatherUi = hideSuggestions\(weatherUi\);\s*activeCityForm\?\.renderSuggestions\(\);/
+      /if \(isSuggestionsOpen\(weatherUi\)\) \{\s*activeCityForm\?\.cancelPending\(\);\s*weatherUi = hideSuggestions\(weatherUi\);\s*activeCityForm\?\.renderSuggestions\(\);\s*activeCityForm\?\.focusField\(\);/
     );
+  });
+
+  it("ignores a suggestion response that arrives while focus is on a list item", async () => {
+    const code = await source();
+    assert.match(
+      code,
+      /if \(signal\.aborted \|\| formGeneration !== weatherFormGeneration \|\| weatherBusy \|\| suggestionsList\.contains\(document\.activeElement\)\) \{/
+    );
+  });
+
+  it("choosing a suggestion fills the field and closes the list; it does not save (D9)", async () => {
+    const code = await source();
+    const listeners = code.slice(code.indexOf("function attachCityModalListeners(root) {"), code.indexOf("let cityModalShownThisLoad"));
+    const branchStart = listeners.indexOf('const suggestion = target.closest(\'[data-weather-action="select-city"]\');');
+    assert.ok(branchStart > -1);
+    const branch = listeners.slice(branchStart, listeners.indexOf("root.addEventListener(\"submit\""));
+    assert.match(branch, /activeCityForm\?\.choose\(\{/);
+    assert.doesNotMatch(branch, /changeCity/);
+    const form = code.slice(code.indexOf("function createCityForm(mode) {"), code.indexOf("function buildCityModal("));
+    const choose = form.slice(form.indexOf("choose(city) {"), form.indexOf("chosen: () =>"));
+    assert.match(choose, /^choose\(city\) \{\s*closeList\(\);/);
+    assert.match(choose, /input\.focus\(\)/);
+    assert.match(form, /function closeList\(\) \{\s*cancelPendingSuggestionRequest\(\);/);
+    // Save uses the remembered choice without a second geocoding request; edited text drops it.
+    assert.match(listeners, /const picked = activeCityForm\?\.chosen\(\);\s*if \(picked\) \{\s*changeCity\(\(\) => weatherService\.selectLocation\(/);
+    assert.match(form, /chosen: \(\) => \(chosenCity && chosenCity\.label === input\.value \? chosenCity : null\)/);
+  });
+
+  it("the clear button empties the field, closes the list, cancels the request, forgets the choice and focuses the field", async () => {
+    const code = await source();
+    const form = code.slice(code.indexOf("function createCityForm(mode) {"), code.indexOf("function buildCityModal("));
+    const start = form.indexOf('clear.addEventListener("click"');
+    assert.ok(start > -1);
+    const handler = form.slice(start, form.indexOf("});", start));
+    assert.match(handler, /input\.value = "";/);
+    assert.match(handler, /chosenCity = null;/);
+    assert.match(handler, /closeList\(\);/);
+    assert.match(handler, /input\.focus\(\);/);
+  });
+
+  it("a pointer press is tracked for the main button only, cleared on window blur, and every listener is disposed", async () => {
+    const code = await source();
+    const form = code.slice(code.indexOf("function createCityForm(mode) {"), code.indexOf("function buildCityModal("));
+    const down = form.slice(form.indexOf("const onPointerDown"), form.indexOf("const onPointerUp"));
+    assert.match(down, /if \(event\.button !== 0\) return;/);
+    assert.match(form, /const onWindowBlur = \(\) => \{\s*pressing = false;/);
+    assert.match(form, /window\.addEventListener\("blur", onWindowBlur\);/);
+    const dispose = form.slice(form.indexOf("dispose: () => {"), form.indexOf("choose(city) {"));
+    for (const line of [
+      'window.removeEventListener("resize", onResize)',
+      'document.removeEventListener("pointerdown", onPointerDown, true)',
+      'document.removeEventListener("pointerup", onPointerUp, true)',
+      'document.removeEventListener("pointercancel", onPointerUp, true)',
+      'window.removeEventListener("blur", onWindowBlur)'
+    ]) {
+      assert.ok(dispose.includes(line), line);
+    }
+    // A failed modal build disposes the half-built form before dropping it.
+    const show = code.slice(code.indexOf("function showCityModal("), code.indexOf("function hideCityModal("));
+    assert.match(show, /\} catch \(error\) \{[\s\S]*?activeCityForm\?\.dispose\?\.\(\);[^\n]*\n\s*activeCityForm = null;/);
+  });
+
+  it("popover items never shrink inside the capped list (the list scrolls instead)", async () => {
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    const at = css.indexOf(".weather-form__suggestion {");
+    assert.ok(at > -1);
+    assert.match(css.slice(at, css.indexOf("}", at)), /\bflex: none;/);
+  });
+
+  it("ignores the second click of a double click on an item, but never a keyboard activation", async () => {
+    const code = await source();
+    const listeners = code.slice(code.indexOf("function attachCityModalListeners(root) {"), code.indexOf("let cityModalShownThisLoad"));
+    assert.match(listeners, /event\.detail > 0 &&\s*activeCityForm\?\.recentlyChosen\(\) &&/);
+    assert.match(listeners, /\[data-city-modal-action\], button\[type="submit"\]/);
+    assert.match(code, /recentlyChosen: \(\) => performance\.now\(\) - chosenAt < 350/);
   });
 
   it("disambiguates suggestions with the same name using admin1", async () => {

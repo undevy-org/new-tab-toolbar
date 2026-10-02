@@ -167,7 +167,7 @@ describe("widgetsStore", () => {
     assert.equal((await store.getState()).items[0].label, "Example");
 
     await store.clearState();
-    assert.deepEqual(await store.getState(), createInitialWidgetsState(NOW));
+    assert.deepEqual(await store.getState(), createInitialWidgetsState(NOW, "center"));
     assert.deepEqual(await storageArea.get(null), {});
   });
 
@@ -175,7 +175,7 @@ describe("widgetsStore", () => {
     const storageArea = createMemoryStorageArea();
     const store = createWidgetsStore(storageArea, { now: () => NOW });
 
-    assert.deepEqual(await store.getState(), createInitialWidgetsState(NOW));
+    assert.deepEqual(await store.getState(), createInitialWidgetsState(NOW, "center"));
 
     await storageArea.set({ [WIDGETS_META_KEY]: { version: 1, columns: 6, position: "top", order: "bad" } });
     assert.deepEqual(await store.getState(), createInitialWidgetsState(NOW));
@@ -253,7 +253,7 @@ describe("widgetsStore", () => {
       /Couldn't save this change to Chrome Sync/
     );
 
-    assert.deepEqual(await store.getState(), createInitialWidgetsState(NOW));
+    assert.deepEqual(await store.getState(), createInitialWidgetsState(NOW, "center"));
   });
 
   it("requires and validates columns and position", () => {
@@ -405,7 +405,7 @@ describe("migrateToWidgets", () => {
   it("no-ops when there is nothing to migrate", async () => {
     const { store, migrate } = setup();
     assert.deepEqual(await migrate(), { migrated: false });
-    assert.deepEqual(await store.getState(), createInitialWidgetsState(NOW));
+    assert.deepEqual(await store.getState(), createInitialWidgetsState(NOW, "center"));
   });
 
   it("migrates sharded legacy favorites: tags each item, keeps order, clears legacy keys", async () => {
@@ -692,12 +692,12 @@ describe("ensureWeatherMetrics", () => {
     assert.deepEqual(await area.get(null), before);
   });
 
-  it("creates meta on a fresh install with columns 6 and position top", async () => {
+  it("creates meta on a fresh install with columns 6 and position center", async () => {
     const area = createMemoryStorageArea();
     const r = await ensureWeatherMetrics(area, { now: () => NOW });
     assert.equal(r.meta, "missing");
     const meta = (await area.get(WIDGETS_META_KEY))[WIDGETS_META_KEY];
-    assert.deepEqual([meta.order, meta.columns, meta.position], [WEATHER_METRIC_IDS, 6, "top"]);
+    assert.deepEqual([meta.order, meta.columns, meta.position], [WEATHER_METRIC_IDS, 6, "center"]);
   });
 
   it("re-creates the item of a listed id without duplicating the id", async () => {
@@ -843,5 +843,39 @@ describe("migrateToWidgets over a newer meta", () => {
     const result = await migrateToWidgets(createMemoryStorageArea(), sync);
     assert.deepEqual(result, { migrated: false, newer: true });
     assert.deepEqual(await sync.get(null), before);
+  });
+});
+
+describe("default position and grouping", () => {
+  const metric = (id) => ({ id, type: "weather-metric", tileSize: "square", enabled: true });
+
+  it("a missing meta yields center, an invalid meta yields top", async () => {
+    const missing = createWidgetsStore(createMemoryStorageArea());
+    assert.equal((await missing.getState()).position, "center");
+
+    const broken = createMemoryStorageArea();
+    await broken.set({ [WIDGETS_META_KEY]: { version: 1, order: "bad" } });
+    assert.equal((await createWidgetsStore(broken).getState()).position, "top");
+  });
+
+  it("getState returns favorites before metrics even when storage is interleaved, and a read never writes", async () => {
+    const area = createMemoryStorageArea();
+    const store = createWidgetsStore(area);
+    await area.set({
+      [WIDGETS_META_KEY]: { version: 1, order: ["a", "weather:uv", "b"], columns: 6, position: "top", createdAt: NOW, updatedAt: NOW },
+      [widgetItemStorageKey("a")]: favorite({ id: "a" }),
+      [widgetItemStorageKey("b")]: favorite({ id: "b" }),
+      [widgetItemStorageKey("weather:uv")]: metric("weather:uv")
+    });
+    assert.deepEqual((await store.getState()).items.map((i) => i.id), ["a", "b", "weather:uv"]);
+    assert.deepEqual((await area.get(WIDGETS_META_KEY))[WIDGETS_META_KEY].order, ["a", "weather:uv", "b"]);
+  });
+
+  it("setState writes the partitioned order", async () => {
+    const area = createMemoryStorageArea();
+    const store = createWidgetsStore(area);
+    const state = await store.getState();
+    await store.setState({ ...state, items: [metric("weather:uv"), favorite({ id: "a" })] });
+    assert.deepEqual((await area.get(WIDGETS_META_KEY))[WIDGETS_META_KEY].order, ["a", "weather:uv"]);
   });
 });

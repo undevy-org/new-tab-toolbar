@@ -44,4 +44,10 @@ describe("icons", () => {
     );
     assert.match(code, /wrapper\.className = className \? `icon \$\{className\}` : "icon";/);
   });
+
+  it("has the glyphs added for the weather rows and the city button", () => {
+    for (const name of ["thermometer", "droplet", "wind", "sun", "eye", "eyeOff", "mapPin"]) {
+      assert.ok(typeof ICON_PATHS[name] === "string" && ICON_PATHS[name].includes("<"), name);
+    }
+  });
 });

@@ -265,7 +265,8 @@ describe("newtab favorites source", () => {
   it("places the favorites error with the form, ahead of the list, and keeps the scroll position across re-renders", async () => {
     const code = await source();
     const panel = code.slice(code.indexOf("function renderFavoritesPanel"), code.indexOf("function renderFavorites()"));
-    assert.ok(panel.indexOf("favoritesError") < panel.indexOf('createNode("div", "favorites-panel__list")'), "error precedes the list");
+    assert.ok(panel.indexOf("favorites-panel__list") > 0, "the list wrapper is built in the panel");
+    assert.ok(panel.indexOf("favoritesError") < panel.indexOf("favorites-panel__list"), "error precedes the list");
     assert.match(panel, /scrollTop/);
     assert.match(code, /scrollIntoView\(\{ block: "nearest" \}\)/);
   });
@@ -332,7 +333,7 @@ describe("newtab favorites source", () => {
 
   it("starts the bar at a known position before the first render", async () => {
     const html = await readFile(new URL("../src/newtab.html", import.meta.url), "utf8");
-    assert.match(html, /id="favorites"[^>]*data-position="top"/);
+    assert.doesNotMatch(html, /id="favorites"[^>]*data-position/);
   });
 
   it("uses one shared tooltip layer appended to body and placed by placeTooltip", async () => {
@@ -357,8 +358,14 @@ describe("newtab favorites source", () => {
   it("routes metric controls through updateWeatherMetric with absolute values and re-syncs the rows in place", async () => {
     const code = await source();
     assert.match(code, /updateWeatherMetric\(/);
-    assert.match(code, /\{ enabled: target\.checked \}/);
-    assert.match(code, /\{ tileSize: target\.value \}/);
+    assert.match(code, /function writeMetric\(id, patch\)/);
+    assert.match(code, /widgetsState = await widgetsService\.updateWeatherMetric\(id, patch\);/);
+    // The size control keeps the change listener; the eye button takes its next value from the DOM (aria-pressed).
+    assert.match(code, /writeMetric\(target\.dataset\.metricId, \{ tileSize: target\.value \}\)/);
+    assert.match(code, /const next = toggle\.getAttribute\("aria-pressed"\) !== "true";/);
+    assert.match(code, /writeMetric\(toggle\.dataset\.metricId, \{ enabled: next \}\)/);
+    assert.doesNotMatch(code, /\{ enabled: target\.checked \}/);
+    assert.doesNotMatch(code, /type = "checkbox"/);
     assert.match(code, /function syncMetricRows\(\)/);
     assert.match(code, /function moveButtonDisabled\(items, item, action\)/);
   });
@@ -465,11 +472,32 @@ describe("newtab city modal source", () => {
     assert.match(code, /addEventListener\("pointerdown", \(event\) => \{\s*if \(cityModalRoot\) return;/);
   });
 
-  it("traps Tab inside the modal and leaves suggestion buttons out of the cycle", async () => {
+  it("the panel dock falls back to center like gridLayout; no dead list gap rule", async () => {
+    const code = await source();
+    assert.match(code, /position: favoritesRoot\.dataset\.position \?\? "center",/);
+    assert.doesNotMatch(code, /dataset\.position \?\? "top"/);
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.doesNotMatch(css, /\.favorites-panel__list\s*\{\s*gap: 0;\s*\}/);
+  });
+
+  it("traps Tab inside the modal; open list items are part of the cycle, hidden controls are not", async () => {
     const code = await source();
     const trap = between(code, 'if (event.key !== "Tab" || !cityModalRoot) return;', "});");
-    assert.match(trap, /el\.dataset\.weatherAction !== "select-city"/);
-    assert.match(trap, /!el\.disabled/);
+    assert.doesNotMatch(trap, /select-city/);
+    assert.match(trap, /cityModalRoot\.querySelectorAll\("input, button"\)\]\.filter\(\(el\) => !el\.disabled && !el\.hidden\)/);
+  });
+
+  it("modal controls get a transparent 2px outline only while focused, plus the soft ring", async () => {
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /\.city-modal :is\(button, input, \.weather-form__suggestion\):focus-visible \{\s*outline: 2px solid transparent;/);
+    assert.doesNotMatch(css, /\.city-modal :is\(button, input[^)]*\)\s*\{/); // never on resting controls
+    for (const selector of [".city-modal .favorite-input:focus-visible", ".city-modal .icon-button:focus-visible", ".city-modal .weather-form__suggestion:focus-visible"]) {
+      const at = css.indexOf(selector);
+      assert.ok(at > -1, selector);
+      assert.match(css.slice(at, css.indexOf("}", at)), /box-shadow: 0 0 0 2px var\(--soft-ring\);/, selector);
+    }
+    assert.match(css, /\.city-modal \.button:focus-visible,\s*\.city-modal \.icon-button:focus-visible \{\s*background: var\(--soft-fill-strong\);\s*box-shadow: 0 0 0 2px var\(--soft-ring\);/);
+    assert.doesNotMatch(css, /\.weather-form__suggestion:focus-visible \{\s*outline: 3px/);
   });
 
   it("keeps Tab on the page (preventDefault) when every modal control is disabled", async () => {
@@ -516,12 +544,13 @@ describe("newtab city modal source", () => {
     const code = await source();
     const modal = between(code, "function createCityForm(mode)", "function createWeatherMetricTile(");
     assert.doesNotMatch(modal, /innerHTML/);
-    assert.doesNotMatch(modal, /createIconButton\(/);
+    assert.match(modal, /createIconButton\("button", mode === "first-run" \? "Not now" : "Cancel", "x"\)/);
+    assert.match(modal, /createIconButton\("button button--primary", "Save", "check"\)/);
     assert.match(modal, /form\.noValidate = true;/);
     assert.doesNotMatch(modal, /input\.required/);
     assert.match(modal, /input\.value = "";/);
     assert.match(modal, /errorNode\.setAttribute\("role", "alert"\);/);
-    for (const text of ["Enter a city name", "Show weather on your new tab?", "Not now", "Change city", "Set a city", "No city set.", "Current: "]) {
+    for (const text of ["Enter a city name", "Show weather on your new tab?", "Not now", "Change city", "Set a city", "No city set", "Current: "]) {
       assert.ok(code.includes(text), text);
     }
   });
@@ -530,9 +559,9 @@ describe("newtab city modal source", () => {
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
     assert.match(css, /\.city-modal \{[^}]*position: fixed;[^}]*z-index: 100;/s);
     assert.match(css, /\.city-modal__backdrop \{[^}]*background: rgb\(0 0 0 \/ 50%\);/s);
-    assert.match(css, /\.city-modal__dialog \{[^}]*width: min\(420px, calc\(100vw - 32px\)\);[^}]*max-height: calc\(100vh - 32px\);[^}]*overflow-y: auto;/s);
+    assert.match(css, /\.city-modal__dialog \{[^}]*width: min\(420px, calc\(100vw - 32px\)\);/s);
+    assert.match(css, /\.city-modal__dialog--scroll \{[^}]*max-height: calc\(100vh - 32px\);[^}]*overflow-y: auto;/s);
     assert.match(css, /\.city-modal \.favorite-input::placeholder \{[^}]*color: var\(--muted\);[^}]*opacity: 1;/s);
-    assert.match(css, /\.city-modal :is\(button, input\):focus-visible \{[^}]*outline: 2px solid var\(--text\);[^}]*outline-offset: 2px;/s);
     assert.doesNotMatch(css, /\.city-modal[^{]*\{[^}]*transition/s);
   });
 });

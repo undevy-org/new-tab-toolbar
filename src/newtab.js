@@ -67,7 +67,7 @@ function publishPanelDock() {
     Number.parseFloat(getComputedStyle(favoritesPanelRoot).getPropertyValue("--panel-inset")) || 16;
   const bar = favoritesRoot.getBoundingClientRect();
   const { dock, maxHeight } = panelDock({
-    position: favoritesRoot.dataset.position ?? "top",
+    position: favoritesRoot.dataset.position ?? "center",
     barTop: bar.top,
     barBottom: bar.bottom,
     viewportHeight: window.innerHeight,
@@ -246,7 +246,7 @@ let widgetsEnsureFailed = false;
 let widgetsNewer = false;
 let metricWritesPending = 0; // metric writes in flight; controls are re-synced only when none is
 let metricErrorText = ""; // write-error slot of the metric controls; module state so a panel rebuild keeps it
-let activeCityForm = null; // { cancelPending, renderSuggestions } of the mounted city form
+let activeCityForm = null; // { cancelPending, renderSuggestions, refresh, place, focusField, dispose, choose, chosen, recentlyChosen } of the mounted city form
 let weatherUi = createInitialWeatherUiState();
 let weatherBusy = false;
 let weatherFormGeneration = 0;
@@ -332,7 +332,7 @@ function createSegmentedControl(name, options, selectedValue) {
   const group = createNode("div", "segmented");
   group.setAttribute("role", "radiogroup");
 
-  for (const [value, text] of options) {
+  for (const [value, text, glyph] of options) {
     const option = createNode("label", "segmented__option");
     const input = document.createElement("input");
     input.type = "radio";
@@ -340,6 +340,11 @@ function createSegmentedControl(name, options, selectedValue) {
     input.value = value;
     input.checked = value === selectedValue;
     option.appendChild(input);
+    if (glyph) {
+      const mark = createNode("i", `segmented__glyph segmented__glyph--${glyph}`);
+      mark.setAttribute("aria-hidden", "true");
+      option.appendChild(mark);
+    }
     option.appendChild(createNode("span", null, text));
     group.appendChild(option);
   }
@@ -629,15 +634,14 @@ function createFavoritesPanelRow(item, items) {
 
   const info = createNode("div", "favorites-panel__item");
   info.appendChild(createFavoriteIconNode(getFavoriteIconModel(item, { faviconBaseUrl }), item));
-  const text = createNode("div");
+  const text = createNode("div", "favorites-panel__title");
   text.appendChild(createNode("strong", null, item.label));
   text.appendChild(createNode("span", null, item.domain));
   info.appendChild(text);
 
-  const controls = createNode("div", "favorites-panel__controls");
   const disabled = favoritesBusy || isFormOpen(favoritesUi);
 
-  const earlier = createNode("button", "icon-button");
+  const earlier = createNode("button", "icon-button row-up");
   earlier.type = "button";
   earlier.dataset.favoriteAction = "move-earlier";
   earlier.dataset.favoriteId = item.id;
@@ -645,7 +649,7 @@ function createFavoritesPanelRow(item, items) {
   earlier.disabled = moveButtonDisabled(items, item, "move-earlier");
   earlier.appendChild(createIconNode("chevronUp"));
 
-  const later = createNode("button", "icon-button");
+  const later = createNode("button", "icon-button row-down");
   later.type = "button";
   later.dataset.favoriteAction = "move-later";
   later.dataset.favoriteId = item.id;
@@ -653,7 +657,7 @@ function createFavoritesPanelRow(item, items) {
   later.disabled = moveButtonDisabled(items, item, "move-later");
   later.appendChild(createIconNode("chevronDown"));
 
-  const edit = createNode("button", "icon-button");
+  const edit = createNode("button", "icon-button row-action");
   edit.type = "button";
   edit.dataset.favoriteAction = "edit";
   edit.dataset.favoriteId = item.id;
@@ -661,16 +665,16 @@ function createFavoritesPanelRow(item, items) {
   edit.disabled = disabled;
   edit.appendChild(createIconNode("pencil"));
 
-  controls.append(earlier, later, edit);
-  row.append(info, controls);
+  row.append(info, earlier, later, edit);
   return row;
 }
 
 const METRIC_LABELS = { temperature: "Temperature", precipitation: "Precipitation", airQuality: "Air quality", uv: "UV index" };
+const METRIC_GLYPHS = { temperature: "thermometer", precipitation: "droplet", airQuality: "wind", uv: "sun" };
 
 function createMetricMoveButtons(item, items) {
   const make = (action, label, icon) => {
-    const button = createNode("button", "icon-button");
+    const button = createNode("button", action === "move-earlier" ? "icon-button row-up" : "icon-button row-down");
     button.type = "button";
     button.dataset.favoriteAction = action;
     button.dataset.favoriteId = item.id;
@@ -687,37 +691,44 @@ function createMetricMoveButtons(item, items) {
 }
 
 function createWeatherMetricRow(item, items) {
-  const label = METRIC_LABELS[weatherMetricKey(item.id)];
+  const key = weatherMetricKey(item.id);
+  const label = METRIC_LABELS[key];
   const row = createNode("div", "favorites-panel__row");
   row.dataset.metricRow = "";
   row.dataset.metricId = item.id;
 
   const info = createNode("div", "favorites-panel__item");
-  const text = createNode("div");
+  const glyph = createNode("span", "metric-glyph");
+  glyph.setAttribute("aria-hidden", "true");
+  glyph.appendChild(createIconNode(METRIC_GLYPHS[key]));
+  const text = createNode("div", "favorites-panel__title");
   text.appendChild(createNode("strong", null, label));
   const badge = createNode("span", "badge", "Hidden");
   badge.dataset.hiddenBadge = "";
   text.appendChild(badge);
-  info.appendChild(text);
+  info.append(glyph, text);
 
-  const controls = createNode("div", "favorites-panel__controls");
-  const show = createNode("label", "metric-show");
-  const checkbox = document.createElement("input");
-  checkbox.type = "checkbox";
-  checkbox.dataset.metricSetting = "enabled";
-  checkbox.dataset.metricId = item.id;
-  checkbox.setAttribute("aria-label", `Show ${label}`);
-  show.append(checkbox, createNode("span", null, "Show"));
-
-  const size = createSegmentedControl(`tileSize-${item.id}`, [["square", "Square"], ["wide", "Wide 2:1"]], item.tileSize);
+  const slot = createNode("div", "favorites-panel__slot");
+  const size = createSegmentedControl(
+    `tileSize-${item.id}`,
+    [["square", "Square", "square"], ["wide", "Wide", "wide"]],
+    item.tileSize
+  );
   size.setAttribute("aria-label", `${label} tile size`);
   for (const input of size.querySelectorAll("input")) {
     input.dataset.metricSetting = "tileSize";
     input.dataset.metricId = item.id;
   }
+  slot.appendChild(size);
 
-  controls.append(show, size, ...createMetricMoveButtons(item, items));
-  row.append(info, controls);
+  const toggle = createNode("button", "icon-button row-action metric-toggle");
+  toggle.type = "button";
+  toggle.dataset.metricSetting = "enabled";
+  toggle.dataset.metricId = item.id;
+  toggle.setAttribute("aria-label", `Show ${label}`);
+
+  const [up, down] = createMetricMoveButtons(item, items);
+  row.append(info, slot, up, down, toggle);
   applyMetricRowState(row, item);
   return row;
 }
@@ -725,8 +736,26 @@ function createWeatherMetricRow(item, items) {
 function applyMetricRowState(row, item) {
   row.dataset.hidden = String(!item.enabled);
   row.querySelector("[data-hidden-badge]").hidden = item.enabled;
-  row.querySelector('[data-metric-setting="enabled"]').checked = item.enabled;
+  const toggle = row.querySelector('[data-metric-setting="enabled"]');
+  toggle.setAttribute("aria-pressed", String(item.enabled));
+  toggle.replaceChildren(createIconNode(item.enabled ? "eye" : "eyeOff", { size: 20 }));
   for (const radio of row.querySelectorAll('[data-metric-setting="tileSize"]')) radio.checked = radio.value === item.tileSize;
+}
+
+function writeMetric(id, patch) {
+  metricWritesPending += 1;
+  void (async () => {
+    try {
+      widgetsState = await widgetsService.updateWeatherMetric(id, patch);
+      showMetricError("");
+      renderFavoritesToolbar();
+    } catch (error) {
+      showMetricError(error instanceof Error ? error.message : String(error));
+    }
+    // While later writes are in flight the controls keep showing the user's latest intent.
+    metricWritesPending -= 1;
+    if (metricWritesPending === 0) syncMetricRows();
+  })();
 }
 
 // In-place sync so an open add/edit form keeps its contents and focus stays on the used control.
@@ -750,6 +779,11 @@ function showMetricError(message) {
   node.hidden = message === "";
 }
 
+const POPOVER_MAX_HEIGHT = 240;
+const POPOVER_MIN_FREE = 96;
+const POPOVER_GAP = 6;
+const VIEWPORT_MARGIN = 16;
+
 function createCityForm(mode) {
   weatherFormGeneration += 1;
   const formGeneration = weatherFormGeneration;
@@ -759,47 +793,83 @@ function createCityForm(mode) {
   form.dataset.weatherForm = "city";
   form.noValidate = true;
 
+  const field = createNode("div", "weather-form__field");
+
   const input = createNode("input", "favorite-input");
   input.name = "city";
   input.type = "text";
   input.id = "weather-city-input";
-  input.placeholder = "City";
+  input.placeholder = "Search for a city";
+  input.setAttribute("aria-label", "City");
   input.value = "";
   input.autocomplete = "off";
   input.disabled = weatherBusy;
 
-  const cityLabel = createNode("label", "favorite-form__row-label", "City");
-  cityLabel.htmlFor = "weather-city-input";
+  const clear = createNode("button", "icon-button weather-form__clear");
+  clear.type = "button";
+  clear.dataset.cityModalClear = "";
+  clear.setAttribute("aria-label", "Clear city");
+  clear.appendChild(createIconNode("x"));
+  clear.hidden = true;
 
-  const row = createNode("div", "weather-form__row");
-  row.appendChild(input);
+  const suggestionsList = createNode("div", "weather-form__suggestions");
+  field.append(input, clear, suggestionsList);
 
-  const save = createNode("button", "button button--primary", "Save");
-  save.type = "submit";
-  save.disabled = weatherBusy;
+  const errorNode = createNode("p", "status status--error status--full", cityModalError);
+  errorNode.dataset.cityModalError = "";
+  errorNode.setAttribute("role", "alert");
+  errorNode.hidden = cityModalError === "";
 
-  const dismiss = createNode("button", "button", mode === "first-run" ? "Not now" : "Cancel");
+  const actions = createNode("div", "city-modal__actions");
+  const dismiss = createIconButton("button", mode === "first-run" ? "Not now" : "Cancel", "x");
   dismiss.type = "button";
   dismiss.dataset.cityModalAction = mode === "first-run" ? "dismiss" : "cancel";
   dismiss.disabled = weatherBusy;
-  row.append(save, dismiss);
+  const save = createIconButton("button button--primary", "Save", "check");
+  save.type = "submit";
+  actions.append(dismiss, save);
 
-  form.append(cityLabel, row);
+  form.append(field, errorNode, actions);
 
-  const suggestionsList = createNode("div", "weather-form__suggestions");
-  form.appendChild(suggestionsList);
+  // Save needs text; Clear needs text and no running request.
+  function refresh() {
+    const empty = input.value.trim() === "";
+    save.disabled = weatherBusy || empty;
+    clear.hidden = weatherBusy || input.value === "";
+    clear.disabled = weatherBusy;
+  }
+
+  // Overlay popover while there is room below the input; otherwise docked in the dialog's flow with a scrolling dialog.
+  // The free space is measured as if the popover were an overlay: the docked class and the scroll cap are dropped for the
+  // measurement (layout is flushed, nothing is painted in between), so the result depends neither on the current mode nor on the
+  // dialog's scroll position and the mode cannot flip back and forth. It is measured from the INPUT's bottom edge, not from
+  // the field wrapper, because the wrapper contains the list while it is docked. A dialog that does not fit the viewport on
+  // its own (a very low window, large zoom) scrolls in every mode, also before the first suggestion appears.
+  function placePopover() {
+    const dialog = field.closest(".city-modal__dialog");
+    if (!dialog) return;
+    const scrollTop = dialog.scrollTop;
+    suggestionsList.classList.remove("weather-form__suggestions--docked");
+    dialog.classList.remove("city-modal__dialog--scroll");
+    const free = window.innerHeight - input.getBoundingClientRect().bottom - POPOVER_GAP - VIEWPORT_MARGIN;
+    const tooTall = dialog.getBoundingClientRect().height > window.innerHeight - 2 * VIEWPORT_MARGIN;
+    const docked = free < POPOVER_MIN_FREE;
+    suggestionsList.classList.toggle("weather-form__suggestions--docked", docked);
+    dialog.classList.toggle("city-modal__dialog--scroll", docked || tooTall);
+    suggestionsList.style.maxHeight = docked ? "" : `${Math.min(POPOVER_MAX_HEIGHT, free)}px`;
+    dialog.scrollTop = scrollTop;
+  }
 
   function renderSuggestionsList() {
     suggestionsList.replaceChildren();
 
     if (!isSuggestionsOpen(weatherUi)) {
+      placePopover();
       return;
     }
 
     for (const suggestion of citySuggestions(weatherUi)) {
-      const labelParts = [suggestion.name, suggestion.admin1, suggestion.country].filter(
-        (part) => part
-      );
+      const labelParts = [suggestion.name, suggestion.admin1, suggestion.country].filter((part) => part);
       const label = labelParts.join(", ");
       const button = createNode("button", "weather-form__suggestion", label);
       button.type = "button";
@@ -810,17 +880,18 @@ function createCityForm(mode) {
       button.dataset.cityLongitude = String(suggestion.longitude);
       suggestionsList.appendChild(button);
     }
-
-    // On a short window the list can sit below the visible part of the panel body: bring it into view.
-    if (suggestionsList.isConnected && typeof suggestionsList.scrollIntoView === "function") {
-      suggestionsList.scrollIntoView({ block: "nearest" });
-    }
+    placePopover();
   }
 
   renderSuggestionsList();
+  const onResize = placePopover;
+  window.addEventListener("resize", onResize);
 
   suggestionsList.addEventListener("mousedown", (event) => {
-    event.preventDefault();
+    event.preventDefault(); // the field keeps focus, so the item never gets focusin
+    // A press on an item cancels the pending request: a late response must never replace the list under the pressed item
+    // (the click would be lost or land on another item). The click then chooses the item; later typing gets suggestions again.
+    if (event.target instanceof Element && event.target.closest(".weather-form__suggestion")) cancelPendingSuggestionRequest();
   });
 
   let debounceTimer = null;
@@ -842,6 +913,7 @@ function createCityForm(mode) {
     const query = input.value.trim();
 
     cancelPendingSuggestionRequest();
+    refresh();
 
     if (query.length < 2) {
       weatherUi = hideSuggestions(weatherUi);
@@ -864,7 +936,7 @@ function createCityForm(mode) {
           results = null;
         }
 
-        if (signal.aborted || formGeneration !== weatherFormGeneration) {
+        if (signal.aborted || formGeneration !== weatherFormGeneration || weatherBusy || suggestionsList.contains(document.activeElement)) {
           return;
         }
 
@@ -877,25 +949,117 @@ function createCityForm(mode) {
     }, 250);
   });
 
-  input.addEventListener("blur", () => {
-    cancelPendingSuggestionRequest();
+  let chosenCity = null;
+  let chosenAt = -Infinity; // performance.now() of the last choose()
+  let pressing = false; // a pointer press that began inside the dialog and has not been released yet
 
-    setTimeout(() => {
-      if (formGeneration !== weatherFormGeneration) {
-        return;
-      }
-      weatherUi = hideSuggestions(weatherUi);
-      renderSuggestionsList();
-    }, 150);
+  function closeList() {
+    cancelPendingSuggestionRequest();
+    weatherUi = hideSuggestions(weatherUi);
+    renderSuggestionsList();
+  }
+
+  function closeListIfFocusLeft() {
+    if (formGeneration !== weatherFormGeneration || !document.hasFocus()) return;
+    if (field.contains(document.activeElement)) return;
+    closeList();
+  }
+
+  // A pointer press inside the dialog (Save, Not now/Cancel, the dialog body) must not close the list before the click is
+  // delivered: in docked mode the buttons would move between press and release and the click would be lost. The list closes
+  // after the release instead (setTimeout 0 runs after the click event).
+  const onPointerDown = (event) => {
+    if (event.button !== 0) return; // a right click opens a context menu and may never deliver a pointerup
+    pressing = event.target instanceof Element && Boolean(event.target.closest(".city-modal__dialog"));
+  };
+  const onWindowBlur = () => {
+    pressing = false; // a press interrupted by leaving the window never gets its pointerup
+  };
+  const onPointerUp = () => {
+    if (!pressing) return;
+    pressing = false;
+    setTimeout(closeListIfFocusLeft, 0);
+  };
+  document.addEventListener("pointerdown", onPointerDown, true);
+  document.addEventListener("pointerup", onPointerUp, true);
+  document.addEventListener("pointercancel", onPointerUp, true);
+  window.addEventListener("blur", onWindowBlur);
+
+  // Window focus loss does nothing. Moving focus to something outside the field wrapper cancels the debounce and the request
+  // in flight at once (list open or not) and closes the list, unless a pointer press inside the dialog is still going on.
+  field.addEventListener("focusout", (event) => {
+    if (event.relatedTarget instanceof Node && field.contains(event.relatedTarget)) return;
+    if (!document.hasFocus()) return;
+    cancelPendingSuggestionRequest();
+    if (pressing) return;
+    setTimeout(closeListIfFocusLeft, 0);
   });
 
-  const errorNode = createNode("p", "status status--error status--full", cityModalError);
-  errorNode.dataset.cityModalError = "";
-  errorNode.setAttribute("role", "alert");
-  errorNode.hidden = cityModalError === "";
-  form.appendChild(errorNode);
+  // Focus entering the list (ArrowDown, Tab, a click on an item) cancels the pending request too: a response must never
+  // replace the list under a focused item.
+  suggestionsList.addEventListener("focusin", cancelPendingSuggestionRequest);
 
-  activeCityForm = { cancelPending: cancelPendingSuggestionRequest, renderSuggestions: renderSuggestionsList };
+  input.addEventListener("input", () => {
+    chosenCity = null; // editing drops the remembered choice
+  });
+
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.isComposing && !weatherBusy && input.value.trim() === "") {
+      event.preventDefault(); // a disabled Save blocks the implicit submit, so the field reports the empty case itself
+      cityModalError = "Enter a city name";
+      syncCityModal();
+      return;
+    }
+    if (event.key === "ArrowDown" && isSuggestionsOpen(weatherUi) && !weatherBusy) {
+      event.preventDefault();
+      cancelPendingSuggestionRequest();
+      suggestionsList.querySelector("button")?.focus();
+    }
+  });
+
+  suggestionsList.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const items = [...suggestionsList.querySelectorAll("button")];
+    const at = items.indexOf(document.activeElement);
+    if (event.key === "ArrowDown") items[at + 1]?.focus();
+    else if (at <= 0) input.focus();
+    else items[at - 1]?.focus();
+  });
+
+  clear.addEventListener("click", () => {
+    input.value = "";
+    chosenCity = null;
+    closeList();
+    refresh();
+    input.focus();
+  });
+
+  refresh();
+  activeCityForm = {
+    cancelPending: cancelPendingSuggestionRequest,
+    renderSuggestions: renderSuggestionsList,
+    refresh,
+    place: placePopover,
+    focusField: () => input.focus(),
+    dispose: () => {
+      window.removeEventListener("resize", onResize);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("pointerup", onPointerUp, true);
+      document.removeEventListener("pointercancel", onPointerUp, true);
+      window.removeEventListener("blur", onWindowBlur);
+    },
+    choose(city) {
+      closeList(); // cancels the debounce and the in-flight request; late responses are ignored (signal aborted)
+      input.value = city.label;
+      chosenCity = { name: city.name, country: city.country, latitude: city.latitude, longitude: city.longitude, label: city.label };
+      chosenAt = performance.now();
+      refresh();
+      input.focus();
+    },
+    chosen: () => (chosenCity && chosenCity.label === input.value ? chosenCity : null),
+    recentlyChosen: () => performance.now() - chosenAt < 350
+  };
   return form;
 }
 
@@ -939,10 +1103,12 @@ function syncCityModal() {
   for (const control of cityModalRoot.querySelectorAll("input, button")) {
     if (control.dataset.weatherAction !== "select-city") control.disabled = weatherBusy;
   }
+  activeCityForm?.refresh();
   cityModalRoot.querySelector('[role="dialog"]').setAttribute("aria-busy", String(weatherBusy)); // spec: aria-busy while a request runs
   const errorNode = cityModalRoot.querySelector("[data-city-modal-error]");
   errorNode.textContent = cityModalError;
   errorNode.hidden = cityModalError === "";
+  activeCityForm?.place();
 }
 
 // One listener per event on the modal root (backdrop, dismiss button, suggestions, submit).
@@ -954,6 +1120,16 @@ function attachCityModalListeners(root) {
   root.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target || weatherBusy) return;
+    // The second click of a double click on an item lands on what was under the popover: the backdrop or a covered button
+    // (for Save the submit is cancelled too). A keyboard activation (detail 0) is never such a click: Enter on Save saves.
+    if (
+      event.detail > 0 &&
+      activeCityForm?.recentlyChosen() &&
+      (target.matches("[data-city-modal-backdrop]") || target.closest('[data-city-modal-action], button[type="submit"]'))
+    ) {
+      event.preventDefault();
+      return;
+    }
     // A drag from the field that ends over the backdrop targets the modal root, not the backdrop: ignored.
     if (target.matches("[data-city-modal-backdrop]")) {
       if (performance.now() - cityModalOpenedAt >= CITY_MODAL_BACKDROP_GUARD_MS) hideCityModal({ dismiss: true });
@@ -964,15 +1140,15 @@ function attachCityModalListeners(root) {
       return;
     }
     const suggestion = target.closest('[data-weather-action="select-city"]');
-    if (suggestion instanceof HTMLElement && weatherService) {
-      changeCity(() =>
-        weatherService.selectLocation({
-          name: suggestion.dataset.cityName,
-          country: suggestion.dataset.cityCountry ?? "",
-          latitude: Number(suggestion.dataset.cityLatitude),
-          longitude: Number(suggestion.dataset.cityLongitude)
-        })
-      );
+    if (suggestion instanceof HTMLElement) {
+      activeCityForm?.choose({
+        name: suggestion.dataset.cityName,
+        country: suggestion.dataset.cityCountry ?? "",
+        latitude: Number(suggestion.dataset.cityLatitude),
+        longitude: Number(suggestion.dataset.cityLongitude),
+        label: suggestion.textContent
+      });
+      return;
     }
   });
 
@@ -986,6 +1162,11 @@ function attachCityModalListeners(root) {
       cityModalError = "Enter a city name";
       syncCityModal();
       form.querySelector(CITY_INPUT_SELECTOR)?.focus();
+      return;
+    }
+    const picked = activeCityForm?.chosen();
+    if (picked) {
+      changeCity(() => weatherService.selectLocation({ name: picked.name, country: picked.country, latitude: picked.latitude, longitude: picked.longitude }));
       return;
     }
     changeCity(() => weatherService.setCity(cityName));
@@ -1005,10 +1186,12 @@ function showCityModal(mode, openerSelector) {
   } catch (error) {
     // Nothing half-open: a failed build must not leave the UI state "open" and block every later open.
     root?.remove();
+    activeCityForm?.dispose?.(); // the form's document and window listeners must not outlive it
     activeCityForm = null;
     throw error;
   }
   cityModalRoot = root;
+  activeCityForm?.place();
   cityModalShownThisLoad = true;
   weatherUi = openCityModalState(weatherUi, mode);
   cityModalOpener = openerSelector;
@@ -1027,6 +1210,7 @@ function hideCityModal({ dismiss = false } = {}) {
   const mode = cityModalMode(weatherUi);
   const focusWasInside = cityModalHadFocus || cityModalRoot.contains(document.activeElement); // D14: a running request or a backdrop click may already have moved focus to body
   activeCityForm?.cancelPending();
+  activeCityForm?.dispose?.();
   activeCityForm = null;
   weatherFormGeneration += 1; // late suggestion responses are ignored
   cityModalRoot.remove();
@@ -1115,6 +1299,10 @@ function renderFavoritesToolbar() {
   }
 
   hideTooltip();
+  // Every bootstrap exit path (normal, newer meta, failed migration, read error) renders through here, so the bar is never left hidden.
+  if (!favoritesRoot.dataset.position) {
+    favoritesRoot.dataset.position = gridLayout(widgetsState).position;
+  }
 
   const active = document.activeElement instanceof Element ? document.activeElement : null;
   const focused = active && favoritesRoot.contains(active) ? active.closest("[data-widget-id], .favorite-settings") : null;
@@ -1237,31 +1425,39 @@ function renderFavoritesPanel() {
     body.appendChild(createGridSettingsRow(widgetsState));
   }
 
-  body.appendChild(createWeatherBlock());
+  const links = items.filter((item) => item.type === "favorite");
+  const metrics = items.filter((item) => item.type !== "favorite");
+
+  const linksSection = createNode("section", "links-block panel-section");
+  const linksHead = createNode("div", "panel-section__head");
+  linksHead.append(createNode("h3", null, "Links"), createNode("span", "links-block__count", String(links.length)));
+  linksSection.appendChild(linksHead);
 
   if (isAdding(favoritesUi)) {
-    body.appendChild(createFavoriteForm(null));
+    linksSection.appendChild(createFavoriteForm(null));
   }
-
   const currentEditingId = editingId(favoritesUi);
   const editingItem = items.find((item) => item.id === currentEditingId);
   if (editingItem) {
-    body.appendChild(createFavoriteForm(editingItem));
+    linksSection.appendChild(createFavoriteForm(editingItem));
   }
-
   if (favoritesError) {
     const errorNode = createStatus(favoritesError, { error: true, live: "assertive" });
     errorNode.dataset.favoritesError = "";
-    body.appendChild(errorNode);
+    linksSection.appendChild(errorNode);
   }
 
-  const listWrap = createNode("div", "favorites-panel__list");
-  items.forEach((item) => {
-    listWrap.appendChild(
-      item.type === "favorite" ? createFavoritesPanelRow(item, items) : createWeatherMetricRow(item, items)
-    );
-  });
-  body.appendChild(listWrap);
+  const listWrap = createNode("div", "panel-card favorites-panel__list");
+  if (links.length === 0) {
+    listWrap.appendChild(createNode("p", "panel-card__empty", "No links yet. Use Add link to create the first one."));
+  }
+  for (const item of links) {
+    listWrap.appendChild(createFavoritesPanelRow(item, items));
+  }
+  linksSection.appendChild(listWrap);
+  body.appendChild(linksSection);
+
+  body.appendChild(createWeatherBlock(metrics, items));
   fragment.appendChild(body);
 
   favoritesPanelRoot.replaceChildren(fragment);
@@ -1527,23 +1723,8 @@ if (favoritesRoot) {
       return;
     }
 
-    const metricSetting = target.dataset.metricSetting;
-    if (metricSetting) {
-      const id = target.dataset.metricId;
-      const patch = metricSetting === "enabled" ? { enabled: target.checked } : { tileSize: target.value };
-      metricWritesPending += 1;
-      void (async () => {
-        try {
-          widgetsState = await widgetsService.updateWeatherMetric(id, patch);
-          showMetricError("");
-          renderFavoritesToolbar();
-        } catch (error) {
-          showMetricError(error instanceof Error ? error.message : String(error));
-        }
-        // While later writes are in flight the controls keep showing the user's latest intent.
-        metricWritesPending -= 1;
-        if (metricWritesPending === 0) syncMetricRows();
-      })();
+    if (target.dataset.metricSetting === "tileSize") {
+      writeMetric(target.dataset.metricId, { tileSize: target.value });
       return;
     }
 
@@ -1581,6 +1762,20 @@ if (favoritesRoot) {
     })();
   });
 
+  // The eye button: the new value comes from the DOM and is shown at once (as the checkbox did), so two quick presses
+  // never write the same value; syncMetricRows() restores the stored state once no write is pending.
+  favoritesPanelRoot?.addEventListener("click", (event) => {
+    const toggle = event.target instanceof Element ? event.target.closest(".metric-toggle") : null;
+    if (!(toggle instanceof HTMLElement) || !widgetsService) return;
+    const next = toggle.getAttribute("aria-pressed") !== "true";
+    const row = toggle.closest("[data-metric-row]");
+    toggle.setAttribute("aria-pressed", String(next));
+    toggle.replaceChildren(createIconNode(next ? "eye" : "eyeOff", { size: 20 }));
+    row.dataset.hidden = String(!next);
+    row.querySelector("[data-hidden-badge]").hidden = next;
+    writeMetric(toggle.dataset.metricId, { enabled: next });
+  });
+
   favoritesRoot.addEventListener("click", handleFavoritesClick);
   favoritesPanelRoot?.addEventListener("click", handleFavoritesClick);
 
@@ -1597,6 +1792,7 @@ if (favoritesRoot) {
       activeCityForm?.cancelPending();
       weatherUi = hideSuggestions(weatherUi);
       activeCityForm?.renderSuggestions();
+      activeCityForm?.focusField();
       return;
     }
 
@@ -1621,10 +1817,7 @@ if (favoritesRoot) {
   // Tab inside the open modal wraps; from body or outside it enters the modal (I3).
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Tab" || !cityModalRoot) return;
-    // Suggestion buttons are mouse-only: never a wrap target (a Tab from the field closes the list via blur).
-    const controls = [...cityModalRoot.querySelectorAll("input, button")].filter(
-      (el) => !el.disabled && el.dataset.weatherAction !== "select-city"
-    );
+    const controls = [...cityModalRoot.querySelectorAll("input, button")].filter((el) => !el.disabled && !el.hidden);
     if (controls.length === 0) {
       event.preventDefault(); // busy: nothing to enter, focus stays on body and never leaves the page
       return;
@@ -1757,22 +1950,35 @@ function weatherStatusModel() {
   return null;
 }
 
-function createWeatherBlock() {
-  const block = createNode("section", "weather-block");
+function createWeatherBlock(metrics, items) {
+  const block = createNode("section", "weather-block panel-section");
   block.appendChild(createNode("h3", null, "Weather"));
-  const city = createNode("p", "weather-block__city");
+  const card = createNode("div", "panel-card");
+
+  const cityRow = createNode("div", "favorites-panel__row favorites-panel__row--city");
+  const cityTitle = createNode("div", "favorites-panel__item");
+  const cityLabel = createNode("span", "weather-block__label", "City");
+  cityLabel.dataset.weatherCityLabel = "";
+  const city = createNode("strong", "weather-block__city");
   city.dataset.weatherCity = "";
-  block.appendChild(city);
-  const status = createNode("p", "status status--full");
+  cityTitle.append(cityLabel, city);
+  cityRow.append(cityTitle, createNode("div", "weather-block__action"));
+  card.appendChild(cityRow);
+
+  const status = createNode("p", "status status--full panel-card__status");
   status.dataset.weatherStatus = "";
-  block.appendChild(status);
-  const metricError = createNode("p", "status status--error status--full");
+  card.appendChild(status);
+  const metricError = createNode("p", "status status--error status--full panel-card__status");
   metricError.dataset.metricError = "";
   metricError.setAttribute("role", "alert");
   metricError.textContent = metricErrorText;
   metricError.hidden = metricErrorText === "";
-  block.appendChild(metricError);
-  block.appendChild(createNode("div", "weather-block__action"));
+  card.appendChild(metricError);
+
+  for (const item of metrics) {
+    card.appendChild(createWeatherMetricRow(item, items));
+  }
+  block.appendChild(card);
   mountWeatherBlockContent(block);
   return block;
 }
@@ -1786,7 +1992,9 @@ function syncWeatherBlock() {
 function mountWeatherBlockContent(block) {
   const location = weatherLocationError ? null : currentLocation(); // I2: a read error counts as no location
   const cityLine = block.querySelector("[data-weather-city]");
-  cityLine.textContent = location ? `City: ${location.name}` : weatherLocationError ? "" : "No city set.";
+  const cityLabel = block.querySelector("[data-weather-city-label]");
+  cityLine.textContent = location ? location.name : weatherLocationError ? "" : "No city set";
+  cityLabel.hidden = !location; // "No city set" stands alone
   cityLine.hidden = cityLine.textContent === ""; // the read error is shown by the status line instead
   const status = block.querySelector("[data-weather-status]");
   const model = weatherStatusModel();
@@ -1809,7 +2017,7 @@ function mountWeatherBlockContent(block) {
     button.dataset.weatherAction = "open-city-modal";
     actionHost.replaceChildren(button);
   }
-  button.textContent = location ? "Change city" : "Set a city";
+  button.replaceChildren(createIconNode("mapPin"), document.createTextNode(location ? "Change city" : "Set a city"));
 }
 
 async function startWeather() {

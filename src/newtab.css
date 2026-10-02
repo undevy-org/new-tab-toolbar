@@ -10,6 +10,11 @@
   --primary-contrast: #ffffff;
   --danger: #b42318;
   --focus: rgb(0 0 0 / 24%);
+  --soft-fill: #eef1f5;
+  --soft-fill-strong: #e1e6ed;
+  --soft-ring: rgb(17 19 24 / 55%);
+  --metric-on: #1f7a45;
+  --metric-off: #b3382c;
   --toolbar-h: 72px;
   --tile-height: 52px;
 }
@@ -26,6 +31,11 @@
     --primary-contrast: #14171c;
     --danger: #ff8a80;
     --focus: rgb(255 255 255 / 28%);
+    --soft-fill: #2a313b;
+    --soft-fill-strong: #343c48;
+    --soft-ring: rgb(244 246 248 / 60%);
+    --metric-on: #5fd08a;
+    --metric-off: #ff8a80;
   }
 }
 
@@ -84,6 +94,11 @@ body {
 .favorites-bar[data-position="center"] {
   top: 50%;
   transform: translate(-50%, -50%);
+}
+
+/* No position until newtab.js has read the widgets state: never paint the bar at a position that may change. */
+.favorites-bar:not([data-position]) {
+  visibility: hidden;
 }
 
 .favorites-grid {
@@ -277,87 +292,221 @@ body {
   margin-bottom: 12px;
 }
 
-.favorites-panel__list {
-  display: grid;
-  gap: 2px;
-}
-
 .favorites-panel__row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 0;
+  gap: 8px;
+  min-height: 64px;
+  padding: 0;
   border-top: 1px solid var(--border);
 }
 
 .favorites-panel__item {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
   align-items: center;
-  gap: 11px;
+  gap: 12px; /* the 32 px lead cell + 4 px + the 8 px column gap */
+}
+
+/* Lead cell: favicon / letter icon in link rows, glyph chip in metric rows. All 32 px, so titles and chips line up. */
+.favorites-panel__item > .favorite-icon,
+.favorites-panel__item > .favorite-letter,
+.metric-glyph {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+}
+
+.favorites-panel__item > .favorite-letter {
+  border-radius: 8px;
+}
+
+/* The title COLUMN takes the free space (its width is what AS-15 measures), the texts inside ellipsize. */
+.favorites-panel__title {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .favorites-panel__item strong {
   display: block;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.favorites-panel__item span {
+/* The URL line of a link row. */
+.favorites-panel__title > span:not(.badge) {
   display: block;
+  overflow: hidden;
   color: var(--muted);
   font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.favorites-panel__controls {
+/* Metric rows: the name and the "Hidden" tag share one line; the name ellipsizes, the tag keeps its width. */
+.favorites-panel__row[data-metric-row] .favorites-panel__title {
   display: flex;
-  flex: 0 0 auto;
-  gap: 6px;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.favorites-panel__row[data-metric-row] .favorites-panel__title strong {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .favorites-panel__item .badge {
   display: inline-block;
-  margin-left: 8px;
+  flex: none;
   color: var(--muted);
   font-size: 12px;
 }
 
+/* Kept from the replaced rules: without it the display above defeats the UA [hidden] rule and "Hidden" shows on every row. */
 .favorites-panel__item .badge[hidden] {
   display: none;
-}
-
-.metric-show {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 24px;
-}
-
-.metric-show input {
-  width: 20px;
-  height: 20px;
 }
 
 .favorites-panel__row[data-hidden="true"] strong {
   color: var(--muted);
 }
 
-.favorites-panel__row[data-metric-row] {
+/* City row: the name wraps, the button stays on the right (under the name on narrow screens, see below). */
+.favorites-panel__row--city .favorites-panel__item {
   flex-wrap: wrap;
+  gap: 0 8px;
 }
 
-.favorites-panel__row[data-metric-row] .favorites-panel__controls {
-  flex: 1 1 auto;
-  flex-wrap: wrap;
+/* A long unbroken city name wraps inside the row (the city is a flex child of .favorites-panel__item). */
+.favorites-panel__row--city .weather-block__city {
+  min-width: 0;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+/* `.favorites-panel__item strong { display: block }` would beat the UA `[hidden]` rule (read error: no city line). */
+.favorites-panel__row--city .weather-block__city[hidden],
+.favorites-panel__row--city .weather-block__label[hidden] {
+  display: none;
+}
+
+.favorites-panel__row--city .weather-block__label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.favorites-panel__row--city .weather-block__action {
+  flex: none;
+}
+
+/* `.button { width: 100% }` of the 600 px block must not stretch the city button. */
+.favorites-panel__row--city .weather-block__action .button {
+  width: auto;
+}
+
+/* 152 px = the natural width of the segmented control with glyphs (about 151 px), so the slot never clips it. */
+.favorites-panel__slot {
+  flex: 0 0 152px;
+  display: flex;
   justify-content: flex-end;
+}
+
+.metric-glyph {
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--soft-fill);
+  color: var(--text);
+}
+
+.metric-toggle[aria-pressed="true"] {
+  color: var(--metric-on);
+}
+
+.metric-toggle[aria-pressed="false"] {
+  color: var(--metric-off);
+}
+
+.segmented {
+  white-space: nowrap;
+}
+
+.segmented__glyph {
+  display: inline-block;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+.segmented__glyph--square {
+  width: 10px;
+  height: 10px;
+}
+
+.segmented__glyph--wide {
+  width: 18px;
+  height: 10px;
+}
+
+.panel-section {
+  margin-bottom: 20px;
+}
+
+.panel-section > h3,
+.panel-section__head h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.panel-section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.links-block__count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.panel-card {
+  display: block;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.panel-card__empty {
+  margin: 0;
+  padding: 18px 0;
+  color: var(--muted);
+}
+
+/* `.favorites-panel__body .status { margin-bottom: 12px }` (0,2,0) exists, so this needs the same specificity to win. */
+.favorites-panel__body .panel-card__status {
+  margin: 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.panel-card > .favorites-panel__row:first-child {
+  border-top: none;
 }
 
 .icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  flex: none; /* stays 36 px wide next to a long link title */
+  width: 36px;
+  height: 36px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
@@ -475,7 +624,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 38px;
+  gap: 6px;
+  height: 34px; /* + the 1 px border of .segmented above and below = 36 px outer */
   padding: 0 8px;
   border-right: 1px solid var(--border);
   font-size: 13px;
@@ -745,67 +895,82 @@ body {
 .weather-tile[data-weather-tone="rain-4"] { background: rgba(var(--weather-tone-rgb), 0.48); }
 .weather-tile[data-weather-tone="rain-5"] { background: rgba(var(--weather-tone-rgb), 0.6); }
 
-.weather-block {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.weather-block h3 {
-  margin: 0;
-  font-size: 15px;
-}
-
-.weather-block__city {
-  margin: 0;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
 .weather-form {
   display: flex;
   flex-direction: column;
 }
 
-.weather-form__row {
-  display: flex;
-  gap: 10px;
+.weather-form__field {
+  position: relative;
 }
 
-.weather-form__row > .favorite-input {
-  flex: 1;
-  min-width: 0;
+.weather-form__field > .favorite-input {
+  width: 100%;
+  min-height: 44px;
+  padding-right: 48px;
+}
+
+/* Pinned to the input (44 px high, 36 px button), not to the wrapper's middle: the wrapper also holds the list while it is docked. */
+.weather-form__clear {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  border-color: transparent;
+}
+
+.weather-form__clear[hidden] {
+  display: none;
 }
 
 .weather-form__suggestions {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
 }
 
 .weather-form__suggestions:empty {
   display: none;
 }
 
+/* Low window: no room to overlay, so the list joins the dialog's flow and the dialog scrolls. */
+.weather-form__suggestions--docked {
+  position: static;
+  margin-top: 6px;
+  max-height: none;
+  box-shadow: none;
+}
+
 .weather-form__suggestion {
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--panel);
+  flex: none; /* never shrink a wrapped item inside the capped list: the list scrolls instead */
+  min-height: 36px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--text);
   font: inherit;
   text-align: left;
   cursor: pointer;
-  min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.weather-form__suggestion:hover,
-.weather-form__suggestion:focus-visible {
-  border-color: var(--primary);
-  outline: 3px solid var(--focus);
-  outline-offset: 2px;
+.weather-form__suggestion:hover {
+  background: var(--soft-fill);
+}
+
+.weather-form__suggestion:active {
+  background: var(--soft-fill-strong);
 }
 
 .weather-block__action {
@@ -833,9 +998,6 @@ body {
   position: relative;
   box-sizing: border-box;
   width: min(420px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
-  overflow-y: auto;
-  overflow-x: hidden;
   padding: 20px;
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -844,14 +1006,89 @@ body {
   box-shadow: 0 24px 70px rgb(0 0 0 / 32%);
 }
 
+/* Set by placePopover when the list is docked or the dialog alone does not fit the viewport (never in plain overlay mode, where the
+   popover has to extend past the dialog's bottom edge). */
+.city-modal__dialog--scroll {
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.city-modal__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.city-modal__actions .button {
+  flex: 1;
+  min-height: 40px;
+  justify-content: center;
+  gap: 8px;
+}
+
 .city-modal__title { margin: 0 0 8px; font-size: 18px; }
 .city-modal__description, .city-modal__current { margin: 0 0 12px; color: var(--muted); overflow-wrap: anywhere; }
-.city-modal .weather-form__row { flex-wrap: wrap; }
-.city-modal :is(button, input):focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .city-modal .status--full { display: block; -webkit-line-clamp: unset; line-clamp: unset; overflow: visible; overflow-wrap: anywhere; }
 /* The rule above must not defeat [hidden] on the empty error slot. */
 .city-modal .status--full[hidden] { display: none; }
 .city-modal .favorite-input::placeholder { color: var(--muted); opacity: 1; }
+
+/* Only while focused: a resting control must have no outline at all, or forced colors would draw a permanent frame
+   around every control and the focused one would no longer stand out. */
+.city-modal :is(button, input, .weather-form__suggestion):focus-visible {
+  outline: 2px solid transparent; /* forced colors turn this into a visible indicator */
+  outline-offset: 2px;
+}
+
+.city-modal .favorite-input:focus-visible {
+  background: var(--soft-fill);
+  box-shadow: 0 0 0 2px var(--soft-ring);
+}
+
+.city-modal .button:focus-visible,
+.city-modal .icon-button:focus-visible {
+  background: var(--soft-fill-strong);
+  box-shadow: 0 0 0 2px var(--soft-ring);
+}
+
+.city-modal .button--primary:focus-visible {
+  background: var(--primary);
+}
+
+.city-modal .weather-form__suggestion:focus-visible {
+  background: var(--soft-fill-strong);
+  box-shadow: 0 0 0 2px var(--soft-ring);
+}
+
+.panel-card :is(.icon-button, .button):focus-visible {
+  outline: 2px solid transparent; /* forced colors turn this into a visible indicator */
+  outline-offset: 2px;
+  background: var(--soft-fill-strong);
+  box-shadow: 0 0 0 2px var(--soft-ring);
+}
+
+.panel-card .segmented:has(input:focus-visible) {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--soft-ring);
+}
+
+/* The dark `.segmented__option:has(input:focus-visible)` outline of the grid settings Position control stays outside the cards. */
+.panel-card .segmented__option:has(input:focus-visible) {
+  outline: none;
+}
+
+@media (forced-colors: active) {
+  .panel-card .segmented__option:has(input:checked) {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .metric-toggle[aria-pressed="true"] {
+    border-color: Highlight;
+  }
+}
 
 @media (max-width: 600px) {
   :root {
@@ -886,10 +1123,6 @@ body {
   .weather-tile__secondary {
     font-size: 10px;
   }
-
-  .weather-form__row {
-    flex-direction: column;
-  }
 }
 
 @media (max-width: 360px) {
@@ -904,4 +1137,65 @@ body {
   .weather-tile__secondary {
     font-size: 9px;
   }
+}
+
+@media (max-width: 600px) {
+  /* Metric rows are two lines: line 1 = lead, title, up, down, action; line 2 = the size control under the title, to the right edge. */
+  .favorites-panel__row[data-metric-row] {
+    display: grid;
+    /* The first column is 36 px so that, with the 8 px gap, the second column starts at x = 44: the title's left edge (32 px lead + 12 px). */
+    grid-template-columns: 36px minmax(0, 1fr) 36px 36px 36px;
+    grid-template-areas:
+      "item item up down action"
+      ". slot slot slot slot";
+    gap: 8px;
+    padding: 8px 0;
+  }
+
+  .favorites-panel__row[data-metric-row] > .favorites-panel__item { grid-area: item; }
+  .favorites-panel__row[data-metric-row] > .favorites-panel__slot { grid-area: slot; flex-basis: auto; justify-content: stretch; }
+  .favorites-panel__row[data-metric-row] > .favorites-panel__slot .segmented { flex: 1; }
+  .favorites-panel__row[data-metric-row] > .row-up { grid-area: up; }
+  .favorites-panel__row[data-metric-row] > .row-down { grid-area: down; }
+  .favorites-panel__row[data-metric-row] > .row-action { grid-area: action; }
+}
+
+@media (max-width: 400px) {
+  /* Every link and metric row is two lines: title over a controls line. The text-only size control needs about 94 px with 4 px option padding. */
+  .favorites-panel__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 36px 36px 36px;
+    grid-template-areas:
+      "item item item item"
+      ". up down action";
+    gap: 8px 6px;
+    padding: 8px 0;
+  }
+
+  .favorites-panel__row > .favorites-panel__item { grid-area: item; }
+  .favorites-panel__row > .row-up { grid-area: up; }
+  .favorites-panel__row > .row-down { grid-area: down; }
+  .favorites-panel__row > .row-action { grid-area: action; }
+
+  .favorites-panel__row[data-metric-row] {
+    grid-template-columns: minmax(0, 1fr) 36px 36px 36px;
+    grid-template-areas:
+      "item item item item"
+      "slot up down action";
+    gap: 8px 6px;
+  }
+
+  .favorites-panel__row[data-metric-row] > .favorites-panel__slot { grid-area: slot; min-width: 96px; }
+  .segmented__glyph { display: none; }
+  .panel-card .segmented__option { padding: 0 4px; }
+
+  /* City row: the button goes under the name, right-aligned. */
+  .favorites-panel__row--city {
+    display: flex;
+    flex-wrap: wrap;
+    padding: 8px 0;
+  }
+
+  .favorites-panel__row--city > .favorites-panel__item { flex: 1 1 100%; }
+  .favorites-panel__row--city > .weather-block__action { margin-left: auto; }
 }

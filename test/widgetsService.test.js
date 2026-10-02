@@ -598,12 +598,23 @@ describe("widgetsService with weather metrics", () => {
     const steps = [
       ["weather:temperature", 1, ["f0", "f1", "weather:precipitation", "weather:airQuality", "weather:temperature", "weather:uv"]],
       ["weather:temperature", -1, ["f0", "f1", "weather:precipitation", "weather:temperature", "weather:airQuality", "weather:uv"]],
-      ["weather:temperature", -1, ["f0", "weather:temperature", "f1", "weather:precipitation", "weather:airQuality", "weather:uv"]],
-      ["weather:precipitation", 1, ["f0", "weather:temperature", "f1", "weather:airQuality", "weather:precipitation", "weather:uv"]]
+      ["weather:temperature", -1, ["f0", "f1", "weather:precipitation", "weather:temperature", "weather:airQuality", "weather:uv"]],
+      ["weather:precipitation", 1, ["f0", "f1", "weather:temperature", "weather:precipitation", "weather:airQuality", "weather:uv"]]
     ];
     for (const [id, dir, expected] of steps) {
       assert.deepEqual(orderOf(await service.moveWidget(id, dir)), expected);
     }
+  });
+
+  it("moves are computed on the grouped order and written grouped", async () => {
+    const { area, service } = await serviceWithMetrics();
+    const meta = (await area.get("quietTabWidgetsMeta")).quietTabWidgetsMeta;
+    // interleave in storage: f0, temperature, f1, precipitation, airQuality, uv
+    await area.set({ quietTabWidgetsMeta: { ...meta, order: ["f0", "weather:temperature", "f1", "weather:precipitation", "weather:airQuality", "weather:uv"] } });
+    const after = await service.moveWidget("f0", 1);
+    assert.deepEqual(orderOf(after), ["f1", "f0", "weather:temperature", "weather:precipitation", "weather:airQuality", "weather:uv"]);
+    assert.deepEqual((await area.get("quietTabWidgetsMeta")).quietTabWidgetsMeta.order, orderOf(after));
+    assert.deepEqual(orderOf(await service.moveWidget("f0", 1)), orderOf(after), "last favorite cannot cross into the metrics");
   });
 
   it("returns state unchanged at the ends and reports 'Widget not found'", async () => {

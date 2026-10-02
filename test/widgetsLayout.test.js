@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   defaultColumnsForItems,
   gridLayout,
+  groupWidgets,
   isRenderedWidget,
   moveTargetIndex,
   panelDock,
@@ -62,8 +63,8 @@ describe("gridLayout", () => {
   });
 
   it("falls back to the defaults when state is missing or partial", () => {
-    assert.deepEqual(gridLayout(null), { columns: 6, position: "top" });
-    assert.deepEqual(gridLayout({}), { columns: 6, position: "top" });
+    assert.deepEqual(gridLayout(null), { columns: 6, position: "center" });
+    assert.deepEqual(gridLayout({}), { columns: 6, position: "center" });
   });
 });
 
@@ -109,7 +110,7 @@ describe("moveTargetIndex", () => {
   it("skips disabled metrics when a rendered widget moves", () => {
     assert.equal(moveTargetIndex(items, 2, 1), 4);   // temperature -> after airQuality
     assert.equal(moveTargetIndex(items, 4, -1), 2);  // airQuality -> before temperature
-    assert.equal(moveTargetIndex(items, 2, -1), 1);
+    assert.equal(moveTargetIndex(items, 2, -1), -1, "never crosses into the other group");
   });
   it("moves a disabled row exactly one step", () => {
     assert.equal(moveTargetIndex(items, 3, 1), 4);
@@ -170,5 +171,52 @@ describe("placeTooltip", () => {
     });
     assert.equal(p.side, "bottom");
     assert.equal(p.top, 12);
+  });
+});
+
+describe("groupWidgets", () => {
+  const f = (id) => ({ id, type: "favorite" });
+  const m = (id, enabled = true) => ({ id, type: "weather-metric", enabled });
+
+  it("puts favorites first and keeps the relative order inside each group", () => {
+    const items = [f("a"), m("t"), f("b"), m("p"), m("q"), f("c")];
+    assert.deepEqual(groupWidgets(items).map((i) => i.id), ["a", "b", "c", "t", "p", "q"]);
+  });
+
+  it("returns an equal copy for an already grouped list and does not mutate its input", () => {
+    const items = [f("a"), m("t")];
+    const copy = [...items];
+    assert.deepEqual(groupWidgets(items), items);
+    assert.notEqual(groupWidgets(items), items);
+    assert.deepEqual(items, copy);
+  });
+});
+
+describe("moveTargetIndex stays inside the group", () => {
+  const f = (id) => ({ id, type: "favorite" });
+  const m = (id, enabled = true) => ({ id, type: "weather-metric", enabled });
+  const grouped = [f("a"), f("b"), m("t"), m("p", false), m("q")];
+
+  it("a favorite never moves onto a metric", () => {
+    assert.equal(moveTargetIndex(grouped, 1, 1), -1);
+    assert.equal(moveTargetIndex(grouped, 0, -1), -1);
+    assert.equal(moveTargetIndex(grouped, 0, 1), 1);
+  });
+
+  it("a metric never moves onto a favorite", () => {
+    assert.equal(moveTargetIndex(grouped, 2, -1), -1);
+    assert.equal(moveTargetIndex(grouped, 4, 1), -1);
+  });
+
+  it("an enabled metric jumps over a disabled neighbour, a disabled one moves exactly one row", () => {
+    assert.equal(moveTargetIndex(grouped, 2, 1), 4);
+    assert.equal(moveTargetIndex(grouped, 3, 1), 4);
+    assert.equal(moveTargetIndex(grouped, 3, -1), 2);
+  });
+});
+
+describe("gridLayout fallback", () => {
+  it("falls back to center when there is no state", () => {
+    assert.deepEqual(gridLayout(undefined), { columns: 6, position: "center" });
   });
 });
