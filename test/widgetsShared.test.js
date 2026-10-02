@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   DEFAULT_GRID_COLUMNS,
-  DEFAULT_WEATHER_METRIC_SIZES,
   GRID_POSITIONS,
   MAX_CHROME_WIDGETS,
   MAX_FAVORITE_WIDGETS,
@@ -25,14 +24,10 @@ describe("widgetsShared", () => {
     assert.equal(WIDGET_TYPES.size, 3);
   });
 
-  it("fixes the four weather metric ids, defaults and key helper", () => {
+  it("fixes the four weather metric ids and the key helper", () => {
     assert.deepEqual(WEATHER_METRIC_IDS, [
       "weather:temperature", "weather:precipitation", "weather:airQuality", "weather:uv"
     ]);
-    assert.deepEqual(
-      WEATHER_METRIC_IDS.map((id) => DEFAULT_WEATHER_METRIC_SIZES[id]),
-      ["square", "wide", "wide", "square"]
-    );
     assert.equal(weatherMetricKey("weather:airQuality"), "airQuality");
     assert.match(NEWER_WIDGETS_MESSAGE, /newer version of Quiet Tab/);
   });

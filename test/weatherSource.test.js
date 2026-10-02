@@ -87,10 +87,11 @@ describe("newtab weather source", () => {
     );
     assert.match(tiles, /Chance of rain for the rest of the day — \$\{primary\}, expected from \$\{start\}\./);
     assert.match(tiles, /Chance of rain for the rest of the day — \$\{primary\}\./);
-    const shared = await readFile(new URL("../src/widgetsShared.js", import.meta.url), "utf8");
+    // Default sizes moved from widgetsShared (tileSize names) to desktopLayout (grid w×h) with the desktop grid.
+    const layout = await readFile(new URL("../src/desktopLayout.js", import.meta.url), "utf8");
     assert.deepEqual(
-      [...shared.matchAll(/"weather:(\w+)": "(square|wide)"/g)].map((match) => `${match[1]}:${match[2]}`),
-      ["temperature:square", "precipitation:wide", "airQuality:wide", "uv:square"]
+      [...layout.matchAll(/"weather:(\w+)": \{ w: (\d), h: (\d) \}/g)].map((match) => `${match[1]}:${match[2]}x${match[3]}`),
+      ["temperature:1x1", "precipitation:2x1", "airQuality:2x1", "uv:1x1"]
     );
     assert.match(tiles, /US AQI \$\{data\.usAqi\} \(\$\{usAqiCategory\(data\.usAqi\)\}\), PM2\.5 \$\{formatPm25\(data\.pm2_5\)\} µg\/m³\./);
     assert.match(tiles, /Current UV index \$\{data\.uvIndex\} \(\$\{uvIndexLevel\(data\.uvIndex\)\}\)\. Today's peak/);
