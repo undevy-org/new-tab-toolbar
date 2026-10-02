@@ -952,6 +952,7 @@ body {
 }
 
 .weather-form__suggestion {
+  flex: none; /* never shrink a wrapped item inside the capped list: the list scrolls instead */
   min-height: 36px;
   padding: 9px 12px;
   border: 0;

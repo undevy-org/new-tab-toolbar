@@ -303,6 +303,13 @@ describe("newtab weather source", () => {
     assert.match(show, /\} catch \(error\) \{[\s\S]*?activeCityForm\?\.dispose\?\.\(\);[^\n]*\n\s*activeCityForm = null;/);
   });
 
+  it("popover items never shrink inside the capped list (the list scrolls instead)", async () => {
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    const at = css.indexOf(".weather-form__suggestion {");
+    assert.ok(at > -1);
+    assert.match(css.slice(at, css.indexOf("}", at)), /\bflex: none;/);
+  });
+
   it("ignores the second click of a double click on an item, but never a keyboard activation", async () => {
     const code = await source();
     const listeners = code.slice(code.indexOf("function attachCityModalListeners(root) {"), code.indexOf("let cityModalShownThisLoad"));
