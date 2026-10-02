@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createMemoryStorageArea } from "./memoryStorageArea.js";
 import {
+  INVALID_WIDGETS_MESSAGE,
+  V1_WIDGETS_MESSAGE,
   WIDGETS_META_KEY,
   createWidgetsStore,
   createInitialWidgetsState,
@@ -561,12 +563,14 @@ describe("setState over a newer meta", () => {
     assert.deepEqual(await area.get(null), { [WIDGETS_META_KEY]: newer });
   });
 
-  it("assertWritable rejects for a newer meta and resolves otherwise", async () => {
+  it("assertWritable rejects a newer, v1 or invalid meta and resolves for a valid or missing one", async () => {
     const newerStore = createWidgetsStore(createMemoryStorageArea({ [WIDGETS_META_KEY]: metaOf(["a"], { version: 3 }) }));
     await assert.rejects(newerStore.assertWritable(), { message: NEWER_WIDGETS_MESSAGE });
     await createWidgetsStore(createMemoryStorageArea()).assertWritable();
     await createWidgetsStore(createMemoryStorageArea({ [WIDGETS_META_KEY]: metaOf(["a"]) })).assertWritable();
-    await createWidgetsStore(createMemoryStorageArea({ [WIDGETS_META_KEY]: { version: 2, order: "x" } })).assertWritable();
+    await assert.rejects(createWidgetsStore(createMemoryStorageArea({ [WIDGETS_META_KEY]: { version: 2, order: "x" } })).assertWritable(), { message: INVALID_WIDGETS_MESSAGE });
+    const v1 = { version: 1, order: ["a"], columns: 6, position: "top", createdAt: NOW, updatedAt: NOW };
+    await assert.rejects(createWidgetsStore(createMemoryStorageArea({ [WIDGETS_META_KEY]: v1 })).assertWritable(), { message: V1_WIDGETS_MESSAGE });
   });
 });
 

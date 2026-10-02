@@ -14,7 +14,6 @@ import {
   TILE_SIZES
 } from "./favoritesShared.js";
 import {
-  DEFAULT_GRID_COLUMNS,
   GRID_POSITIONS,
   MAX_CHROME_WIDGETS,
   MAX_FAVORITE_WIDGETS,
@@ -31,6 +30,10 @@ import { defaultColumnsForItems } from "./widgetsLayout.js";
 import { CHROME_IDS, isValidGrid, migrateV1ToV2, placeMissing } from "./desktopLayout.js";
 
 export const WIDGETS_META_KEY = "quietTabWidgetsMeta";
+// A v1 meta (an upgrade in progress, possibly from another device) or an unreadable meta is never written over.
+export const V1_WIDGETS_MESSAGE = "Your saved widgets are still being updated to the new layout. Reload this tab to finish.";
+export const INVALID_WIDGETS_MESSAGE =
+  "Your saved widgets data could not be read, so changes are paused. Reload this tab; if this keeps happening, update Quiet Tab.";
 
 // One lock instance for the whole extension: every widgets mutation AND the migrations
 // run through it, so two new-tab pages can never interleave read-modify-write cycles.
@@ -296,10 +299,13 @@ export function createWidgetsStore(
   storageArea,
   { now = () => new Date().toISOString() } = {}
 ) {
+  // Only a valid v2 meta or none at all may be written. Anything else reads as an empty state, so a write from it
+  // would replace the stored layout with just the affected items and orphan every other widget.
   async function assertWritable() {
-    if (inspectWidgetsMeta(await storageArea.get(WIDGETS_META_KEY)) === "newer") {
-      throw new Error(NEWER_WIDGETS_MESSAGE);
-    }
+    const kind = inspectWidgetsMeta(await storageArea.get(WIDGETS_META_KEY));
+    if (kind === "newer") throw new Error(NEWER_WIDGETS_MESSAGE);
+    if (kind === "v1") throw new Error(V1_WIDGETS_MESSAGE);
+    if (kind === "invalid") throw new Error(INVALID_WIDGETS_MESSAGE);
   }
 
   return {
@@ -556,6 +562,10 @@ export function migrateWidgetsToV2(storageArea, { now = () => new Date().toISOSt
     const listed = meta.order
       .map((id) => itemsResult[widgetItemStorageKey(id)])
       .filter((item) => isWidgetItem(item) && item.type !== "chrome");
+    // A listed id whose key has not synced yet (absent, not invalid) stays in the v2 order after the written items:
+    // getState skips it until the key arrives, then reads it unplaced. Dropping it would lose that widget everywhere.
+    const chromeIdSet = new Set(Object.values(CHROME_IDS));
+    const absentIds = meta.order.filter((id) => !chromeIdSet.has(id) && !Object.hasOwn(itemsResult, widgetItemStorageKey(id)));
     // v1 order: links first, then weather metrics (the v1 store grouped them on read).
     const v1Items = [
       ...listed.filter((item) => item.type === "favorite"),
@@ -586,7 +596,8 @@ export function migrateWidgetsToV2(storageArea, { now = () => new Date().toISOSt
         Object.fromEntries(chunk.map((item) => [widgetItemStorageKey(item.id), item]))
       );
     }
-    await setOrThrow(storageArea, { [WIDGETS_META_KEY]: buildWidgetsMeta(state) });
+    const v2Meta = buildWidgetsMeta(state);
+    await setOrThrow(storageArea, { [WIDGETS_META_KEY]: { ...v2Meta, order: [...v2Meta.order, ...absentIds] } });
     return { migrated: true };
   });
 }

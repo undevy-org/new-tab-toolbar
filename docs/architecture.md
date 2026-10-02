@@ -82,8 +82,11 @@ grid of every widget in one batched `set()`, then remove the keys of deleted
 widgets. Editing while the window is narrow therefore re-bases the stored layout
 to the narrow arrangement. `getState()` tolerates a `meta.order` entry whose item
 key hasn't propagated from another device yet by filtering it out; the next write
-self-heals it. There is no `storage.onChanged` listener: a tab that is open while
-another writes shows stale data until its own next action or reload.
+drops that id from `order` (and removes its key), so an item that arrives after that
+write is no longer listed. The v1 → v2 migration, by contrast, keeps such absent ids
+in the new `order`, so an item that syncs in late is still shown (unplaced). There
+is no `storage.onChanged` listener: a tab that is open while another writes shows
+stale data until its own next action or reload.
 
 **Bootstrap.** Before the first read, `newtab.js` runs, under the same mutation
 lock as every mutation:
@@ -99,7 +102,8 @@ lock as every mutation:
    only, each at the first free block (a v1 `wide` tile is 2×1); then
    `chrome:settings` and `chrome:add`. Items are written in chunks of 25 (keeping
    their legacy `tileSize` for one release, so a not-yet-updated device can still
-   read them), then the meta `version: 2` last. Until the meta is v2 the run
+   read them), then the meta `version: 2` last; listed ids whose key has not synced
+   yet are kept at the end of its `order`. Until the meta is v2 the run
    repeats; items that already carry a grid keep it, so a resumed run ends with
    the grids of an uninterrupted one.
 3. `ensureWidgetsLayout()`: adds any missing weather metric and chrome tile at the
@@ -119,7 +123,10 @@ A meta whose `version` is newer than this build understands (written by a newer
 version on another device) is never touched: the migrations and the ensure step
 write and delete nothing, every service mutation fails first with the
 newer-version message (`assertWritable`), and the grid is locked read-only with
-that message, also after a resize. A build from before the desktop grid reads a
+that message, also after a resize. Every write is likewise refused while the stored
+meta is still v1 (an upgrade in progress, possibly on another device) or malformed,
+with a message to reload the tab: from those metas a read is empty, so a write would
+orphan every stored widget. A build from before the desktop grid reads a
 v2 meta the same way (newer, read-only). A malformed meta is left alone by the
 ensure step.
 

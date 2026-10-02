@@ -7,7 +7,7 @@ import {
 } from "../src/widgetsStore.js";
 import { PlacementError, createWidgetsService } from "../src/widgetsService.js";
 import { MAX_WIDGETS, WEATHER_METRIC_IDS } from "../src/widgetsShared.js";
-import { CHROME_IDS, isValidGrid } from "../src/desktopLayout.js";
+import { CHROME_IDS, displayLayout, isValidGrid } from "../src/desktopLayout.js";
 
 
 const NOW = "2026-07-07T10:00:00.000Z";
@@ -355,5 +355,72 @@ describe("widgetsService (displayed-layout writes)", () => {
     await area.set({ [WIDGETS_META_KEY]: { version: 9 } });
     const service = createWidgetsService({ store: createWidgetsStore(area) });
     await assert.rejects(service.addFavorite({ url: "https://a.com" }, { columns: 12 }), /newer version/);
+  });
+});
+
+describe("write guard: only a valid or missing meta may be written (final review I1)", () => {
+  const V1_MESSAGE = "Your saved widgets are still being updated to the new layout. Reload this tab to finish.";
+  const INVALID_MESSAGE = "Your saved widgets data could not be read, so changes are paused. Reload this tab; if this keeps happening, update Quiet Tab.";
+  const v1Seed = {
+    [WIDGETS_META_KEY]: { version: 1, order: ["a", "b"], columns: 6, position: "top", createdAt: NOW, updatedAt: NOW },
+    [widgetItemStorageKey("a")]: fav("a", { tileSize: "square" }),
+    [widgetItemStorageKey("b")]: fav("b", { tileSize: "wide" })
+  };
+  const invalidSeed = { [WIDGETS_META_KEY]: { version: 2, order: "x" }, [widgetItemStorageKey("a")]: fav("a", { grid: g(0, 0) }) };
+  for (const [kind, seed, message] of [["v1", v1Seed, V1_MESSAGE], ["invalid", invalidSeed, INVALID_MESSAGE]]) {
+    it(`${kind === "v1" ? "a v1" : "an invalid"} meta refuses addFavorite, moveWidget, updateFavorite and setState and writes nothing`, async () => {
+      const area = createMemoryStorageArea(seed);
+      const store = createWidgetsStore(area, { now: () => NOW });
+      const service = createWidgetsService({ store, now: () => NOW, createId: () => "new1" });
+      const before = await area.get(null);
+      await assert.rejects(service.addFavorite({ url: "https://c.example.com" }, { columns: 12 }), { message });
+      await assert.rejects(service.moveWidget("a", { x: 3, y: 0 }, { columns: 12 }), { message });
+      await assert.rejects(service.updateFavorite("a", { backgroundColor: "#112233", backgroundColorSource: "auto" }, { columns: 12 }), { message });
+      await assert.rejects(store.setState({ version: 2, items: [fav("z", { grid: g(0, 0) })], createdAt: NOW, updatedAt: NOW }), { message });
+      await assert.rejects(store.assertWritable(), { message });
+      assert.deepEqual(await area.get(null), before);
+    });
+  }
+  it("a valid and a missing meta still write", async () => {
+    const valid = createMemoryStorageArea();
+    await seedV2(valid, [fav("a", { grid: g(0, 0) })]);
+    const s1 = createWidgetsService({ store: createWidgetsStore(valid), now: () => NOW, createId: () => "new1" });
+    await s1.addFavorite({ url: "https://c.example.com" }, { columns: 12 });
+    assert.deepEqual((await gridsOf(valid)).new1, g(1, 0));
+    const missing = createMemoryStorageArea();
+    const s2 = createWidgetsService({ store: createWidgetsStore(missing), now: () => NOW, createId: () => "new1" });
+    await s2.addFavorite({ url: "https://c.example.com" }, { columns: 12 });
+    assert.deepEqual(await gridsOf(missing), { new1: g(0, 0) });
+  });
+});
+
+describe("migrateWidgetsToV2 keeps listed ids whose item has not synced yet (final review I2)", () => {
+  const seedV1 = async (area, order, items) => {
+    await area.set({
+      [WIDGETS_META_KEY]: { version: 1, order, columns: 6, position: "top", createdAt: NOW, updatedAt: NOW },
+      ...Object.fromEntries(items.map((i) => [widgetItemStorageKey(i.id), i]))
+    });
+  };
+  it("an absent id stays in the v2 order (after the written items); a present-but-invalid item is dropped", async () => {
+    const area = createMemoryStorageArea();
+    await seedV1(area, ["a", "ghost", "bad", "b"], [fav("a", { tileSize: "square" }), { id: "bad", type: "favorite" }, fav("b", { tileSize: "square" })]);
+    await migrateWidgetsToV2(area);
+    const meta = (await area.get(WIDGETS_META_KEY))[WIDGETS_META_KEY];
+    assert.equal(inspectWidgetsMeta(await area.get(WIDGETS_META_KEY)), "valid");
+    assert.deepEqual(meta.order, ["a", "b", "chrome:settings", "chrome:add", "ghost"]);
+    assert.deepEqual(await gridsOf(area), { a: g(0, 0), b: g(1, 0), "chrome:settings": g(2, 0), "chrome:add": g(3, 0), ghost: undefined });
+  });
+  it("the late item is read unplaced and shown by displayLayout at the first free block", async () => {
+    const area = createMemoryStorageArea();
+    await seedV1(area, ["a", "ghost"], [fav("a", { tileSize: "square" })]);
+    await migrateWidgetsToV2(area);
+    const before = await createWidgetsStore(area).getState();
+    assert.deepEqual(before.items.map((i) => i.id), ["a", "chrome:settings", "chrome:add"]); // filtered until it arrives
+    await area.set({ [widgetItemStorageKey("ghost")]: fav("ghost", { tileSize: "wide" }) }); // the v1 item syncs in late
+    const state = await createWidgetsStore(area).getState();
+    const ghost = state.items.find((i) => i.id === "ghost");
+    assert.ok(ghost, "the late item is read");
+    assert.equal(ghost.grid, undefined);
+    assert.deepEqual(displayLayout(state.items, 12).get("ghost"), g(3, 0, 2, 1));
   });
 });

@@ -239,12 +239,13 @@ describe("newtab favorites source", () => {
     assert.match(code, /error\.setAttribute\("role", "alert"\);/);
   });
 
-  it("clears the page status after 8 s or at the next action, with no exemption for the ensure failure", async () => {
+  it("clears the page status after 8 s or at the next action; the ensure failure is exempt from the timer only", async () => {
     const code = await source();
     assert.match(code, /DESKTOP_STATUS_MS = 8000/);
-    assert.match(code, /setTimeout\(\(\) => showDesktopStatus\(""\), DESKTOP_STATUS_MS\)/);
+    assert.match(code, /if \(text !== "" && !persist\) desktopStatusTimer = setTimeout\(\(\) => showDesktopStatus\(""\), DESKTOP_STATUS_MS\);/);
     assert.match(code, /if \(favoritesBusy\) return false;\n  showDesktopStatus\(""\);/);
-    assert.match(code, /if \(widgetsEnsureFailed\) showDesktopStatus\(ENSURE_FAILED_MESSAGE\);/);
+    // Final review: a missing Settings/Add tile must keep its explanation until the next action (no 8 s clear).
+    assert.match(code, /if \(widgetsEnsureFailed\) showDesktopStatus\(ENSURE_FAILED_MESSAGE, \{ persist: true \}\);/);
   });
 
   it("gives the favorite form action buttons a leading icon instead of bare text", async () => {
@@ -708,7 +709,7 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
 
   it("shows a failed ensure in the page-level status line (text only)", async () => {
     const code = await source();
-    assert.match(code, /if \(widgetsEnsureFailed\) showDesktopStatus\(ENSURE_FAILED_MESSAGE\);/);
+    assert.match(code, /if \(widgetsEnsureFailed\) showDesktopStatus\(ENSURE_FAILED_MESSAGE, \{ persist: true \}\);/);
     assert.match(fn(code, "showDesktopStatus"), /desktopStatus\.textContent = text;/);
   });
 
@@ -828,6 +829,13 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
     assert.match(css, /\.desktop-dialog__error \{\s*margin: 12px 0;/);
     assert.doesNotMatch(css, /--metric-(on|off)/);
     assert.doesNotMatch(css, /z-index 40/);
+  });
+
+  it("final review: a drag target outside the grid box (left/right margin, above the top) is invalid", async () => {
+    const code = await source();
+    const update = fn(code, "updateDragTarget");
+    assert.match(update, /const outside = s\.lastX < box\.left \|\| s\.lastX > box\.right \|\| s\.lastY < box\.top;/);
+    assert.match(update, /const valid = !outside && canPlace\(/);
   });
 
   it("never uses innerHTML in newtab.js and adds no chrome.storage.onChanged listener", async () => {

@@ -57,14 +57,14 @@ const desktopLive = document.querySelector("#desktop-live");
 const DESKTOP_STATUS_MS = 8000;
 let desktopStatusTimer = 0;
 
-// Page-level status line (role="alert"), text only. It clears after 8 s or at the next action; no message is exempt
-// (the ensure-failure text clears like any other).
-function showDesktopStatus(text) {
+// Page-level status line (role="alert"), text only. It clears after 8 s or at the next action. `persist` skips the
+// 8 s clear (the ensure failure: a Settings/Add tile may be missing, so its explanation stays until the next action).
+function showDesktopStatus(text, { persist = false } = {}) {
   if (!desktopStatus) return;
   clearTimeout(desktopStatusTimer);
   desktopStatus.textContent = text;
   desktopStatus.hidden = text === "";
-  if (text !== "") desktopStatusTimer = setTimeout(() => showDesktopStatus(""), DESKTOP_STATUS_MS);
+  if (text !== "" && !persist) desktopStatusTimer = setTimeout(() => showDesktopStatus(""), DESKTOP_STATUS_MS);
 }
 
 // Polite live region for outcomes that have no visible change at the focused element.
@@ -1839,8 +1839,12 @@ function applyDragVisuals(s) {
 function updateDragTarget(s) {
   const grid = dragGridOf();
   if (!grid) return;
-  const target = cellFromPoint({ x: s.lastX, y: s.lastY }, grid.getBoundingClientRect(), s.metrics, s.grab);
-  const valid = canPlace(s.layout, s.id, { ...target, w: s.cell.w, h: s.cell.h }, s.columns);
+  const box = grid.getBoundingClientRect();
+  const target = cellFromPoint({ x: s.lastX, y: s.lastY }, box, s.metrics, s.grab);
+  // cellFromPoint clamps negative cells to 0: a pointer in the page margin left/right of the grid or above its top is
+  // outside every cell, so the drop there is invalid (the tile returns, nothing is written).
+  const outside = s.lastX < box.left || s.lastX > box.right || s.lastY < box.top;
+  const valid = !outside && canPlace(s.layout, s.id, { ...target, w: s.cell.w, h: s.cell.h }, s.columns);
   desktopUi = updateDrag(desktopUi, target, valid);
   drawDropHighlight(grid, target, s, valid);
 }
@@ -2124,7 +2128,7 @@ if (favoritesRoot) {
     }
 
     renderFavorites();
-    if (widgetsEnsureFailed) showDesktopStatus(ENSURE_FAILED_MESSAGE);
+    if (widgetsEnsureFailed) showDesktopStatus(ENSURE_FAILED_MESSAGE, { persist: true });
     void startWeather();
 
     // The flag is read after the first render so it never delays the grid.
