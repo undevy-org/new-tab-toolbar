@@ -146,6 +146,26 @@ describe("migrateWidgetsToV2 (AS-12)", () => {
     await migrateWidgetsToV2(flaky);
     assert.deepEqual(await gridsOf(flaky), await gridsOf(clean));
   });
+  it("hidden metric (disabled) gets a placeholder grid and doesn't block other items", async () => {
+    const area = createMemoryStorageArea();
+    const v1Meta = (order, columns = 6) => ({ [WIDGETS_META_KEY]: { version: 1, order, columns, position: "center", createdAt: NOW, updatedAt: NOW } });
+    const items = [
+      fav("a", { tileSize: "square" }),
+      metric("weather:precipitation", { enabled: false, tileSize: "wide" }),
+      fav("b", { tileSize: "square" })
+    ];
+    await area.set({ ...v1Meta(items.map((i) => i.id), 6), ...Object.fromEntries(items.map((i) => [widgetItemStorageKey(i.id), i])) });
+    await migrateWidgetsToV2(area);
+    assert.deepEqual(await gridsOf(area), {
+      a: g(0, 0), b: g(1, 0), "weather:precipitation": g(0, 0, 2, 1), "chrome:settings": g(2, 0), "chrome:add": g(3, 0)
+    });
+  });
+  it("empty area returns no-op and leaves storage untouched", async () => {
+    const area = createMemoryStorageArea();
+    const result = await migrateWidgetsToV2(area);
+    assert.deepEqual(result, { migrated: false, meta: "missing" });
+    assert.deepEqual(await area.get(null), {});
+  });
 });
 
 describe("ensureWidgetsLayout (Defaults, AS-1, AS-35)", () => {
@@ -180,5 +200,70 @@ describe("ensureWidgetsLayout (Defaults, AS-1, AS-35)", () => {
       assert.equal(result.changed, false);
       assert.deepEqual(await area.get(null), { [WIDGETS_META_KEY]: meta });
     }
+  });
+  it("self-heals listed but absent item: meta.order has id but item key missing", async () => {
+    const area = createMemoryStorageArea();
+    const now = NOW;
+    const items = [fav("a", { grid: g(0, 0) }), metric("weather:temperature", { grid: g(1, 0) }), metric("weather:precipitation", { grid: g(2, 0, 2, 1) }), metric("weather:airQuality", { grid: g(4, 0, 2, 1) }), metric("weather:uv", { grid: g(6, 0) }), chrome("add", { grid: g(7, 0) })];
+    const meta = { version: 2, order: items.map((i) => i.id).concat([CHROME_IDS.settings]), createdAt: now, updatedAt: now };
+    await area.set({ [WIDGETS_META_KEY]: meta, ...Object.fromEntries(items.map((i) => [widgetItemStorageKey(i.id), i])) });
+    const gridsBefore = await gridsOf(area);
+
+    const result = await ensureWidgetsLayout(area, { now: () => now });
+    assert.equal(result.changed, true);
+    assert.equal(result.meta, "valid");
+
+    const gridsAfter = await gridsOf(area);
+    assert.ok(gridsAfter["chrome:settings"]); // was added
+    assert.deepEqual(gridsAfter.a, gridsBefore.a); // existing items unchanged
+    assert.deepEqual(gridsAfter["weather:temperature"], gridsBefore["weather:temperature"]);
+
+    // Second call is idempotent
+    const before = await area.get(null);
+    assert.equal((await ensureWidgetsLayout(area)).changed, false);
+    assert.deepEqual(await area.get(null), before);
+  });
+  it("write order: items written before meta in both migrations and ensures", async () => {
+    const writeLog = [];
+    const logSet = async (payload) => {
+      for (const key of Object.keys(payload)) {
+        writeLog.push(key);
+      }
+    };
+
+    // Test ensureWidgetsLayout write order
+    const area1 = createMemoryStorageArea();
+    const originalSet1 = area1.set.bind(area1);
+    area1.set = async (payload) => {
+      await logSet(payload);
+      return originalSet1(payload);
+    };
+    writeLog.length = 0;
+    await ensureWidgetsLayout(area1);
+    const metaIndex = writeLog.indexOf(WIDGETS_META_KEY);
+    const itemIndices = writeLog
+      .map((k, i) => (k.startsWith("quietTabWidget:") ? i : -1))
+      .filter((i) => i !== -1);
+    assert.ok(itemIndices.length > 0);
+    assert.ok(itemIndices.every((i) => i < metaIndex), "all item keys written before meta");
+
+    // Test migrateWidgetsToV2 write order: meta is written last
+    const area2 = createMemoryStorageArea();
+    const v1Meta = (order, columns = 6) => ({ [WIDGETS_META_KEY]: { version: 1, order, columns, position: "center", createdAt: NOW, updatedAt: NOW } });
+    const seedV1 = async (area, items, columns) => {
+      await area.set({ ...v1Meta(items.map((i) => i.id), columns), ...Object.fromEntries(items.map((i) => [widgetItemStorageKey(i.id), i])) });
+    };
+    await seedV1(area2, [fav("x"), fav("y")], 6);
+
+    const originalSet2 = area2.set.bind(area2);
+    area2.set = async (payload) => {
+      await logSet(payload);
+      return originalSet2(payload);
+    };
+    writeLog.length = 0;
+    await migrateWidgetsToV2(area2);
+    assert.equal(writeLog[writeLog.length - 1], WIDGETS_META_KEY, "meta written in last set call");
+    const metaPos = writeLog.lastIndexOf(WIDGETS_META_KEY);
+    assert.ok(!writeLog.slice(metaPos + 1).some((k) => k.startsWith("quietTabWidget:")), "no item keys after meta");
   });
 });
