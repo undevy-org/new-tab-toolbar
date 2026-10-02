@@ -729,7 +729,7 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
     // Size radiogroup: one shared control, values 1x1|2x1|2x2, shown as 1×1 / 2×1 / 2×2.
     assert.match(code, /const SIZE_OPTIONS = \[\s*\["1x1", "1×1"\],\s*\["2x1", "2×1"\],\s*\["2x2", "2×2"\]\s*\];/);
     assert.match(fn(code, "createSizeControl"), /createSegmentedControl\("size", SIZE_OPTIONS,/);
-    assert.match(fn(code, "createFavoriteForm"), /if \(isEdit\) rows\.push\(createFormRow\("Size", createSizeControl\(item\.grid\)\)\);/);
+    assert.match(fn(code, "createFavoriteForm"), /if \(isEdit\) rows\.push\(createFormRow\("Size", createSizeControl\(displayedSize\(item\)\)\)\);/);
     // Both favorite-form branches carry the role=alert slot (the edit dialog had none before Task 10).
     assert.match(fn(code, "createFavoriteForm"), /form\.append\(\.\.\.rows, createDialogErrorSlot\(\), footer\);/);
     assert.match(fn(code, "createDialogErrorSlot"), /error\.setAttribute\("role", "alert"\);\s*error\.dataset\.dialogError = "";/);
@@ -776,6 +776,58 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
   it("Task 10: the − badge has an explicit focus ring from the --focus token", async () => {
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
     assert.match(css, /\.desktop-grid > \.tile-remove:focus-visible \{\s*outline: 3px solid var\(--focus\);/);
+  });
+
+  it("Task 11: bootstrap runs the v1 -> v2 step whenever the sync area exists and locks on a newer result", async () => {
+    const code = await source();
+    // The legacy chain needs both areas; the v1 -> v2 step only sync (a profile without chrome.storage.local still migrates).
+    assert.match(code, /if \(hasStorageArea\(localStorageArea\) && hasStorageArea\(syncStorageArea\)\) \{\s*const migration = await migrateToWidgets\(localStorageArea, syncStorageArea\);[\s\S]*?\n      \}\n      if \(hasStorageArea\(syncStorageArea\)\) \{/);
+    assert.match(code, /const v2 = await migrateWidgetsToV2\(syncStorageArea\);\s*if \(v2\?\.meta === "newer"\) \{\s*widgetsNewer = true;\s*renderFavorites\(\);\s*return;/);
+    // R7 order: legacy chain, v1 -> v2, ensure, first read.
+    const order = ["await migrateToWidgets(", "await migrateWidgetsToV2(", "await ensureWidgetsLayout(", "await widgetsService.getState()"].map((m) => code.indexOf(m));
+    assert.ok(order.every((at, i) => at > 0 && (i === 0 || at > order[i - 1])), JSON.stringify(order));
+  });
+
+  it("Task 11: edit dialogs select the displayed size, never reading a stored grid that a lenient read may have dropped", async () => {
+    const code = await source();
+    const build = fn(code, "buildDialogContent");
+    assert.doesNotMatch(build, /item\.grid\.[wh]/);
+    assert.match(build, /const size = displayedSize\(item\);\s*const initial = `\$\{size\.w\}x\$\{size\.h\}`;/);
+    assert.match(build, /createFormRow\("Size", createSizeControl\(size\)\)/);
+    assert.match(fn(code, "displayedSize"), /displayLayout\(widgetsState\.items, currentColumns\(\)\)\.get\(item\.id\)/);
+    assert.match(fn(code, "displayedSize"), /cell \? \{ w: cell\.w, h: cell\.h \} : \{ w: 1, h: 1 \}/);
+  });
+
+  it("Task 11: the Add menu's second level is named Add weather tile; the Add tile announces its menu only when it can open one", async () => {
+    const code = await source();
+    assert.match(fn(code, "fillAddMenu"), /addMenuRoot\.setAttribute\("aria-label", kind === "add" \? "Add" : "Add weather tile"\);/);
+    const chrome = fn(code, "createChromeTile");
+    assert.match(chrome, /else if \(desktopUi\.editMode && hiddenMetrics\(\)\.length > 0\) \{\s*button\.setAttribute\("aria-haspopup", "menu"\);/);
+    assert.match(chrome, /button\.setAttribute\("aria-expanded", String\(addMenuRoot !== null\)\);/);
+    assert.match(fn(code, "closeAddMenu"), /syncAddTileExpanded\(\);/);
+    assert.match(fn(code, "activateAddTile"), /syncAddTileExpanded\(\);\s*fillAddMenu\("add"\);/);
+  });
+
+  it("Task 11: add and edit (Auto color) sample the favicon accent after a successful write", async () => {
+    const code = await source();
+    const build = fn(code, "buildDialogContent");
+    assert.match(build, /const added = widgetsState\?\.items\.find\(\(entry\) => entry\.type === "favorite" && !previousIds\.has\(entry\.id\)\);\s*if \(added\) void refreshAutoAccent\(added\.id\);/);
+    assert.match(build, /if \(payload\.backgroundColorSource === "auto"\) void refreshAutoAccent\(item\.id\);/);
+  });
+
+  it("Task 11: weather type follows the JS-set cell size, not a viewport query; status line and dialog error spacing", async () => {
+    const code = await source();
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(fn(code, "applyGridMetrics"), /document\.documentElement\.dataset\.cell = String\(metrics\.cell\);/);
+    for (const [cell, primary, secondary] of [["64", 16, 10], ["56", 14, 9]]) {
+      assert.match(css, new RegExp(`:where\\(:root\\[data-cell="${cell}"\\]\\) \\.weather-tile__primary \\{ font-size: ${primary}px; \\}`));
+      assert.match(css, new RegExp(`:where\\(:root\\[data-cell="${cell}"\\]\\) \\.weather-tile__secondary \\{ font-size: ${secondary}px; \\}`));
+    }
+    for (const block of css.matchAll(/@media \(max-width: \d+px\) \{[\s\S]*?\n\}/g)) assert.doesNotMatch(block[0], /weather-tile/);
+    assert.match(css, /\.desktop-status \{[^}]*width: max-content;[^}]*max-width: min\(560px, calc\(100vw - 32px\)\);/s);
+    assert.match(css, /\.desktop-dialog__error \{\s*margin: 12px 0;/);
+    assert.doesNotMatch(css, /--metric-(on|off)/);
+    assert.doesNotMatch(css, /z-index 40/);
   });
 
   it("never uses innerHTML in newtab.js and adds no chrome.storage.onChanged listener", async () => {

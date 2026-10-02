@@ -13,8 +13,6 @@
   --soft-fill: #eef1f5;
   --soft-fill-strong: #e1e6ed;
   --soft-ring: rgb(17 19 24 / 55%);
-  --metric-on: #1f7a45;
-  --metric-off: #b3382c;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -32,8 +30,6 @@
     --soft-fill: #2a313b;
     --soft-fill-strong: #343c48;
     --soft-ring: rgb(244 246 248 / 60%);
-    --metric-on: #5fd08a;
-    --metric-off: #ff8a80;
   }
 }
 
@@ -203,6 +199,7 @@ button.weather-tile {
   left: 50%;
   bottom: 16px;
   transform: translateX(-50%);
+  width: max-content; /* a centred fixed box without a width would shrink to the half viewport right of left:50% */
   max-width: min(560px, calc(100vw - 32px));
   padding: 10px 14px;
   border: 1px solid var(--danger);
@@ -879,7 +876,7 @@ button.weather-tile {
 }
 
 
-/* City modal: above the panel (z-index 40) and the tooltip layer (60). No transitions. */
+/* City modal: above the grid and the tooltip layer (60); raised above a desktop dialog when stacked (below). No transitions. */
 .city-modal {
   position: fixed;
   inset: 0;
@@ -971,25 +968,15 @@ button.weather-tile {
   .favorite-input {
     width: 100%;
   }
-
-  .weather-tile__primary {
-    font-size: 16px;
-  }
-
-  .weather-tile__secondary {
-    font-size: 10px;
-  }
 }
 
-@media (max-width: 360px) {
-  .weather-tile__primary {
-    font-size: 14px;
-  }
-
-  .weather-tile__secondary {
-    font-size: 9px;
-  }
-}
+/* Weather type follows the cell size that newtab.js sets from gridMetrics (R4: :root[data-cell] next to --cell-size),
+   never a viewport query, so it always agrees with the cell box (a classic scrollbar cannot split them). :where keeps
+   the specificity of a single class, so the 2-high sizes above still win. */
+:where(:root[data-cell="64"]) .weather-tile__primary { font-size: 16px; }
+:where(:root[data-cell="64"]) .weather-tile__secondary { font-size: 10px; }
+:where(:root[data-cell="56"]) .weather-tile__primary { font-size: 14px; }
+:where(:root[data-cell="56"]) .weather-tile__secondary { font-size: 9px; }
 
 /* Desktop dialogs (add / edit / confirm): a fixed card over a backdrop, above the grid and the status line, below the
    tooltip layer. No transitions. */
@@ -1031,7 +1018,7 @@ button.weather-tile {
 }
 
 .desktop-dialog__error {
-  margin-top: 12px;
+  margin: 12px 0;
   color: var(--danger);
   font-size: 14px;
   overflow-wrap: anywhere;

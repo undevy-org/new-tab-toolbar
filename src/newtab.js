@@ -420,7 +420,7 @@ function createFavoriteForm(item) {
 
   const footer = createNode("div", "favorite-form__footer");
   const rows = [createFormRow("Link", url), createFormRow("Name", label), createFormRow("Icon", iconMode), customIconRow, colorRow];
-  if (isEdit) rows.push(createFormRow("Size", createSizeControl(item.grid))); // the add dialog adds 1×1 (spec § Placement rules)
+  if (isEdit) rows.push(createFormRow("Size", createSizeControl(displayedSize(item)))); // the add dialog adds 1×1 (spec § Placement rules)
 
   if (isEdit) {
     const remove = createIconButton("button button--danger", "Delete", "trash2");
@@ -467,8 +467,15 @@ const SIZE_OPTIONS = [
 ];
 
 // Size radiogroup (name "size", values 1x1|2x1|2x2) shared by the link and weather edit dialogs.
-function createSizeControl(grid) {
-  return createSegmentedControl("size", SIZE_OPTIONS, grid ? `${grid.w}x${grid.h}` : "1x1");
+function createSizeControl({ w, h }) {
+  return createSegmentedControl("size", SIZE_OPTIONS, `${w}x${h}`);
+}
+
+// The size the tile is shown at: its cell in the displayed layout (an item whose stored grid is missing or malformed
+// is shown unplaced at its fallback size), else 1×1.
+function displayedSize(item) {
+  const cell = widgetsState ? displayLayout(widgetsState.items, currentColumns()).get(item.id) : null;
+  return cell ? { w: cell.w, h: cell.h } : { w: 1, h: 1 };
 }
 
 function readSize(value) {
@@ -527,6 +534,7 @@ async function resolveAutoBackgroundColor(item) {
   );
 }
 
+// After an add or an edit with the Auto color: samples the favicon (CORS-safe sources only) and stores its color.
 async function refreshAutoAccent(id) {
   if (!widgetsService || !id) {
     return;
@@ -1117,6 +1125,10 @@ function createChromeTile(item, cell) {
   button.dataset.chromeRole = item.role;
   button.setAttribute("aria-label", settings ? "Settings" : "Add link");
   if (settings) button.setAttribute("aria-pressed", String(desktopUi.editMode));
+  else if (desktopUi.editMode && hiddenMetrics().length > 0) {
+    button.setAttribute("aria-haspopup", "menu"); // spec § Add menu: it opens the Add menu instead of the dialog
+    button.setAttribute("aria-expanded", String(addMenuRoot !== null));
+  }
   button.appendChild(createIconNode(settings ? "settings" : "plus", { size: 20 }));
   return button;
 }
@@ -1167,6 +1179,7 @@ function buildDialogContent(root, dialog) {
       form.addEventListener("submit", (event) => {
         event.preventDefault();
         const payload = readFavoriteFormPayload(new FormData(form));
+        const previousIds = new Set((widgetsState?.items ?? []).map((entry) => entry.id));
         void runDesktopMutation(
           (columns) => widgetsService.addFavorite(payload, { columns }),
           { dialogRoot: root }
@@ -1174,6 +1187,9 @@ function buildDialogContent(root, dialog) {
           if (ok) {
             announce("Link added");
             closeDesktopDialog();
+            // The new link is the id the stored result has and the state before did not (set difference).
+            const added = widgetsState?.items.find((entry) => entry.type === "favorite" && !previousIds.has(entry.id));
+            if (added) void refreshAutoAccent(added.id);
           }
         });
       });
@@ -1196,6 +1212,7 @@ function buildDialogContent(root, dialog) {
           if (ok) {
             announce("Link saved");
             closeDesktopDialog();
+            if (payload.backgroundColorSource === "auto") void refreshAutoAccent(item.id);
           }
         });
       });
@@ -1243,7 +1260,9 @@ function buildDialogContent(root, dialog) {
       const form = createNode("form", "favorite-form");
       form.dataset.weatherSizeForm = "";
       form.noValidate = true;
-      const initial = `${item.grid.w}x${item.grid.h}`;
+      // A lenient read may have dropped a malformed grid: the size shown is the displayed cell's (spec § Reading grid).
+      const size = displayedSize(item);
+      const initial = `${size.w}x${size.h}`;
       const save = createIconButton("button button--primary", "Save", "check");
       save.type = "submit";
       save.disabled = true; // enabled only when the size changed
@@ -1261,7 +1280,7 @@ function buildDialogContent(root, dialog) {
           if (ok) closeDesktopDialog();
         });
       });
-      form.append(createFormRow("Size", createSizeControl(item.grid)), createDialogErrorSlot(), createDialogFooter(createDialogCancel(), save));
+      form.append(createFormRow("Size", createSizeControl(size)), createDialogErrorSlot(), createDialogFooter(createDialogCancel(), save));
       root.append(title, cityRow, form);
       syncWeatherDialogCity(root);
       break;
@@ -1428,6 +1447,7 @@ function activateAddTile() {
   addMenuRoot = menu;
   hideTooltip();
   document.body.appendChild(menu);
+  syncAddTileExpanded();
   fillAddMenu("add");
 }
 
@@ -1441,6 +1461,7 @@ function fillAddMenu(kind) {
     return;
   }
   desktopUi = openMenu(desktopUi, kind);
+  addMenuRoot.setAttribute("aria-label", kind === "add" ? "Add" : "Add weather tile"); // spec Copy: the sub-flow's title
   addMenuRoot.replaceChildren(
     ...entries.map(([action, text, metricId]) => {
       const entry = createNode("button", "add-menu__item", text);
@@ -1478,11 +1499,18 @@ function placeAddMenu() {
   addMenuRoot.style.top = `${top + window.scrollY}px`;
 }
 
+// The Add tile announces its menu only while it can open one (edit mode with >= 1 hidden metric).
+function syncAddTileExpanded() {
+  const tile = favoritesRoot?.querySelector(ADD_TILE_SELECTOR);
+  if (tile?.hasAttribute("aria-haspopup")) tile.setAttribute("aria-expanded", String(addMenuRoot !== null));
+}
+
 function closeAddMenu({ focusAdd = false } = {}) {
   if (!addMenuRoot) return;
   addMenuRoot.remove();
   addMenuRoot = null;
   desktopUi = closeMenu(desktopUi);
+  syncAddTileExpanded();
   if (focusAdd) focusWidgetTarget("chrome:add");
 }
 
@@ -1591,6 +1619,7 @@ function applyGridMetrics() {
   style.setProperty("--cell-size", `${metrics.cell}px`);
   style.setProperty("--grid-gap", `${metrics.gap}px`);
   style.setProperty("--grid-pad", `${metrics.pad}px`);
+  document.documentElement.dataset.cell = String(metrics.cell); // CSS keys the weather type size off the same cell
   return metrics;
 }
 
@@ -2042,6 +2071,7 @@ if (favoritesRoot) {
         return;
       }
 
+      // The legacy chain reads the old local blob too; the v1 → v2 step needs only the sync area.
       if (hasStorageArea(localStorageArea) && hasStorageArea(syncStorageArea)) {
         const migration = await migrateToWidgets(localStorageArea, syncStorageArea);
         if (migration?.newer) {
@@ -2049,7 +2079,16 @@ if (favoritesRoot) {
           renderFavorites();
           return;
         }
-        await migrateWidgetsToV2(syncStorageArea);
+      }
+      if (hasStorageArea(syncStorageArea)) {
+        // A meta that turned newer meanwhile (another device) locks like the check above; an invalid meta is left
+        // as it is (no message decided yet, backlog L1-02).
+        const v2 = await migrateWidgetsToV2(syncStorageArea);
+        if (v2?.meta === "newer") {
+          widgetsNewer = true;
+          renderFavorites();
+          return;
+        }
       }
     } catch (error) {
       widgetsMigrationFailed = true;

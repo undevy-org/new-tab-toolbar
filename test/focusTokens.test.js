@@ -25,17 +25,13 @@ const lum = ([r, g, b]) => { const f = (c) => { const s = c / 255; return s <= 0
 const over = ([r, g, b, a], [br, bg, bb]) => [r * a + br * (1 - a), g * a + bg * (1 - a), b * a + bb * (1 - a)];
 const ratio = (x, y) => { const [hi, lo] = [lum(x), lum(y)].sort((p, q) => q - p); return (hi + 0.05) / (lo + 0.05); };
 
-describe("focus and metric color tokens", () => {
+describe("focus color tokens", () => {
   const light = block(":root {");
   const dark = css.slice(css.indexOf("@media (prefers-color-scheme: dark)"), css.indexOf("* {"));
   for (const [label, scope] of [["light", light], ["dark", dark]]) {
     const panel = rgba(token(scope, "--panel")).slice(0, 3);
     it(`${label}: the soft ring reaches 3:1 against the panel`, () => {
       assert.ok(ratio(over(rgba(token(scope, "--soft-ring")), panel), panel) >= 3);
-    });
-    it(`${label}: shown and hidden colors reach 4.5:1 against the panel`, () => {
-      assert.ok(ratio(rgba(token(scope, "--metric-on")).slice(0, 3), panel) >= 4.5);
-      assert.ok(ratio(rgba(token(scope, "--metric-off")).slice(0, 3), panel) >= 4.5);
     });
   }
 });
