@@ -25,11 +25,12 @@ async function seedV2(area, items) {
   });
 }
 
-async function gridsOf(area, ids) {
+async function gridsOf(area) {
+  const meta = (await area.get(WIDGETS_META_KEY))[WIDGETS_META_KEY];
+  if (!meta?.order) return {};
   const result = {};
-  const keys = ids.map(widgetItemStorageKey);
-  const items = await area.get(keys);
-  for (const id of ids) {
+  const items = await area.get(meta.order.map(widgetItemStorageKey));
+  for (const id of meta.order) {
     const item = items[widgetItemStorageKey(id)];
     result[id] = item?.grid;
   }
@@ -87,248 +88,97 @@ describe("store reads (spec § Reading grid)", () => {
   });
 });
 
-describe("migrateWidgetsToV2", () => {
-  it("migrates v1 favorites to v2 with grids", async () => {
+describe("migrateWidgetsToV2 (AS-12)", () => {
+  const v1Meta = (order, columns = 6) => ({ [WIDGETS_META_KEY]: { version: 1, order, columns, position: "center", createdAt: NOW, updatedAt: NOW } });
+  const seedV1 = async (area, items, columns) => {
+    await area.set({ ...v1Meta(items.map((i) => i.id), columns), ...Object.fromEntries(items.map((i) => [widgetItemStorageKey(i.id), i])) });
+  };
+  const v1Items = () => [
+    fav("fw", { tileSize: "wide" }), fav("fs", { tileSize: "square" }),
+    metric("weather:temperature", { tileSize: "square" }), metric("weather:precipitation", { tileSize: "wide" }),
+    metric("weather:airQuality", { tileSize: "wide" }), metric("weather:uv", { tileSize: "square" })
+  ];
+  it("writes the exact AS-12 grids, v2 meta without columns/position, keeps tileSize", async () => {
     const area = createMemoryStorageArea();
-    const now = NOW;
-    const favs = [fav("a", { tileSize: "square" }), fav("b", { tileSize: "wide" })];
-    await area.set({
-      [WIDGETS_META_KEY]: { version: 1, order: ["a", "b"], columns: 6, position: "top", createdAt: now, updatedAt: now },
-      ...Object.fromEntries(favs.map((i) => [widgetItemStorageKey(i.id), i]))
-    });
-
-    const result = await migrateWidgetsToV2(area, { now: () => now });
-    assert.equal(result.migrated, true);
-    assert.equal(result.meta, undefined);
-
-    const meta = (await area.get([WIDGETS_META_KEY]))[WIDGETS_META_KEY];
+    await seedV1(area, v1Items());
+    assert.deepEqual(await migrateWidgetsToV2(area), { migrated: true });
+    const meta = (await area.get(WIDGETS_META_KEY))[WIDGETS_META_KEY];
     assert.equal(meta.version, 2);
-    assert.deepEqual(meta.order, ["a", "b", CHROME_IDS.settings, CHROME_IDS.add]);
-    assert.equal(meta.columns, undefined);
-    assert.equal(meta.position, undefined);
-  });
-
-  it("keeps tileSize on migrated items for one release", async () => {
-    const area = createMemoryStorageArea();
-    const now = NOW;
-    await area.set({
-      [WIDGETS_META_KEY]: { version: 1, order: ["w"], columns: 6, position: "top", createdAt: now, updatedAt: now },
-      [widgetItemStorageKey("w")]: fav("w", { tileSize: "wide" })
+    assert.equal("columns" in meta, false);
+    assert.equal("position" in meta, false);
+    assert.deepEqual(await gridsOf(area), {
+      fw: g(0, 0, 2, 1), fs: g(2, 0), "weather:temperature": g(3, 0), "weather:precipitation": g(4, 0, 2, 1),
+      "weather:airQuality": g(0, 1, 2, 1), "weather:uv": g(2, 1), "chrome:settings": g(3, 1), "chrome:add": g(4, 1)
     });
-
-    await migrateWidgetsToV2(area, { now: () => now });
-    const item = (await area.get([widgetItemStorageKey("w")]))[widgetItemStorageKey("w")];
-    assert.equal(item.tileSize, "wide");
-    assert.ok(item.grid);
+    assert.equal((await area.get(widgetItemStorageKey("fw")))[widgetItemStorageKey("fw")].tileSize, "wide");
+    assert.equal(inspectWidgetsMeta(await area.get(WIDGETS_META_KEY)), "valid");
   });
-
-  it("returns no-op for v2 meta", async () => {
-    const area = createMemoryStorageArea();
-    await seedV2(area, [fav("a", { grid: g(0, 0) })]);
-
-    const result = await migrateWidgetsToV2(area);
-    assert.equal(result.migrated, false);
-    assert.equal(result.meta, "valid");
+  it("is a no-op for v2, missing and newer metas", async () => {
+    const a = createMemoryStorageArea();
+    assert.equal((await migrateWidgetsToV2(a)).migrated, false);
+    const b = createMemoryStorageArea();
+    await b.set({ [WIDGETS_META_KEY]: { version: 9 } });
+    assert.equal((await migrateWidgetsToV2(b)).meta, "newer");
+    assert.deepEqual(await b.get(null), { [WIDGETS_META_KEY]: { version: 9 } });
   });
+  it("AS-12b: aborted after chunk 1 then resumed equals an uninterrupted run (holes, 31 items)", async () => {
+    const items = [
+      ...Array.from({ length: 27 }, (_, i) => fav(`f${i}`, { tileSize: i % 3 === 2 ? "square" : "wide" })),
+      metric("weather:temperature", { tileSize: "square" }), metric("weather:precipitation", { tileSize: "wide" }),
+      metric("weather:airQuality", { tileSize: "wide" }), metric("weather:uv", { tileSize: "square" })
+    ];
+    const clean = createMemoryStorageArea();
+    await seedV1(clean, items, 3);
+    await migrateWidgetsToV2(clean);
 
-  it("returns no-op for missing meta", async () => {
-    const area = createMemoryStorageArea();
-    const result = await migrateWidgetsToV2(area);
-    assert.equal(result.migrated, false);
-    assert.equal(result.meta, "missing");
-  });
-
-  it("returns no-op for newer meta", async () => {
-    const area = createMemoryStorageArea();
-    await area.set({ [WIDGETS_META_KEY]: { version: 3, order: [] } });
-
-    const result = await migrateWidgetsToV2(area);
-    assert.equal(result.migrated, false);
-    assert.equal(result.meta, "newer");
-  });
-
-  it("is resumable: 31 items at columns:3 aborted and resumed equals uninterrupted", async () => {
-    const area = createMemoryStorageArea();
-    const now = NOW;
-    const favs = Array.from({ length: 31 }, (_, i) => fav(`f${i}`, { tileSize: "square" }));
-    await area.set({
-      [WIDGETS_META_KEY]: { version: 1, order: favs.map(f => f.id), columns: 3, position: "top", createdAt: now, updatedAt: now },
-      ...Object.fromEntries(favs.map((i) => [widgetItemStorageKey(i.id), i]))
-    });
-
-    // First: uninterrupted run
-    const area1 = createMemoryStorageArea();
-    await area1.set(await area.get(null));
-    await migrateWidgetsToV2(area1, { now: () => now });
-    const meta1 = (await area1.get([WIDGETS_META_KEY]))[WIDGETS_META_KEY];
-
-    // Second: simulate abort after first chunk (25 items) by resetting and re-running
-    const area2 = createMemoryStorageArea();
-    await area2.set(await area.get(null));
-    const writeCallCount = { count: 0 };
-    const originalSet = area2.set;
-    let aborted = false;
-    area2.set = async function(...args) {
-      writeCallCount.count += 1;
-      if (writeCallCount.count === 1 && !aborted) {
-        aborted = true;
-        // Simulate partial write: don't actually update the mock, just return
-        return;
-      }
-      return originalSet.call(this, ...args);
+    const flaky = createMemoryStorageArea();
+    await seedV1(flaky, items, 3);
+    let sets = 0;
+    const realSet = flaky.set.bind(flaky);
+    flaky.set = async (payload) => {
+      sets += 1;
+      if (sets === 2) throw new Error("aborted after chunk 1");
+      return realSet(payload);
     };
-
-    // Reset and do full write
-    area2.set = originalSet;
-    await migrateWidgetsToV2(area2, { now: () => now });
-    const meta2 = (await area2.get([WIDGETS_META_KEY]))[WIDGETS_META_KEY];
-
-    // Both should have same meta (v2)
-    assert.equal(meta1.version, 2);
-    assert.equal(meta2.version, 2);
-    assert.deepEqual(meta1.order.slice(0, 31), meta2.order.slice(0, 31));
-  });
-
-  it("is idempotent: second run is no-op", async () => {
-    const area = createMemoryStorageArea();
-    const now = NOW;
-    await area.set({
-      [WIDGETS_META_KEY]: { version: 1, order: ["a"], columns: 6, position: "top", createdAt: now, updatedAt: now },
-      [widgetItemStorageKey("a")]: fav("a")
-    });
-
-    const result1 = await migrateWidgetsToV2(area, { now: () => now });
-    const meta1 = (await area.get([WIDGETS_META_KEY]))[WIDGETS_META_KEY];
-    assert.equal(result1.migrated, true);
-    assert.equal(meta1.version, 2);
-
-    const result2 = await migrateWidgetsToV2(area, { now: () => now });
-    assert.equal(result2.migrated, false);
-    assert.equal(result2.meta, "valid");
-  });
-
-  it("never writes newer, invalid or v1 metas", async () => {
-    const area = createMemoryStorageArea();
-
-    // newer
-    await area.set({ [WIDGETS_META_KEY]: { version: 3, order: [] } });
-    await migrateWidgetsToV2(area);
-    const newer = (await area.get([WIDGETS_META_KEY]))[WIDGETS_META_KEY];
-    assert.equal(newer.version, 3);
-
-    // invalid
-    const area2 = createMemoryStorageArea();
-    await area2.set({ [WIDGETS_META_KEY]: { /* invalid */ } });
-    await migrateWidgetsToV2(area2);
-    const invalid = (await area2.get([WIDGETS_META_KEY]))[WIDGETS_META_KEY];
-    assert.equal(invalid.version, undefined);
+    await assert.rejects(migrateWidgetsToV2(flaky));
+    assert.equal(inspectWidgetsMeta(await flaky.get(WIDGETS_META_KEY)), "v1"); // meta is written last
+    flaky.set = realSet;
+    await migrateWidgetsToV2(flaky);
+    assert.deepEqual(await gridsOf(flaky), await gridsOf(clean));
   });
 });
 
-describe("ensureWidgetsLayout", () => {
-  it("creates fresh-install defaults: weather metrics and chrome tiles", async () => {
+describe("ensureWidgetsLayout (Defaults, AS-1, AS-35)", () => {
+  it("fresh install writes the six default grids", async () => {
     const area = createMemoryStorageArea();
-    const now = NOW;
-
-    const result = await ensureWidgetsLayout(area, { now: () => now });
-    assert.equal(result.changed, true);
-    assert.equal(result.meta, "missing");
-
-    const meta = (await area.get([WIDGETS_META_KEY]))[WIDGETS_META_KEY];
-    assert.equal(meta.version, 2);
-    assert.deepEqual(meta.order, WEATHER_METRIC_IDS.concat([CHROME_IDS.settings, CHROME_IDS.add]));
-
-    for (const id of WEATHER_METRIC_IDS) {
-      const item = (await area.get([widgetItemStorageKey(id)]))[widgetItemStorageKey(id)];
-      assert.equal(item.type, "weather-metric");
-      assert.equal(item.enabled, true);
-      assert.ok(item.grid);
+    await ensureWidgetsLayout(area);
+    assert.deepEqual(await gridsOf(area), {
+      "weather:temperature": g(0, 0), "weather:precipitation": g(1, 0, 2, 1), "weather:airQuality": g(3, 0, 2, 1),
+      "weather:uv": g(5, 0), "chrome:settings": g(6, 0), "chrome:add": g(7, 0)
+    });
+  });
+  it("is idempotent and writes nothing the second time", async () => {
+    const area = createMemoryStorageArea();
+    await ensureWidgetsLayout(area);
+    const before = await area.get(null);
+    assert.equal((await ensureWidgetsLayout(area)).changed, false);
+    assert.deepEqual(await area.get(null), before);
+  });
+  it("self-heals a missing chrome tile around existing widgets", async () => {
+    const area = createMemoryStorageArea();
+    await seedV2(area, [fav("a", { grid: g(0, 0) }), ...["temperature", "precipitation", "airQuality", "uv"].map((k, i) => metric(`weather:${k}`, { grid: g(1 + i * 2, 0, 2, 1) })), chrome("add", g(0, 1))]);
+    await ensureWidgetsLayout(area);
+    const grids = await gridsOf(area);
+    assert.deepEqual(grids["chrome:settings"], g(9, 0)); // first free 1×1: row 0 is taken up to x=8
+    assert.deepEqual(grids.a, g(0, 0));
+  });
+  it("leaves newer, invalid and v1 metas alone", async () => {
+    for (const meta of [{ version: 9 }, { version: 2, order: "x" }, { version: 1, order: [], columns: 6, position: "top", createdAt: NOW, updatedAt: NOW }]) {
+      const area = createMemoryStorageArea();
+      await area.set({ [WIDGETS_META_KEY]: meta });
+      const result = await ensureWidgetsLayout(area);
+      assert.equal(result.changed, false);
+      assert.deepEqual(await area.get(null), { [WIDGETS_META_KEY]: meta });
     }
-  });
-
-  it("no-op for valid v2 meta with all items", async () => {
-    const area = createMemoryStorageArea();
-    const items = [
-      fav("a", { grid: g(0, 0) }),
-      ...WEATHER_METRIC_IDS.map(id => metric(id, { grid: g(0, 1) })),
-      chrome("settings", g(0, 5)),
-      chrome("add", g(1, 5))
-    ];
-    await seedV2(area, items);
-
-    const result = await ensureWidgetsLayout(area);
-    assert.equal(result.changed, false);
-    assert.equal(result.meta, "valid");
-  });
-
-  it("returns no-op for newer meta", async () => {
-    const area = createMemoryStorageArea();
-    await area.set({ [WIDGETS_META_KEY]: { version: 3, order: [] } });
-
-    const result = await ensureWidgetsLayout(area);
-    assert.equal(result.changed, false);
-    assert.equal(result.meta, "newer");
-  });
-
-  it("returns no-op for invalid meta", async () => {
-    const area = createMemoryStorageArea();
-    await area.set({ [WIDGETS_META_KEY]: { /* invalid */ } });
-
-    const result = await ensureWidgetsLayout(area);
-    assert.equal(result.changed, false);
-    assert.equal(result.meta, "invalid");
-  });
-
-  it("returns no-op for unmigrated v1 meta", async () => {
-    const area = createMemoryStorageArea();
-    const now = NOW;
-    await area.set({
-      [WIDGETS_META_KEY]: { version: 1, order: [], columns: 6, position: "top", createdAt: now, updatedAt: now }
-    });
-
-    const result = await ensureWidgetsLayout(area);
-    assert.equal(result.changed, false);
-    assert.equal(result.meta, "v1");
-  });
-
-  it("self-heals: adds missing weather metrics around existing widgets", async () => {
-    const area = createMemoryStorageArea();
-    const now = NOW;
-    await seedV2(area, [fav("a", { grid: g(0, 0) })]);
-
-    const result = await ensureWidgetsLayout(area, { now: () => now });
-    assert.equal(result.changed, true);
-
-    const meta = (await area.get([WIDGETS_META_KEY]))[WIDGETS_META_KEY];
-    assert(meta.order.includes("weather:temperature"));
-    assert(meta.order.includes(CHROME_IDS.settings));
-  });
-
-  it("is idempotent: second run is no-op", async () => {
-    const area = createMemoryStorageArea();
-    const now = NOW;
-
-    const result1 = await ensureWidgetsLayout(area, { now: () => now });
-    assert.equal(result1.changed, true);
-
-    const result2 = await ensureWidgetsLayout(area, { now: () => now });
-    assert.equal(result2.changed, false);
-  });
-
-  it("appends unlisted items to the order", async () => {
-    const area = createMemoryStorageArea();
-    const now = NOW;
-    const meta = { version: 2, order: [CHROME_IDS.settings], createdAt: now, updatedAt: now };
-    await area.set({
-      [WIDGETS_META_KEY]: meta,
-      [widgetItemStorageKey(CHROME_IDS.settings)]: chrome("settings", g(0, 0))
-    });
-
-    const result = await ensureWidgetsLayout(area, { now: () => now });
-    assert.equal(result.changed, true);
-
-    const newMeta = (await area.get([WIDGETS_META_KEY]))[WIDGETS_META_KEY];
-    assert.ok(newMeta.order.includes(CHROME_IDS.add));
-    assert.ok(newMeta.order.includes("weather:temperature"));
   });
 });
