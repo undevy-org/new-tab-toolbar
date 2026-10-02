@@ -22,7 +22,7 @@ import { createWidgetsService } from "./widgetsService.js";
 import {
   WIDGETS_META_KEY,
   createWidgetsStore,
-  ensureWeatherMetrics,
+  ensureWidgetsLayout,
   inspectWidgetsMeta,
   migrateToWidgets
 } from "./widgetsStore.js";
@@ -1554,7 +1554,7 @@ if (favoritesRoot) {
 
     if (hasStorageArea(syncStorageArea)) {
       try {
-        await ensureWeatherMetrics(syncStorageArea);
+        await ensureWidgetsLayout(syncStorageArea);
       } catch {
         widgetsEnsureFailed = true;
       }

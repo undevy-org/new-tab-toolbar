@@ -532,3 +532,114 @@ export function migrateToWidgets(
     return { migrated: true, source: "legacy-blob" };
   });
 }
+
+// ---------------------------------------------------------------------------
+// Migration widgets v1 -> v2 (desktop grid). Spec § Migration v1 → v2.
+//
+// Under the shared mutation lock. Writes items in chunks of 25 (each with its `grid`; the legacy
+// `tileSize` stays on migrated items for one release), then the two chrome items, then the v2 meta LAST.
+// Until the meta is v2 the whole run repeats; items that already carry a valid grid are kept as placed
+// and the rest is packed by the same first-free rule, so a resumed run equals an uninterrupted one.
+// ---------------------------------------------------------------------------
+const CHROME_STORAGE_KEYS = Object.values(CHROME_IDS).map(widgetItemStorageKey);
+
+export function migrateWidgetsToV2(storageArea, { now = () => new Date().toISOString() } = {}) {
+  return withWidgetsMutationLock(async () => {
+    const metaResult = await storageArea.get(WIDGETS_META_KEY);
+    const kind = inspectWidgetsMeta(metaResult);
+    if (kind !== "v1") {
+      return { migrated: false, meta: kind };
+    }
+    const meta = metaResult[WIDGETS_META_KEY];
+
+    const itemsResult = meta.order.length > 0 ? await storageArea.get(meta.order.map(widgetItemStorageKey)) : {};
+    const listed = meta.order
+      .map((id) => itemsResult[widgetItemStorageKey(id)])
+      .filter((item) => isWidgetItem(item) && item.type !== "chrome");
+    // v1 order: links first, then weather metrics (the v1 store grouped them on read).
+    const v1Items = [
+      ...listed.filter((item) => item.type === "favorite"),
+      ...listed.filter((item) => item.type === "weather-metric")
+    ].map((item) => (hasValidGrid(item) ? item : { ...item, grid: undefined }));
+
+    const chromeResult = await storageArea.get(CHROME_STORAGE_KEYS);
+    const chromeItems = CHROME_STORAGE_KEYS.map((key) => chromeResult[key]).filter(isStrictWidgetItem);
+
+    const grids = migrateV1ToV2([...v1Items, ...chromeItems], meta.columns);
+    const withGrid = (item) => ({ ...item, grid: grids.get(item.id) });
+    const chromeFor = (id) => ({ id, type: "chrome", role: CHROME_ROLE_BY_ID[id], grid: grids.get(id) });
+    const items = [
+      ...v1Items.map(withGrid),
+      ...Object.values(CHROME_IDS).map(chromeFor)
+    ];
+
+    const timestamp = now();
+    const state = { version: WIDGETS_VERSION, items, createdAt: meta.createdAt, updatedAt: timestamp };
+    if (!isWidgetsState(state)) {
+      throw new Error("Invalid widgets state");
+    }
+
+    for (let start = 0; start < items.length; start += MIGRATION_CHUNK_SIZE) {
+      const chunk = items.slice(start, start + MIGRATION_CHUNK_SIZE);
+      await setOrThrow(
+        storageArea,
+        Object.fromEntries(chunk.map((item) => [widgetItemStorageKey(item.id), item]))
+      );
+    }
+    await setOrThrow(storageArea, { [WIDGETS_META_KEY]: buildWidgetsMeta(state) });
+    return { migrated: true };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// ensureWidgetsLayout: fresh-install defaults and self-heal (replaces ensureWeatherMetrics).
+// Appends any missing weather metric and chrome tile at the first free block over 12 columns.
+// Writes only for a `valid` or `missing` meta; `newer`, `invalid` and un-migrated `v1` are left alone.
+// Item keys are written before the meta; idempotent.
+// ---------------------------------------------------------------------------
+const ENSURED_IDS = [...WEATHER_METRIC_IDS, CHROME_IDS.settings, CHROME_IDS.add];
+
+export function ensureWidgetsLayout(storageArea, { now = () => new Date().toISOString() } = {}) {
+  return withWidgetsMutationLock(async () => {
+    const metaResult = await storageArea.get(WIDGETS_META_KEY);
+    const kind = inspectWidgetsMeta(metaResult);
+    if (kind !== "valid" && kind !== "missing") {
+      return { changed: false, meta: kind };
+    }
+
+    const timestamp = now();
+    const meta =
+      kind === "valid"
+        ? metaResult[WIDGETS_META_KEY]
+        : { version: WIDGETS_VERSION, order: [], createdAt: timestamp, updatedAt: timestamp };
+
+    const keys = [...new Set([...meta.order, ...ENSURED_IDS])].map(widgetItemStorageKey);
+    const stored = await storageArea.get(keys);
+    const readable = (id) => readItem(stored[widgetItemStorageKey(id)]);
+    const existing = [...new Set([...meta.order, ...ENSURED_IDS])].map(readable).filter((item) => item !== null);
+
+    const listed = new Set(meta.order);
+    const absent = ENSURED_IDS.filter((id) => readable(id) === null);
+    const unlisted = ENSURED_IDS.filter((id) => !listed.has(id));
+    if (absent.length === 0 && unlisted.length === 0) {
+      return { changed: false, meta: kind };
+    }
+
+    const spots = placeMissing(absent, existing);
+    const itemWrites = {};
+    for (const id of absent) {
+      const grid = spots.get(id);
+      itemWrites[widgetItemStorageKey(id)] = id.startsWith("weather:")
+        ? { id, type: "weather-metric", enabled: true, grid }
+        : { id, type: "chrome", role: CHROME_ROLE_BY_ID[id], grid };
+    }
+
+    if (Object.keys(itemWrites).length > 0) {
+      await setOrThrow(storageArea, itemWrites);
+    }
+    await setOrThrow(storageArea, {
+      [WIDGETS_META_KEY]: { ...meta, order: [...meta.order, ...unlisted], updatedAt: timestamp }
+    });
+    return { changed: true, meta: kind };
+  });
+}
