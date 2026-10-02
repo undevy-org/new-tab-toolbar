@@ -107,6 +107,7 @@ function hideTooltipIfVisible() {
 }
 
 function showTooltipFor(trigger) {
+  if (desktopUi.editMode || dragSession) return; // tooltips are for normal mode only
   const text = trigger.querySelector("[data-tooltip-text]")?.textContent;
   if (!text) return;
   tooltipTrigger = trigger;
@@ -1385,6 +1386,7 @@ function beginPointerDrag(event, tile) {
   if (favoritesBusy || desktopDialogRoot || cityModalRoot || !widgetsState) return;
   const grid = dragGridOf();
   if (!grid || tile.parentElement !== grid) return;
+  hideTooltip();
   const id = tile.dataset.metricId ?? tile.dataset.widgetId; // the hint tile stands for the first enabled metric
   const columns = currentColumns();
   const layout = displayLayout(widgetsState.items, columns);
@@ -1641,6 +1643,7 @@ function applyPendingFocus() {
 
 function setEditMode(on) {
   if (!on) cancelDrag();
+  hideTooltip();
   const before = desktopUi.editMode;
   desktopUi = on ? enterEditMode(desktopUi) : exitEditMode(desktopUi);
   if (desktopUi.editMode === before) return;

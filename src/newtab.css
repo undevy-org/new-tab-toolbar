@@ -1020,6 +1020,16 @@ button.weather-tile {
 
 .desktop-dialog__title { margin: 0 0 12px; font-size: 18px; }
 
+/* Narrow viewports: the 100 px row label leaves too little for a segmented control, so the label sits above its control. */
+@media (max-width: 400px) {
+  .desktop-dialog .favorite-form__row { flex-wrap: wrap; row-gap: 6px; }
+  .desktop-dialog .favorite-form__row-label { width: 100%; }
+  .desktop-dialog .favorite-form__row > .segmented,
+  .desktop-dialog .favorite-form__row > .favorite-input,
+  .desktop-dialog .favorite-form__color-controls { flex: 1 1 100%; }
+  .desktop-dialog .segmented__option { padding: 0 6px; white-space: nowrap; }
+}
+
 .desktop-dialog__error {
   margin-top: 12px;
   color: var(--danger);

@@ -338,6 +338,13 @@ describe("newtab favorites source", () => {
     assert.match(code, /suppressTooltipOnFocus = true;/);
     assert.match(code, /function renderDesktop\(\) \{[\s\S]*?hideTooltip\(\);/);
   });
+  it("shows tooltips in normal mode only: guard in showTooltipFor, hidden on edit toggle and drag press", async () => {
+    const code = await source();
+    assert.match(code, /function showTooltipFor\(trigger\) \{\s*if \(desktopUi\.editMode \|\| dragSession\) return;/);
+    assert.match(code, /function setEditMode\(on\) \{[\s\S]*?hideTooltip\(\);/);
+    assert.match(code, /function beginPointerDrag\([\s\S]*?hideTooltip\(\);[\s\S]*?dragSession = \{/);
+  });
+
   it("styles the tooltip as a fixed layer with no per-tile edge rules", async () => {
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
     assert.match(css, /\.tooltip \{\s*position: fixed;/);
