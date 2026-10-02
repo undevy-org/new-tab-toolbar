@@ -6,7 +6,7 @@ import {
   migrateWidgetsToV2, ensureWidgetsLayout
 } from "../src/widgetsStore.js";
 import { MAX_WIDGETS, WEATHER_METRIC_IDS } from "../src/widgetsShared.js";
-import { CHROME_IDS } from "../src/desktopLayout.js";
+import { CHROME_IDS, isValidGrid } from "../src/desktopLayout.js";
 
 
 const NOW = "2026-07-07T10:00:00.000Z";
@@ -204,11 +204,16 @@ describe("ensureWidgetsLayout (Defaults, AS-1, AS-35)", () => {
   it("self-heals listed but absent item: meta.order has id but item key missing", async () => {
     const area = createMemoryStorageArea();
     const now = NOW;
-    const items = [fav("a", { grid: g(0, 0) }), metric("weather:temperature", { grid: g(1, 0) }), metric("weather:precipitation", { grid: g(2, 0, 2, 1) }), metric("weather:airQuality", { grid: g(4, 0, 2, 1) }), metric("weather:uv", { grid: g(6, 0) }), chrome("add", { grid: g(7, 0) })];
+    const items = [fav("a", { grid: g(0, 0) }), metric("weather:temperature", { grid: g(1, 0) }), metric("weather:precipitation", { grid: g(2, 0, 2, 1) }), metric("weather:airQuality", { grid: g(4, 0, 2, 1) }), metric("weather:uv", { grid: g(6, 0) }), chrome("add", g(7, 0))];
     const meta = { version: 2, order: items.map((i) => i.id).concat([CHROME_IDS.settings]), createdAt: now, updatedAt: now };
     await area.set({ [WIDGETS_META_KEY]: meta, ...Object.fromEntries(items.map((i) => [widgetItemStorageKey(i.id), i])) });
     const gridsBefore = await gridsOf(area);
     const originalOrder = [...meta.order];
+
+    // Validate seed: all seeded items have valid grids
+    for (const id of items.map((i) => i.id)) {
+      assert.ok(isValidGrid(gridsBefore[id]), `seeded item ${id} has valid grid`);
+    }
 
     const result = await ensureWidgetsLayout(area, { now: () => now });
     assert.equal(result.changed, true);
@@ -217,8 +222,8 @@ describe("ensureWidgetsLayout (Defaults, AS-1, AS-35)", () => {
     const metaAfter = (await area.get([WIDGETS_META_KEY]))[WIDGETS_META_KEY];
     const gridsAfter = await gridsOf(area);
 
-    // Exact grid for added item: row 0 occupied x=0-6 (a,temp,precip 2x1,aq 2x1,uv), so first free is (7,0)
-    assert.deepEqual(gridsAfter["chrome:settings"], g(7, 0));
+    // Exact grid for added item: row 0 occupied x=0-7 (a,temp,precip 2x1,aq 2x1,uv,add), so first free is (8,0)
+    assert.deepEqual(gridsAfter["chrome:settings"], g(8, 0));
 
     // Meta.order unchanged (no duplicates added)
     assert.deepEqual(metaAfter.order, originalOrder);
