@@ -465,11 +465,24 @@ describe("newtab city modal source", () => {
     assert.match(code, /addEventListener\("pointerdown", \(event\) => \{\s*if \(cityModalRoot\) return;/);
   });
 
-  it("traps Tab inside the modal and leaves suggestion buttons out of the cycle", async () => {
+  it("traps Tab inside the modal; open list items are part of the cycle, hidden controls are not", async () => {
     const code = await source();
     const trap = between(code, 'if (event.key !== "Tab" || !cityModalRoot) return;', "});");
-    assert.match(trap, /el\.dataset\.weatherAction !== "select-city"/);
-    assert.match(trap, /!el\.disabled/);
+    assert.doesNotMatch(trap, /select-city/);
+    assert.match(trap, /cityModalRoot\.querySelectorAll\("input, button"\)\]\.filter\(\(el\) => !el\.disabled && !el\.hidden\)/);
+  });
+
+  it("modal controls get a transparent 2px outline only while focused, plus the soft ring", async () => {
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /\.city-modal :is\(button, input, \.weather-form__suggestion\):focus-visible \{\s*outline: 2px solid transparent;/);
+    assert.doesNotMatch(css, /\.city-modal :is\(button, input[^)]*\)\s*\{/); // never on resting controls
+    for (const selector of [".city-modal .favorite-input:focus-visible", ".city-modal .icon-button:focus-visible", ".city-modal .weather-form__suggestion:focus-visible"]) {
+      const at = css.indexOf(selector);
+      assert.ok(at > -1, selector);
+      assert.match(css.slice(at, css.indexOf("}", at)), /box-shadow: 0 0 0 2px var\(--soft-ring\);/, selector);
+    }
+    assert.match(css, /\.city-modal \.button:focus-visible,\s*\.city-modal \.icon-button:focus-visible \{\s*background: var\(--soft-fill-strong\);\s*box-shadow: 0 0 0 2px var\(--soft-ring\);/);
+    assert.doesNotMatch(css, /\.weather-form__suggestion:focus-visible \{\s*outline: 3px/);
   });
 
   it("keeps Tab on the page (preventDefault) when every modal control is disabled", async () => {

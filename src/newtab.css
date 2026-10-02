@@ -855,11 +855,6 @@ body {
   background: var(--soft-fill-strong);
 }
 
-.weather-form__suggestion:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: -2px;
-}
-
 .weather-block__action {
   display: flex;
 }
@@ -919,6 +914,33 @@ body {
 /* The rule above must not defeat [hidden] on the empty error slot. */
 .city-modal .status--full[hidden] { display: none; }
 .city-modal .favorite-input::placeholder { color: var(--muted); opacity: 1; }
+
+/* Only while focused: a resting control must have no outline at all, or forced colors would draw a permanent frame
+   around every control and the focused one would no longer stand out. */
+.city-modal :is(button, input, .weather-form__suggestion):focus-visible {
+  outline: 2px solid transparent; /* forced colors turn this into a visible indicator */
+  outline-offset: 2px;
+}
+
+.city-modal .favorite-input:focus-visible {
+  background: var(--soft-fill);
+  box-shadow: 0 0 0 2px var(--soft-ring);
+}
+
+.city-modal .button:focus-visible,
+.city-modal .icon-button:focus-visible {
+  background: var(--soft-fill-strong);
+  box-shadow: 0 0 0 2px var(--soft-ring);
+}
+
+.city-modal .button--primary:focus-visible {
+  background: var(--primary);
+}
+
+.city-modal .weather-form__suggestion:focus-visible {
+  background: var(--soft-fill-strong);
+  box-shadow: 0 0 0 2px var(--soft-ring);
+}
 
 @media (max-width: 600px) {
   :root {

@@ -246,7 +246,7 @@ let widgetsEnsureFailed = false;
 let widgetsNewer = false;
 let metricWritesPending = 0; // metric writes in flight; controls are re-synced only when none is
 let metricErrorText = ""; // write-error slot of the metric controls; module state so a panel rebuild keeps it
-let activeCityForm = null; // { cancelPending, renderSuggestions, refresh, place, focusField, dispose } of the mounted city form
+let activeCityForm = null; // { cancelPending, renderSuggestions, refresh, place, focusField, dispose, choose, chosen, recentlyChosen } of the mounted city form
 let weatherUi = createInitialWeatherUiState();
 let weatherBusy = false;
 let weatherFormGeneration = 0;
@@ -904,7 +904,7 @@ function createCityForm(mode) {
           results = null;
         }
 
-        if (signal.aborted || formGeneration !== weatherFormGeneration || weatherBusy) {
+        if (signal.aborted || formGeneration !== weatherFormGeneration || weatherBusy || suggestionsList.contains(document.activeElement)) {
           return;
         }
 
@@ -917,27 +917,85 @@ function createCityForm(mode) {
     }, 250);
   });
 
-  // A disabled Save blocks the browser's implicit form submit, so the field reports the empty case itself.
-  // (Task 5 extends this handler with the arrow keys.)
+  let chosenCity = null;
+  let chosenAt = -Infinity; // performance.now() of the last choose()
+  let pressing = false; // a pointer press that began inside the dialog and has not been released yet
+
+  function closeList() {
+    cancelPendingSuggestionRequest();
+    weatherUi = hideSuggestions(weatherUi);
+    renderSuggestionsList();
+  }
+
+  function closeListIfFocusLeft() {
+    if (formGeneration !== weatherFormGeneration || !document.hasFocus()) return;
+    if (field.contains(document.activeElement)) return;
+    closeList();
+  }
+
+  // A pointer press inside the dialog (Save, Not now/Cancel, the dialog body) must not close the list before the click is
+  // delivered: in docked mode the buttons would move between press and release and the click would be lost. The list closes
+  // after the release instead (setTimeout 0 runs after the click event).
+  const onPointerDown = (event) => {
+    pressing = event.target instanceof Element && Boolean(event.target.closest(".city-modal__dialog"));
+  };
+  const onPointerUp = () => {
+    if (!pressing) return;
+    pressing = false;
+    setTimeout(closeListIfFocusLeft, 0);
+  };
+  document.addEventListener("pointerdown", onPointerDown, true);
+  document.addEventListener("pointerup", onPointerUp, true);
+  document.addEventListener("pointercancel", onPointerUp, true);
+
+  // Window focus loss does nothing. Moving focus to something outside the field wrapper cancels the debounce and the request
+  // in flight at once (list open or not) and closes the list, unless a pointer press inside the dialog is still going on.
+  field.addEventListener("focusout", (event) => {
+    if (event.relatedTarget instanceof Node && field.contains(event.relatedTarget)) return;
+    if (!document.hasFocus()) return;
+    cancelPendingSuggestionRequest();
+    if (pressing) return;
+    setTimeout(closeListIfFocusLeft, 0);
+  });
+
+  // Focus entering the list (ArrowDown, Tab, a click on an item) cancels the pending request too: a response must never
+  // replace the list under a focused item.
+  suggestionsList.addEventListener("focusin", cancelPendingSuggestionRequest);
+
+  input.addEventListener("input", () => {
+    chosenCity = null; // editing drops the remembered choice
+  });
+
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.isComposing && !weatherBusy && input.value.trim() === "") {
-      event.preventDefault();
+      event.preventDefault(); // a disabled Save blocks the implicit submit, so the field reports the empty case itself
       cityModalError = "Enter a city name";
       syncCityModal();
+      return;
+    }
+    if (event.key === "ArrowDown" && isSuggestionsOpen(weatherUi) && !weatherBusy) {
+      event.preventDefault();
+      cancelPendingSuggestionRequest();
+      suggestionsList.querySelector("button")?.focus();
     }
   });
 
-  // Closes the list shortly after the field loses focus (the field-wrapper rule replaces this in the keyboard-path step).
-  input.addEventListener("blur", () => {
-    cancelPendingSuggestionRequest();
+  suggestionsList.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const items = [...suggestionsList.querySelectorAll("button")];
+    const at = items.indexOf(document.activeElement);
+    if (event.key === "ArrowDown") items[at + 1]?.focus();
+    else if (at <= 0) input.focus();
+    else items[at - 1]?.focus();
+  });
 
-    setTimeout(() => {
-      if (formGeneration !== weatherFormGeneration) {
-        return;
-      }
-      weatherUi = hideSuggestions(weatherUi);
-      renderSuggestionsList();
-    }, 150);
+  clear.addEventListener("click", () => {
+    input.value = "";
+    chosenCity = null;
+    closeList();
+    refresh();
+    input.focus();
   });
 
   refresh();
@@ -947,7 +1005,22 @@ function createCityForm(mode) {
     refresh,
     place: placePopover,
     focusField: () => input.focus(),
-    dispose: () => window.removeEventListener("resize", onResize)
+    dispose: () => {
+      window.removeEventListener("resize", onResize);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("pointerup", onPointerUp, true);
+      document.removeEventListener("pointercancel", onPointerUp, true);
+    },
+    choose(city) {
+      closeList(); // cancels the debounce and the in-flight request; late responses are ignored (signal aborted)
+      input.value = city.label;
+      chosenCity = { name: city.name, country: city.country, latitude: city.latitude, longitude: city.longitude, label: city.label };
+      chosenAt = performance.now();
+      refresh();
+      input.focus();
+    },
+    chosen: () => (chosenCity && chosenCity.label === input.value ? chosenCity : null),
+    recentlyChosen: () => performance.now() - chosenAt < 350
   };
   return form;
 }
@@ -1009,6 +1082,16 @@ function attachCityModalListeners(root) {
   root.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target || weatherBusy) return;
+    // The second click of a double click on an item lands on what was under the popover: the backdrop or a covered button
+    // (for Save the submit is cancelled too). A keyboard activation (detail 0) is never such a click: Enter on Save saves.
+    if (
+      event.detail > 0 &&
+      activeCityForm?.recentlyChosen() &&
+      (target.matches("[data-city-modal-backdrop]") || target.closest('[data-city-modal-action], button[type="submit"]'))
+    ) {
+      event.preventDefault();
+      return;
+    }
     // A drag from the field that ends over the backdrop targets the modal root, not the backdrop: ignored.
     if (target.matches("[data-city-modal-backdrop]")) {
       if (performance.now() - cityModalOpenedAt >= CITY_MODAL_BACKDROP_GUARD_MS) hideCityModal({ dismiss: true });
@@ -1019,15 +1102,15 @@ function attachCityModalListeners(root) {
       return;
     }
     const suggestion = target.closest('[data-weather-action="select-city"]');
-    if (suggestion instanceof HTMLElement && weatherService) {
-      changeCity(() =>
-        weatherService.selectLocation({
-          name: suggestion.dataset.cityName,
-          country: suggestion.dataset.cityCountry ?? "",
-          latitude: Number(suggestion.dataset.cityLatitude),
-          longitude: Number(suggestion.dataset.cityLongitude)
-        })
-      );
+    if (suggestion instanceof HTMLElement) {
+      activeCityForm?.choose({
+        name: suggestion.dataset.cityName,
+        country: suggestion.dataset.cityCountry ?? "",
+        latitude: Number(suggestion.dataset.cityLatitude),
+        longitude: Number(suggestion.dataset.cityLongitude),
+        label: suggestion.textContent
+      });
+      return;
     }
   });
 
@@ -1041,6 +1124,11 @@ function attachCityModalListeners(root) {
       cityModalError = "Enter a city name";
       syncCityModal();
       form.querySelector(CITY_INPUT_SELECTOR)?.focus();
+      return;
+    }
+    const picked = activeCityForm?.chosen();
+    if (picked) {
+      changeCity(() => weatherService.selectLocation({ name: picked.name, country: picked.country, latitude: picked.latitude, longitude: picked.longitude }));
       return;
     }
     changeCity(() => weatherService.setCity(cityName));
@@ -1658,6 +1746,7 @@ if (favoritesRoot) {
       activeCityForm?.cancelPending();
       weatherUi = hideSuggestions(weatherUi);
       activeCityForm?.renderSuggestions();
+      activeCityForm?.focusField();
       return;
     }
 
@@ -1682,10 +1771,7 @@ if (favoritesRoot) {
   // Tab inside the open modal wraps; from body or outside it enters the modal (I3).
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Tab" || !cityModalRoot) return;
-    // Suggestion buttons are mouse-only: never a wrap target (a Tab from the field closes the list via blur).
-    const controls = [...cityModalRoot.querySelectorAll("input, button")].filter(
-      (el) => !el.disabled && el.dataset.weatherAction !== "select-city"
-    );
+    const controls = [...cityModalRoot.querySelectorAll("input, button")].filter((el) => !el.disabled && !el.hidden);
     if (controls.length === 0) {
       event.preventDefault(); // busy: nothing to enter, focus stays on body and never leaves the page
       return;
