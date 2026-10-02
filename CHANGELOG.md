@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README badge linking to the [Chrome Web Store listing](https://chromewebstore.google.com/detail/quiet-tab/dbcdpffdgfbjmdlomgheeijfkkjkhmma).
 - A live city suggestion dropdown in the city modal: typing two or more
   characters shows matching cities from Open-Meteo's geocoding search;
-  selecting one sets the location immediately without a second geocoding
-  request. Free-text entry and Save still work exactly as before.
+  selecting one fills the field, and Save then stores it without a second
+  geocoding request. Free-text entry and Save still work exactly as before.
 - `weather-metric` items in the widgets layout: temperature, precipitation, air
   quality and UV index are stored next to favorites (order, size and shown/hidden
   only; live weather data stays in its own storage). They are added automatically
@@ -58,6 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A new link is inserted after your last link, so it lands before the weather tiles.
 - Weather tiles show a loading ("…") and an unavailable ("—") state without moving
   the grid; tiles showing saved data after a failed refresh get a dashed border.
+- City modal: suggestions open as a popover over the dialog (the dialog no longer moves), full-width Not now/Cancel and Save below the field with icons, Save is disabled for an empty field, choosing a suggestion fills the field and Save confirms, clear button, arrow-key selection.
+- Widgets panel: separate Links and Weather cards; weather metrics and links share one row layout; the Show checkbox became an eye button; weather tiles always follow links.
+- New installs start with the widget centered; existing profiles keep their position.
 - Widgets written by a newer version of Quiet Tab (for example synced from another
   device) are never overwritten: this build shows a message, keeps the bar
   read-only and writes nothing.
