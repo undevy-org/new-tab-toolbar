@@ -86,6 +86,11 @@ body {
   transform: translate(-50%, -50%);
 }
 
+/* No position until newtab.js has read the widgets state: never paint the bar at a position that may change. */
+.favorites-bar:not([data-position]) {
+  visibility: hidden;
+}
+
 .favorites-grid {
   display: grid;
   flex: 1;

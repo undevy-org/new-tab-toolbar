@@ -70,7 +70,7 @@ describe("newtab weather source", () => {
     assert.doesNotMatch(markup, /weather-panel/);
     assert.match(markup, /<nav class="favorites-bar" id="favorites" aria-label="Widgets"/);
     assert.match(markup, /aria-label="Widgets settings"/);
-    assert.match(markup, /data-position="top"/);
+    assert.doesNotMatch(markup, /data-position/);
     assert.doesNotMatch(markup, /id="app"/);
     assert.doesNotMatch(markup, /<main\b/);
   });

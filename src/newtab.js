@@ -1115,6 +1115,10 @@ function renderFavoritesToolbar() {
   }
 
   hideTooltip();
+  // Every bootstrap exit path (normal, newer meta, failed migration, read error) renders through here, so the bar is never left hidden.
+  if (!favoritesRoot.dataset.position) {
+    favoritesRoot.dataset.position = gridLayout(widgetsState).position;
+  }
 
   const active = document.activeElement instanceof Element ? document.activeElement : null;
   const focused = active && favoritesRoot.contains(active) ? active.closest("[data-widget-id], .favorite-settings") : null;

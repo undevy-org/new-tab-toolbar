@@ -332,7 +332,7 @@ describe("newtab favorites source", () => {
 
   it("starts the bar at a known position before the first render", async () => {
     const html = await readFile(new URL("../src/newtab.html", import.meta.url), "utf8");
-    assert.match(html, /id="favorites"[^>]*data-position="top"/);
+    assert.doesNotMatch(html, /id="favorites"[^>]*data-position/);
   });
 
   it("uses one shared tooltip layer appended to body and placed by placeTooltip", async () => {
