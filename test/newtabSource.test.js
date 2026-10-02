@@ -40,7 +40,7 @@ describe("newtab favorites source", () => {
     assert.match(code, /< DRAG_THRESHOLD_PX\) return; \/\/ still a tap/);
     // Drop: moveWidget with the metric id behind the hint tile, through the atomic mutation runner; focus re-queried.
     assert.match(code, /tile\.dataset\.metricId \?\? tile\.dataset\.widgetId/);
-    assert.match(code, /runDesktopMutation\(\(columns\) => widgetsService\.moveWidget\(s\.id, \{ x: target\.x, y: target\.y \}, \{ columns \}\)\)/);
+    assert.match(code, /runDesktopMutation\(\s*\(columns\) => widgetsService\.moveWidget\(s\.id, \{ x: target\.x, y: target\.y \}, \{ columns \}\),/);
     assert.match(code, /focusDragTile\(s\.domId\)/);
     assert.match(code, /canPlace\(s\.layout, s\.id,/);
     // Cancels: Escape layer, pointercancel, window blur, leaving the window, resize, leaving edit mode.
@@ -52,7 +52,7 @@ describe("newtab favorites source", () => {
     assert.match(code, /function setEditMode\(on\) \{\s*if \(!on\) cancelDrag\(\);/);
     // One-shot suppression of the click that trails a started drag.
     assert.match(code, /suppressDragClick = true;/);
-    assert.match(code, /if \(!suppressDragClick\) return;\s*suppressDragClick = false;\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);/);
+    assert.match(code, /if \(!suppressDragClick \|\| event\.detail === 0\) return;\s*suppressDragClick = false;\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);/);
     // Autoscroll per animation frame.
     assert.match(code, /window\.scrollBy\(0, direction \* AUTOSCROLL_STEP_PX\)/);
     assert.match(code, /requestAnimationFrame\(autoscrollFrame\)/);
@@ -60,6 +60,24 @@ describe("newtab favorites source", () => {
     assert.match(code, /createNode\("div", "drop-highlight"\)/);
     assert.match(code, /highlight\.dataset\.valid = String\(valid\)/);
     assert.doesNotMatch(code, /innerHTML/);
+  });
+
+  it("keeps a dropped tile on its target while the write runs; failure animates it back; flag never strands (fix round 1)", async () => {
+    const code = await source();
+    // No busy re-render for a drop (it would rebuild the old layout and snap the tile to its origin).
+    assert.match(code, /renderPending: false,/);
+    assert.match(code, /settleTileAt\(s\.tile, s\.id, cell\);/);
+    assert.match(code, /if \(pendingDrop\) \{\s*const tile = grid\.querySelector/);
+    // Failure (PlacementError or storage): message in #desktop-status, the tile animates back from where it is.
+    assert.match(code, /onFailure: \(message\) => \{\s*pendingDrop = null;\s*showDesktopStatus\(message\);[^\n]*\n\s*returnDraggedTile\(s\);/);
+    assert.match(code, /if \(onFailure\) \{\s*setFavoritesBusy\(false\);\s*if \(generation === favoritesGeneration\) onFailure\(message\);\s*return false;/);
+    // Minor 3: a drop while another write is busy sends nothing and returns the tile (never left fixed/dragging).
+    assert.match(code, /async function commitDrop\(s, target\) \{\s*if \(favoritesBusy\) \{\s*returnDraggedTile\(s\);/);
+    // Click suppression cannot strand: reset on every new press (capture), on cancel and blur; keyboard clicks pass.
+    assert.match(code, /"pointerdown",\s*\(\) => \{\s*suppressDragClick = false;\s*\},\s*true/);
+    assert.match(code, /function cancelDrag\(\) \{\s*suppressDragClick = false;/);
+    assert.match(code, /cancelDrag\(\);\s*suppressDragClick = false;\s*\}\);/);
+    assert.match(code, /if \(!suppressDragClick \|\| event\.detail === 0\) return;/);
   });
 
   it("guards the background click (primary button only, reset on cancel) and falls back to Settings for a vanished badge", async () => {
@@ -125,7 +143,7 @@ describe("newtab favorites source", () => {
     const code = await source();
     assert.match(code, /let favoritesBusy = false;/);
     assert.match(code, /let favoritesGeneration = 0;/);
-    assert.match(code, /function startFavoritesAction\(\)/);
+    assert.match(code, /function startFavoritesAction\(\{ render = true \} = \{\}\) \{\s*favoritesGeneration \+= 1;\s*setFavoritesBusy\(true\);\s*if \(render\) renderFavorites\(\);/);
     assert.match(code, /function finishFavoritesAction\(generation, applyResult\)/);
     assert.match(code, /\|\| favoritesBusy\)\s*\{\s*return;/);
   });
@@ -211,7 +229,7 @@ describe("newtab favorites source", () => {
     assert.match(code, /function closeDesktopDialog\(/);
     assert.match(code, /root\.setAttribute\("aria-modal", "true"\);/);
     assert.match(code, /case "add-link":/);
-    assert.match(code, /async function runDesktopMutation\(action, \{ dialogRoot = null \} = \{\}\)/);
+    assert.match(code, /async function runDesktopMutation\(action, \{ dialogRoot = null, renderPending = true, onFailure = null \} = \{\}\)/);
     assert.match(code, /widgetsService\.addFavorite\(payload, \{ columns \}\)/);
     assert.match(code, /function announce\(text\)/);
     assert.match(code, /querySelector\("#desktop-live"\)/);

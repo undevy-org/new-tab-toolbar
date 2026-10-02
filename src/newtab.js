@@ -1203,7 +1203,9 @@ function showDialogError(root, message) {
 }
 
 // Every explicit mutation goes through here. On failure nothing is persisted and the UI returns to the stored state.
-async function runDesktopMutation(action, { dialogRoot = null } = {}) {
+// `renderPending: false` skips the busy re-render (a drop keeps its tile on the target while the write runs);
+// `onFailure(message)` then owns the failure UI instead of the immediate re-render.
+async function runDesktopMutation(action, { dialogRoot = null, renderPending = true, onFailure = null } = {}) {
   if (favoritesBusy) return false;
   showDesktopStatus("");
   const slot = dialogRoot?.querySelector("[data-dialog-error]");
@@ -1211,7 +1213,7 @@ async function runDesktopMutation(action, { dialogRoot = null } = {}) {
     slot.textContent = "";
     slot.hidden = true;
   }
-  const generation = startFavoritesAction();
+  const generation = startFavoritesAction({ render: renderPending });
   try {
     const next = await action(currentColumns());
     finishFavoritesAction(generation, () => {
@@ -1219,8 +1221,13 @@ async function runDesktopMutation(action, { dialogRoot = null } = {}) {
     });
     return true;
   } catch (error) {
-    finishFavoritesAction(generation, () => {});
     const message = error instanceof Error ? error.message : String(error);
+    if (onFailure) {
+      setFavoritesBusy(false);
+      if (generation === favoritesGeneration) onFailure(message);
+      return false;
+    }
+    finishFavoritesAction(generation, () => {});
     if (dialogRoot?.isConnected) showDialogError(dialogRoot, message);
     else showDesktopStatus(message);
     return false;
@@ -1340,6 +1347,10 @@ function renderDesktop() {
   favoritesRoot.dataset.edit = String(desktopUi.editMode);
   favoritesRoot.replaceChildren(grid);
   restoreFocus(focusTarget);
+  if (pendingDrop) {
+    const tile = grid.querySelector(`:scope > [data-widget-id="${CSS.escape(pendingDrop.domId)}"]`);
+    if (tile) settleTileAt(tile, pendingDrop.id, pendingDrop.cell);
+  }
   if (dragSession) reattachDrag();
 }
 
@@ -1516,9 +1527,7 @@ async function onDragPointerUp(event) {
   desktopUi = endDrag(desktopUi);
   const target = drag?.target;
   if (drag?.valid && target && (target.x !== s.cell.x || target.y !== s.cell.y)) {
-    // Atomic: on a write failure nothing is persisted, the re-render puts the tile back and #desktop-status says why.
-    await runDesktopMutation((columns) => widgetsService.moveWidget(s.id, { x: target.x, y: target.y }, { columns }));
-    focusDragTile(s.domId);
+    await commitDrop(s, target);
     return;
   }
   if (drag?.valid) {
@@ -1527,6 +1536,51 @@ async function onDragPointerUp(event) {
     return;
   }
   returnDraggedTile(s); // rejected drop: the tile animates back, nothing is written
+}
+
+// The tile stays where it was dropped while the write runs: no busy re-render (it would rebuild the old layout and
+// snap the tile to its origin). Success settles it on the committed cell; any failure animates it back.
+let pendingDrop = null; // { domId, id, cell } — re-applied by renderDesktop while the write is pending
+
+async function commitDrop(s, target) {
+  if (favoritesBusy) {
+    returnDraggedTile(s); // another write is running: nothing is sent, the tile goes back
+    return;
+  }
+  const cell = { x: target.x, y: target.y, w: s.cell.w, h: s.cell.h };
+  pendingDrop = { domId: s.domId, id: s.id, cell };
+  settleTileAt(s.tile, s.id, cell);
+  const ok = await runDesktopMutation(
+    (columns) => widgetsService.moveWidget(s.id, { x: target.x, y: target.y }, { columns }),
+    {
+      renderPending: false,
+      onFailure: (message) => {
+        pendingDrop = null;
+        showDesktopStatus(message); // #desktop-status, role=alert; edit mode stays on
+        returnDraggedTile(s);
+      }
+    }
+  );
+  pendingDrop = null;
+  if (ok) focusDragTile(s.domId);
+  else if (!dropReturnTimer && s.tile.isConnected && s.tile.classList.contains("is-settled")) returnDraggedTile(s);
+}
+
+// Puts the dropped tile (and its badge) on `cell` inside the grid, out of the fixed drag state.
+function settleTileAt(tile, id, cell) {
+  const grid = dragGridOf();
+  grid?.querySelector(":scope > .drop-highlight")?.remove();
+  tile.classList.remove("is-dragging");
+  tile.classList.add("is-settled");
+  tile.style.position = "";
+  tile.style.left = "";
+  tile.style.top = "";
+  placeTile(tile, cell);
+  const badge = grid?.querySelector(`[data-remove-for="${CSS.escape(id)}"]`);
+  if (badge) {
+    placeTile(badge, { ...cell, w: 1, h: 1 });
+    badge.hidden = false;
+  }
 }
 
 function returnDraggedTile(s) {
@@ -1541,9 +1595,16 @@ function returnDraggedTile(s) {
     finish();
     return;
   }
+  // Start from where the tile is now (under the pointer, or settled on the drop cell) and slide to its origin.
+  const from = s.tile.getBoundingClientRect();
+  s.tile.classList.remove("is-settled");
+  s.tile.classList.add("is-returning");
+  s.tile.style.position = "fixed";
+  s.tile.style.left = `${from.left}px`;
+  s.tile.style.top = `${from.top}px`;
+  void s.tile.offsetWidth; // commit the start position so the transition runs
   const origin = grid.getBoundingClientRect();
   const step = s.metrics.cell + s.metrics.gap;
-  s.tile.classList.add("is-returning");
   s.tile.style.left = `${origin.left + s.cell.x * step}px`;
   s.tile.style.top = `${origin.top + s.cell.y * step}px`;
   dropReturnTimer = setTimeout(finish, DROP_RETURN_MS);
@@ -1551,6 +1612,7 @@ function returnDraggedTile(s) {
 
 // Escape, pointercancel, window blur, the pointer leaving the window, a viewport resize, leaving edit mode.
 function cancelDrag() {
+  suppressDragClick = false; // a cancelled press never leaves a click-swallowing flag behind
   const s = dragSession;
   if (!s) return;
   dragSession = null;
@@ -1595,10 +1657,10 @@ function setFavoritesBusy(nextBusy) {
   favoritesBusy = nextBusy;
 }
 
-function startFavoritesAction() {
+function startFavoritesAction({ render = true } = {}) {
   favoritesGeneration += 1;
   setFavoritesBusy(true);
-  renderFavorites();
+  if (render) renderFavorites();
   return favoritesGeneration;
 }
 
@@ -1781,11 +1843,21 @@ if (favoritesRoot) {
   window.addEventListener("blur", () => {
     backgroundPressed = false;
     cancelDrag();
+    suppressDragClick = false;
   });
+  // Every new press starts clean, so a flag stranded by a lost release can never swallow the next click.
+  window.addEventListener(
+    "pointerdown",
+    () => {
+      suppressDragClick = false;
+    },
+    true
+  );
   window.addEventListener(
     "click",
     (event) => {
-      if (!suppressDragClick) return;
+      // Only a pointer click (detail > 0) is the trailing click of a drag; keyboard activation is never swallowed.
+      if (!suppressDragClick || event.detail === 0) return;
       suppressDragClick = false;
       event.preventDefault();
       event.stopPropagation();
