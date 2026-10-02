@@ -332,7 +332,7 @@ function createSegmentedControl(name, options, selectedValue) {
   const group = createNode("div", "segmented");
   group.setAttribute("role", "radiogroup");
 
-  for (const [value, text] of options) {
+  for (const [value, text, glyph] of options) {
     const option = createNode("label", "segmented__option");
     const input = document.createElement("input");
     input.type = "radio";
@@ -340,6 +340,11 @@ function createSegmentedControl(name, options, selectedValue) {
     input.value = value;
     input.checked = value === selectedValue;
     option.appendChild(input);
+    if (glyph) {
+      const mark = createNode("i", `segmented__glyph segmented__glyph--${glyph}`);
+      mark.setAttribute("aria-hidden", "true");
+      option.appendChild(mark);
+    }
     option.appendChild(createNode("span", null, text));
     group.appendChild(option);
   }
@@ -629,15 +634,14 @@ function createFavoritesPanelRow(item, items) {
 
   const info = createNode("div", "favorites-panel__item");
   info.appendChild(createFavoriteIconNode(getFavoriteIconModel(item, { faviconBaseUrl }), item));
-  const text = createNode("div");
+  const text = createNode("div", "favorites-panel__title");
   text.appendChild(createNode("strong", null, item.label));
   text.appendChild(createNode("span", null, item.domain));
   info.appendChild(text);
 
-  const controls = createNode("div", "favorites-panel__controls");
   const disabled = favoritesBusy || isFormOpen(favoritesUi);
 
-  const earlier = createNode("button", "icon-button");
+  const earlier = createNode("button", "icon-button row-up");
   earlier.type = "button";
   earlier.dataset.favoriteAction = "move-earlier";
   earlier.dataset.favoriteId = item.id;
@@ -645,7 +649,7 @@ function createFavoritesPanelRow(item, items) {
   earlier.disabled = moveButtonDisabled(items, item, "move-earlier");
   earlier.appendChild(createIconNode("chevronUp"));
 
-  const later = createNode("button", "icon-button");
+  const later = createNode("button", "icon-button row-down");
   later.type = "button";
   later.dataset.favoriteAction = "move-later";
   later.dataset.favoriteId = item.id;
@@ -653,7 +657,7 @@ function createFavoritesPanelRow(item, items) {
   later.disabled = moveButtonDisabled(items, item, "move-later");
   later.appendChild(createIconNode("chevronDown"));
 
-  const edit = createNode("button", "icon-button");
+  const edit = createNode("button", "icon-button row-action");
   edit.type = "button";
   edit.dataset.favoriteAction = "edit";
   edit.dataset.favoriteId = item.id;
@@ -661,16 +665,16 @@ function createFavoritesPanelRow(item, items) {
   edit.disabled = disabled;
   edit.appendChild(createIconNode("pencil"));
 
-  controls.append(earlier, later, edit);
-  row.append(info, controls);
+  row.append(info, earlier, later, edit);
   return row;
 }
 
 const METRIC_LABELS = { temperature: "Temperature", precipitation: "Precipitation", airQuality: "Air quality", uv: "UV index" };
+const METRIC_GLYPHS = { temperature: "thermometer", precipitation: "droplet", airQuality: "wind", uv: "sun" };
 
 function createMetricMoveButtons(item, items) {
   const make = (action, label, icon) => {
-    const button = createNode("button", "icon-button");
+    const button = createNode("button", action === "move-earlier" ? "icon-button row-up" : "icon-button row-down");
     button.type = "button";
     button.dataset.favoriteAction = action;
     button.dataset.favoriteId = item.id;
@@ -687,37 +691,44 @@ function createMetricMoveButtons(item, items) {
 }
 
 function createWeatherMetricRow(item, items) {
-  const label = METRIC_LABELS[weatherMetricKey(item.id)];
+  const key = weatherMetricKey(item.id);
+  const label = METRIC_LABELS[key];
   const row = createNode("div", "favorites-panel__row");
   row.dataset.metricRow = "";
   row.dataset.metricId = item.id;
 
   const info = createNode("div", "favorites-panel__item");
-  const text = createNode("div");
+  const glyph = createNode("span", "metric-glyph");
+  glyph.setAttribute("aria-hidden", "true");
+  glyph.appendChild(createIconNode(METRIC_GLYPHS[key]));
+  const text = createNode("div", "favorites-panel__title");
   text.appendChild(createNode("strong", null, label));
   const badge = createNode("span", "badge", "Hidden");
   badge.dataset.hiddenBadge = "";
   text.appendChild(badge);
-  info.appendChild(text);
+  info.append(glyph, text);
 
-  const controls = createNode("div", "favorites-panel__controls");
-  const show = createNode("label", "metric-show");
-  const checkbox = document.createElement("input");
-  checkbox.type = "checkbox";
-  checkbox.dataset.metricSetting = "enabled";
-  checkbox.dataset.metricId = item.id;
-  checkbox.setAttribute("aria-label", `Show ${label}`);
-  show.append(checkbox, createNode("span", null, "Show"));
-
-  const size = createSegmentedControl(`tileSize-${item.id}`, [["square", "Square"], ["wide", "Wide 2:1"]], item.tileSize);
+  const slot = createNode("div", "favorites-panel__slot");
+  const size = createSegmentedControl(
+    `tileSize-${item.id}`,
+    [["square", "Square", "square"], ["wide", "Wide", "wide"]],
+    item.tileSize
+  );
   size.setAttribute("aria-label", `${label} tile size`);
   for (const input of size.querySelectorAll("input")) {
     input.dataset.metricSetting = "tileSize";
     input.dataset.metricId = item.id;
   }
+  slot.appendChild(size);
 
-  controls.append(show, size, ...createMetricMoveButtons(item, items));
-  row.append(info, controls);
+  const toggle = createNode("button", "icon-button row-action metric-toggle");
+  toggle.type = "button";
+  toggle.dataset.metricSetting = "enabled";
+  toggle.dataset.metricId = item.id;
+  toggle.setAttribute("aria-label", `Show ${label}`);
+
+  const [up, down] = createMetricMoveButtons(item, items);
+  row.append(info, slot, up, down, toggle);
   applyMetricRowState(row, item);
   return row;
 }
@@ -725,8 +736,26 @@ function createWeatherMetricRow(item, items) {
 function applyMetricRowState(row, item) {
   row.dataset.hidden = String(!item.enabled);
   row.querySelector("[data-hidden-badge]").hidden = item.enabled;
-  row.querySelector('[data-metric-setting="enabled"]').checked = item.enabled;
+  const toggle = row.querySelector('[data-metric-setting="enabled"]');
+  toggle.setAttribute("aria-pressed", String(item.enabled));
+  toggle.replaceChildren(createIconNode(item.enabled ? "eye" : "eyeOff", { size: 20 }));
   for (const radio of row.querySelectorAll('[data-metric-setting="tileSize"]')) radio.checked = radio.value === item.tileSize;
+}
+
+function writeMetric(id, patch) {
+  metricWritesPending += 1;
+  void (async () => {
+    try {
+      widgetsState = await widgetsService.updateWeatherMetric(id, patch);
+      showMetricError("");
+      renderFavoritesToolbar();
+    } catch (error) {
+      showMetricError(error instanceof Error ? error.message : String(error));
+    }
+    // While later writes are in flight the controls keep showing the user's latest intent.
+    metricWritesPending -= 1;
+    if (metricWritesPending === 0) syncMetricRows();
+  })();
 }
 
 // In-place sync so an open add/edit form keeps its contents and focus stays on the used control.
@@ -1684,23 +1713,8 @@ if (favoritesRoot) {
       return;
     }
 
-    const metricSetting = target.dataset.metricSetting;
-    if (metricSetting) {
-      const id = target.dataset.metricId;
-      const patch = metricSetting === "enabled" ? { enabled: target.checked } : { tileSize: target.value };
-      metricWritesPending += 1;
-      void (async () => {
-        try {
-          widgetsState = await widgetsService.updateWeatherMetric(id, patch);
-          showMetricError("");
-          renderFavoritesToolbar();
-        } catch (error) {
-          showMetricError(error instanceof Error ? error.message : String(error));
-        }
-        // While later writes are in flight the controls keep showing the user's latest intent.
-        metricWritesPending -= 1;
-        if (metricWritesPending === 0) syncMetricRows();
-      })();
+    if (target.dataset.metricSetting === "tileSize") {
+      writeMetric(target.dataset.metricId, { tileSize: target.value });
       return;
     }
 
@@ -1736,6 +1750,20 @@ if (favoritesRoot) {
 
       syncGridSettingInputs();
     })();
+  });
+
+  // The eye button: the new value comes from the DOM and is shown at once (as the checkbox did), so two quick presses
+  // never write the same value; syncMetricRows() restores the stored state once no write is pending.
+  favoritesPanelRoot?.addEventListener("click", (event) => {
+    const toggle = event.target instanceof Element ? event.target.closest(".metric-toggle") : null;
+    if (!(toggle instanceof HTMLElement) || !widgetsService) return;
+    const next = toggle.getAttribute("aria-pressed") !== "true";
+    const row = toggle.closest("[data-metric-row]");
+    toggle.setAttribute("aria-pressed", String(next));
+    toggle.replaceChildren(createIconNode(next ? "eye" : "eyeOff", { size: 20 }));
+    row.dataset.hidden = String(!next);
+    row.querySelector("[data-hidden-badge]").hidden = next;
+    writeMetric(toggle.dataset.metricId, { enabled: next });
   });
 
   favoritesRoot.addEventListener("click", handleFavoritesClick);

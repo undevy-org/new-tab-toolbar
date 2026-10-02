@@ -358,8 +358,14 @@ describe("newtab favorites source", () => {
   it("routes metric controls through updateWeatherMetric with absolute values and re-syncs the rows in place", async () => {
     const code = await source();
     assert.match(code, /updateWeatherMetric\(/);
-    assert.match(code, /\{ enabled: target\.checked \}/);
-    assert.match(code, /\{ tileSize: target\.value \}/);
+    assert.match(code, /function writeMetric\(id, patch\)/);
+    assert.match(code, /widgetsState = await widgetsService\.updateWeatherMetric\(id, patch\);/);
+    // The size control keeps the change listener; the eye button takes its next value from the DOM (aria-pressed).
+    assert.match(code, /writeMetric\(target\.dataset\.metricId, \{ tileSize: target\.value \}\)/);
+    assert.match(code, /const next = toggle\.getAttribute\("aria-pressed"\) !== "true";/);
+    assert.match(code, /writeMetric\(toggle\.dataset\.metricId, \{ enabled: next \}\)/);
+    assert.doesNotMatch(code, /\{ enabled: target\.checked \}/);
+    assert.doesNotMatch(code, /type = "checkbox"/);
     assert.match(code, /function syncMetricRows\(\)/);
     assert.match(code, /function moveButtonDisabled\(items, item, action\)/);
   });
