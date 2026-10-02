@@ -6,33 +6,19 @@ import {
 } from "./favoriteColor.js";
 import { getFavoriteIconModel, getFavoriteLetter } from "./favoriteIcon.js";
 import { createIconNode } from "./icons.js";
-import {
-  cancelForm,
-  closeSettings,
-  createInitialFavoritesUiState,
-  editingId,
-  isAdding,
-  isFormOpen,
-  isSettingsOpen,
-  openSettings,
-  startAdd,
-  startEdit
-} from "./favoritesUiState.js";
+import { displayLayout, effectiveColumns, gridMetrics } from "./desktopLayout.js";
+import { createDesktopUiState } from "./desktopUiState.js";
 import { createWidgetsService } from "./widgetsService.js";
 import {
   WIDGETS_META_KEY,
   createWidgetsStore,
   ensureWidgetsLayout,
   inspectWidgetsMeta,
-  migrateToWidgets
+  migrateToWidgets,
+  migrateWidgetsToV2
 } from "./widgetsStore.js";
-import { gridLayout, moveTargetIndex, panelDock, placeTooltip, tileSpan } from "./widgetsLayout.js";
-import {
-  MAX_GRID_COLUMNS,
-  MIN_GRID_COLUMNS,
-  NEWER_WIDGETS_MESSAGE,
-  weatherMetricKey
-} from "./widgetsShared.js";
+import { placeTooltip } from "./widgetsLayout.js";
+import { NEWER_WIDGETS_MESSAGE, weatherMetricKey } from "./widgetsShared.js";
 import { searchCities } from "./weatherApi.js";
 import { createWeatherService } from "./weatherService.js";
 import { shouldAutoShowCityPrompt } from "./cityPrompt.js";
@@ -49,39 +35,17 @@ import {
   openCityModal as openCityModalState,
   showSuggestions
 } from "./weatherUiState.js";
-
 const favoritesRoot = document.querySelector("#favorites");
-const favoritesPanelRoot = document.querySelector("#favorites-panel");
+const desktopStatus = document.querySelector("#desktop-status");
 
-// The settings panel must never cover the bar it configures. Read-only measurement of the
-// bar: publish which edge the panel docks to and the height that is free on that side.
-const PANEL_MIN_HEIGHT = 200;
-const PANEL_BAR_GAP = 12;
+const ENSURE_FAILED_MESSAGE =
+  "Couldn't add the weather and settings tiles - Chrome Sync may be full or unavailable. Free up sync space, then reload this tab to try again.";
 
-function publishPanelDock() {
-  if (!favoritesRoot || !favoritesPanelRoot) {
-    return;
-  }
-
-  const inset =
-    Number.parseFloat(getComputedStyle(favoritesPanelRoot).getPropertyValue("--panel-inset")) || 16;
-  const bar = favoritesRoot.getBoundingClientRect();
-  const { dock, maxHeight } = panelDock({
-    position: favoritesRoot.dataset.position ?? "center",
-    barTop: bar.top,
-    barBottom: bar.bottom,
-    viewportHeight: window.innerHeight,
-    inset,
-    gap: PANEL_BAR_GAP,
-    minHeight: PANEL_MIN_HEIGHT
-  });
-  favoritesPanelRoot.dataset.dock = dock;
-  favoritesPanelRoot.style.setProperty("--panel-max-height", `${Math.floor(maxHeight)}px`);
-}
-
-if (favoritesRoot && favoritesPanelRoot && typeof ResizeObserver === "function") {
-  new ResizeObserver(publishPanelDock).observe(favoritesRoot);
-  window.addEventListener("resize", publishPanelDock);
+// Page-level status line (role="alert"), text only.
+function showDesktopStatus(text) {
+  if (!desktopStatus) return;
+  desktopStatus.textContent = text;
+  desktopStatus.hidden = text === "";
 }
 
 function createNode(tagName, className, textContent) {
@@ -229,7 +193,8 @@ let widgetsState = null;
 // gear, no mutations): an editable empty grid would let the user create widgets meta,
 // after which the still-present legacy data would be treated as stale and deleted.
 let widgetsMigrationFailed = false;
-let favoritesUi = createInitialFavoritesUiState();
+// Edit mode / menu / dialog / drag (pure state, desktopUiState.js). Normal mode only until the later tasks wire it.
+let desktopUi = createDesktopUiState();
 let favoritesError = "";
 let favoritesBusy = false;
 let favoritesGeneration = 0;
@@ -244,8 +209,6 @@ let weatherChanging = false;
 let weatherGeneration = 0;
 let widgetsEnsureFailed = false;
 let widgetsNewer = false;
-let metricWritesPending = 0; // metric writes in flight; controls are re-synced only when none is
-let metricErrorText = ""; // write-error slot of the metric controls; module state so a panel rebuild keeps it
 let activeCityForm = null; // { cancelPending, renderSuggestions, refresh, place, focusField, dispose, choose, chosen, recentlyChosen } of the mounted city form
 let weatherUi = createInitialWeatherUiState();
 let weatherBusy = false;
@@ -292,40 +255,34 @@ function createFavoriteIconNode(model, item) {
   return createFavoriteLetterNode(item, "letter");
 }
 
-function createFavoriteTile(item, columns) {
+// Spec § Tile content by size: 1-wide shows the icon only (the label is the accessible name), 2×1 adds a one-line
+// label, 2×2 a 40 px icon, a two-line label and the host name. Text only via text nodes.
+function createFavoriteTile(item, cell) {
   const button = createNode("button", "favorite-tile");
   const iconModel = getFavoriteIconModel(item, { faviconBaseUrl });
+  const editing = desktopUi.editMode;
 
   button.type = "button";
-  button.dataset.favoriteAction = "open";
+  button.dataset.favoriteAction = editing ? "edit" : "open";
   button.dataset.favoriteId = item.id;
   button.dataset.widgetId = item.id;
-  button.dataset.tileSize = tileSpan(item.tileSize, columns) === 2 ? "wide" : "square";
   button.title = item.label;
-  button.setAttribute("aria-label", `Open ${item.label}`);
+  button.setAttribute("aria-label", editing ? `Edit ${item.label}` : `Open ${item.label}`);
   button.style.setProperty(
     "--favorite-accent-rgb",
     hexToRgbChannels(normalizeAccentLightness(item.backgroundColor))
   );
   button.appendChild(createFavoriteIconNode(iconModel, item));
+  if (cell.w === 2) {
+    const text = createNode("span", "favorite-tile__text");
+    text.appendChild(createNode("span", "favorite-tile__label", item.label));
+    if (cell.h === 2) text.appendChild(createNode("span", "favorite-tile__host", item.domain));
+    button.appendChild(text);
+  }
 
-  const tileDisabled = favoritesBusy || isFormOpen(favoritesUi);
-  button.disabled = tileDisabled;
-  button.setAttribute("aria-disabled", String(tileDisabled));
+  button.disabled = favoritesBusy;
+  button.setAttribute("aria-disabled", String(favoritesBusy));
   return button;
-}
-
-function createFavoritesGear() {
-  const gear = createNode("button", "favorite-settings");
-  gear.type = "button";
-  gear.dataset.favoriteAction = "open-settings";
-  gear.setAttribute("aria-label", "Manage widgets");
-  gear.setAttribute("aria-expanded", String(isSettingsOpen(favoritesUi)));
-  gear.setAttribute("aria-controls", "favorites-panel");
-  gear.disabled = favoritesBusy;
-  gear.setAttribute("aria-disabled", String(favoritesBusy));
-  gear.appendChild(createIconNode("settings", { size: 20 }));
-  return gear;
 }
 
 function createSegmentedControl(name, options, selectedValue) {
@@ -560,10 +517,11 @@ async function refreshAutoAccent(id) {
       return;
     }
 
-    const nextState = await widgetsService.updateFavorite(id, {
-      backgroundColor: autoColor,
-      backgroundColorSource: "auto"
-    });
+    const nextState = await widgetsService.updateFavorite(
+      id,
+      { backgroundColor: autoColor, backgroundColorSource: "auto" },
+      { columns: currentColumns() }
+    );
 
     widgetsState = nextState;
     renderFavorites();
@@ -573,211 +531,7 @@ async function refreshAutoAccent(id) {
   }
 }
 
-const GRID_POSITION_LABELS = { top: "Top", center: "Center", bottom: "Bottom" };
-
-function createGridSettingsRow(state) {
-  const section = createNode("div", "favorites-panel__grid-settings favorite-form");
-
-  const columns = createNode("input", "favorite-input");
-  columns.type = "number";
-  columns.name = "columns";
-  columns.min = String(MIN_GRID_COLUMNS);
-  columns.max = String(MAX_GRID_COLUMNS);
-  columns.step = "1";
-  columns.value = String(state.columns);
-  columns.dataset.gridSetting = "columns";
-
-  const position = createSegmentedControl(
-    "position",
-    ["top", "center", "bottom"].map((value) => [value, GRID_POSITION_LABELS[value]]),
-    state.position
-  );
-  for (const input of position.querySelectorAll("input")) {
-    input.dataset.gridSetting = "position";
-  }
-
-  const error = createNode("p", "status status--error");
-  error.dataset.gridError = "";
-  error.setAttribute("role", "alert");
-  error.hidden = true;
-
-  section.append(createFormRow("Columns", columns), createFormRow("Position", position), error);
-  return section;
-}
-
-// Puts the controls back in line with the stored state after a change succeeded (the
-// service normalizes input like " 5 ") or was rejected.
-function syncGridSettingInputs() {
-  if (!favoritesPanelRoot || !widgetsState) {
-    return;
-  }
-
-  const columns = favoritesPanelRoot.querySelector('[data-grid-setting="columns"]');
-  if (columns instanceof HTMLInputElement) {
-    columns.value = String(widgetsState.columns);
-  }
-  for (const radio of favoritesPanelRoot.querySelectorAll('[data-grid-setting="position"]')) {
-    if (radio instanceof HTMLInputElement) {
-      radio.checked = radio.value === widgetsState.position;
-    }
-  }
-}
-
-// Single rule for the earlier/later buttons, used at build time and when Show/size changes re-sync in place.
-function moveButtonDisabled(items, item, action) {
-  if (favoritesBusy || isFormOpen(favoritesUi)) return true;
-  return moveTargetIndex(items, items.indexOf(item), action === "move-earlier" ? -1 : 1) === -1;
-}
-
-function createFavoritesPanelRow(item, items) {
-  const row = createNode("div", "favorites-panel__row");
-
-  const info = createNode("div", "favorites-panel__item");
-  info.appendChild(createFavoriteIconNode(getFavoriteIconModel(item, { faviconBaseUrl }), item));
-  const text = createNode("div", "favorites-panel__title");
-  text.appendChild(createNode("strong", null, item.label));
-  text.appendChild(createNode("span", null, item.domain));
-  info.appendChild(text);
-
-  const disabled = favoritesBusy || isFormOpen(favoritesUi);
-
-  const earlier = createNode("button", "icon-button row-up");
-  earlier.type = "button";
-  earlier.dataset.favoriteAction = "move-earlier";
-  earlier.dataset.favoriteId = item.id;
-  earlier.setAttribute("aria-label", `Move ${item.label} earlier`);
-  earlier.disabled = moveButtonDisabled(items, item, "move-earlier");
-  earlier.appendChild(createIconNode("chevronUp"));
-
-  const later = createNode("button", "icon-button row-down");
-  later.type = "button";
-  later.dataset.favoriteAction = "move-later";
-  later.dataset.favoriteId = item.id;
-  later.setAttribute("aria-label", `Move ${item.label} later`);
-  later.disabled = moveButtonDisabled(items, item, "move-later");
-  later.appendChild(createIconNode("chevronDown"));
-
-  const edit = createNode("button", "icon-button row-action");
-  edit.type = "button";
-  edit.dataset.favoriteAction = "edit";
-  edit.dataset.favoriteId = item.id;
-  edit.setAttribute("aria-label", `Edit ${item.label}`);
-  edit.disabled = disabled;
-  edit.appendChild(createIconNode("pencil"));
-
-  row.append(info, earlier, later, edit);
-  return row;
-}
-
 const METRIC_LABELS = { temperature: "Temperature", precipitation: "Precipitation", airQuality: "Air quality", uv: "UV index" };
-const METRIC_GLYPHS = { temperature: "thermometer", precipitation: "droplet", airQuality: "wind", uv: "sun" };
-
-function createMetricMoveButtons(item, items) {
-  const make = (action, label, icon) => {
-    const button = createNode("button", action === "move-earlier" ? "icon-button row-up" : "icon-button row-down");
-    button.type = "button";
-    button.dataset.favoriteAction = action;
-    button.dataset.favoriteId = item.id;
-    button.setAttribute("aria-label", `Move ${label} ${action === "move-earlier" ? "earlier" : "later"}`);
-    button.disabled = moveButtonDisabled(items, item, action);
-    button.appendChild(createIconNode(icon));
-    return button;
-  };
-  const label = METRIC_LABELS[weatherMetricKey(item.id)];
-  return [
-    make("move-earlier", label, "chevronUp"),
-    make("move-later", label, "chevronDown")
-  ];
-}
-
-function createWeatherMetricRow(item, items) {
-  const key = weatherMetricKey(item.id);
-  const label = METRIC_LABELS[key];
-  const row = createNode("div", "favorites-panel__row");
-  row.dataset.metricRow = "";
-  row.dataset.metricId = item.id;
-
-  const info = createNode("div", "favorites-panel__item");
-  const glyph = createNode("span", "metric-glyph");
-  glyph.setAttribute("aria-hidden", "true");
-  glyph.appendChild(createIconNode(METRIC_GLYPHS[key]));
-  const text = createNode("div", "favorites-panel__title");
-  text.appendChild(createNode("strong", null, label));
-  const badge = createNode("span", "badge", "Hidden");
-  badge.dataset.hiddenBadge = "";
-  text.appendChild(badge);
-  info.append(glyph, text);
-
-  const slot = createNode("div", "favorites-panel__slot");
-  const size = createSegmentedControl(
-    `tileSize-${item.id}`,
-    [["square", "Square", "square"], ["wide", "Wide", "wide"]],
-    item.tileSize
-  );
-  size.setAttribute("aria-label", `${label} tile size`);
-  for (const input of size.querySelectorAll("input")) {
-    input.dataset.metricSetting = "tileSize";
-    input.dataset.metricId = item.id;
-  }
-  slot.appendChild(size);
-
-  const toggle = createNode("button", "icon-button row-action metric-toggle");
-  toggle.type = "button";
-  toggle.dataset.metricSetting = "enabled";
-  toggle.dataset.metricId = item.id;
-  toggle.setAttribute("aria-label", `Show ${label}`);
-
-  const [up, down] = createMetricMoveButtons(item, items);
-  row.append(info, slot, up, down, toggle);
-  applyMetricRowState(row, item);
-  return row;
-}
-
-function applyMetricRowState(row, item) {
-  row.dataset.hidden = String(!item.enabled);
-  row.querySelector("[data-hidden-badge]").hidden = item.enabled;
-  const toggle = row.querySelector('[data-metric-setting="enabled"]');
-  toggle.setAttribute("aria-pressed", String(item.enabled));
-  toggle.replaceChildren(createIconNode(item.enabled ? "eye" : "eyeOff", { size: 20 }));
-  for (const radio of row.querySelectorAll('[data-metric-setting="tileSize"]')) radio.checked = radio.value === item.tileSize;
-}
-
-function writeMetric(id, patch) {
-  metricWritesPending += 1;
-  void (async () => {
-    try {
-      widgetsState = await widgetsService.updateWeatherMetric(id, patch);
-      showMetricError("");
-      renderFavoritesToolbar();
-    } catch (error) {
-      showMetricError(error instanceof Error ? error.message : String(error));
-    }
-    // While later writes are in flight the controls keep showing the user's latest intent.
-    metricWritesPending -= 1;
-    if (metricWritesPending === 0) syncMetricRows();
-  })();
-}
-
-// In-place sync so an open add/edit form keeps its contents and focus stays on the used control.
-function syncMetricRows() {
-  const items = widgetsState?.items ?? [];
-  for (const button of favoritesPanelRoot?.querySelectorAll('[data-favorite-action^="move-"]') ?? []) {
-    const item = items.find((entry) => entry.id === button.dataset.favoriteId);
-    if (item) button.disabled = moveButtonDisabled(items, item, button.dataset.favoriteAction);
-  }
-  for (const row of favoritesPanelRoot?.querySelectorAll("[data-metric-row]") ?? []) {
-    const item = widgetsState?.items.find((entry) => entry.id === row.dataset.metricId);
-    if (item) applyMetricRowState(row, item);
-  }
-}
-
-function showMetricError(message) {
-  metricErrorText = message; // module state: survives a panel rebuild, cleared by the next successful metric action
-  const node = favoritesPanelRoot?.querySelector("[data-metric-error]");
-  if (!node) return;
-  node.textContent = message;
-  node.hidden = message === "";
-}
 
 const POPOVER_MAX_HEIGHT = 240;
 const POPOVER_MIN_FREE = 96;
@@ -1199,7 +953,6 @@ function showCityModal(mode, openerSelector) {
   cityModalOpenedAt = performance.now();
   hideTooltip();
   if (favoritesRoot) favoritesRoot.inert = true;
-  if (favoritesPanelRoot) favoritesPanelRoot.inert = true;
   if (mode === "change") cityModalRoot.querySelector(CITY_INPUT_SELECTOR)?.focus(); // first-run never steals focus
   return true;
 }
@@ -1219,13 +972,12 @@ function hideCityModal({ dismiss = false } = {}) {
   cityModalError = "";
   cityModalHadFocus = false;
   if (favoritesRoot) favoritesRoot.inert = false;
-  if (favoritesPanelRoot) favoritesPanelRoot.inert = false;
   if (dismiss && mode === "first-run") onFirstRunDismissed();
   if (mode === "change") {
-    pendingFocus = [cityModalOpener, OPEN_CITY_MODAL_SELECTOR, GEAR_SELECTOR].filter(Boolean);
+    pendingFocus = [cityModalOpener, SETTINGS_TILE_SELECTOR].filter(Boolean);
     applyPendingFocus();
   } else if (focusWasInside) {
-    pendingFocus = [GEAR_SELECTOR];
+    pendingFocus = [SETTINGS_TILE_SELECTOR];
     applyPendingFocus();
   }
   cityModalOpener = null;
@@ -1253,14 +1005,14 @@ function maybeAutoShowCityPrompt({ flagRead, dismissed }) {
   if (show) showCityModal("first-run", null);
 }
 
-function createWeatherMetricTile(item, columns, view) {
-  const effectiveSize = tileSpan(item.tileSize, columns) === 2 ? "wide" : "square";
-  const model = describeWeatherMetric({ metricKey: weatherMetricKey(item.id), result: view, size: effectiveSize });
+// R6: a 2-wide tile uses the `wide` model; a 2-high tile gets larger type (CSS keys off data-h="2") and the city name.
+function createWeatherMetricTile(item, cell, view) {
+  const size = cell.w === 2 ? "wide" : "square";
+  const model = describeWeatherMetric({ metricKey: weatherMetricKey(item.id), result: view, size });
   if (!model) return null;
 
   const tile = createNode("div", "weather-tile");
   tile.dataset.widgetId = item.id;
-  tile.dataset.tileSize = effectiveSize;
   tile.tabIndex = 0;
   tile.setAttribute("role", "group");
   tile.setAttribute("aria-label", model.label);
@@ -1271,198 +1023,176 @@ function createWeatherMetricTile(item, columns, view) {
   const values = createNode("div", "weather-tile__values");
   values.appendChild(createNode("span", "weather-tile__primary", model.primary));
   if (model.secondary) values.appendChild(createNode("span", "weather-tile__secondary", model.secondary));
+  tile.appendChild(values);
+  const cityName = view?.location?.name;
+  if (cell.h === 2 && cityName) tile.appendChild(createNode("span", "weather-tile__city", cityName));
   const description = createNode("span", "sr-only", model.description);
   description.id = `weather-desc-${weatherMetricKey(item.id)}`;
   description.dataset.tooltipText = "";
   tile.setAttribute("aria-describedby", description.id);
   tile.dataset.tooltipTrigger = "";
-  tile.append(values, description);
+  tile.appendChild(description);
   return tile;
 }
 
-function createCityHintTile(columns) {
+// Spec § Weather / city: the hint takes the first enabled metric's cell and size; the plus glyph at 1-wide, text when wider.
+function createCityHintTile(cell, item) {
   const button = createNode("button", "city-hint-tile");
-  const wide = tileSpan("wide", columns) === 2;
   button.type = "button";
   button.dataset.favoriteAction = "set-city";
   button.dataset.widgetId = "weather:hint";
-  button.dataset.tileSize = wide ? "wide" : "square";
+  button.dataset.metricId = item.id;
   button.setAttribute("aria-label", "Set a city");
-  if (wide) button.textContent = "Set a city";
+  if (cell.w === 2) button.textContent = "Set a city";
   else button.appendChild(createIconNode("plus"));
   return button;
 }
 
-function renderFavoritesToolbar() {
-  if (!favoritesRoot) {
-    return;
-  }
+function createChromeTile(item, cell) {
+  const settings = item.role === "settings";
+  const button = createNode("button", "chrome-tile");
+  button.type = "button";
+  button.dataset.widgetId = item.id;
+  button.dataset.chromeRole = item.role;
+  button.setAttribute("aria-label", settings ? "Settings" : "Add link");
+  if (settings) button.setAttribute("aria-pressed", String(desktopUi.editMode));
+  button.appendChild(createIconNode(settings ? "settings" : "plus", { size: 20 }));
+  return button;
+}
 
-  hideTooltip();
-  // Every bootstrap exit path (normal, newer meta, failed migration, read error) renders through here, so the bar is never left hidden.
-  if (!favoritesRoot.dataset.position) {
-    favoritesRoot.dataset.position = gridLayout(widgetsState).position;
-  }
+function createRemoveBadge(item) {
+  const hidden = item.type === "weather-metric";
+  const label = hidden ? METRIC_LABELS[weatherMetricKey(item.id)] : item.label;
+  const badge = createNode("button", "tile-remove");
+  badge.type = "button";
+  badge.dataset.removeFor = item.id;
+  badge.setAttribute("aria-label", hidden ? `Hide ${label}` : `Remove ${label}`);
+  badge.appendChild(createIconNode("minus", { size: 12 }));
+  return badge;
+}
 
+const SETTINGS_TILE_SELECTOR = '[data-widget-id="chrome:settings"]';
+
+function viewportWidth() {
+  return document.documentElement.clientWidth;
+}
+
+function currentColumns() {
+  return effectiveColumns(viewportWidth());
+}
+
+// R4: metrics come from JS so the column count and the cell size can never disagree at a breakpoint.
+function applyGridMetrics() {
+  const metrics = gridMetrics(viewportWidth());
+  const style = document.documentElement.style;
+  style.setProperty("--cell-size", `${metrics.cell}px`);
+  style.setProperty("--grid-gap", `${metrics.gap}px`);
+  style.setProperty("--grid-pad", `${metrics.pad}px`);
+  return metrics;
+}
+
+function placeTile(node, cell) {
+  node.style.setProperty("--x", String(cell.x));
+  node.style.setProperty("--y", String(cell.y));
+  node.style.setProperty("--w", String(cell.w));
+  node.style.setProperty("--h", String(cell.h));
+  node.dataset.w = String(cell.w);
+  node.dataset.h = String(cell.h);
+  node.dataset.tileSize = cell.w === 2 ? "wide" : "square";
+}
+
+function focusedWidgetId() {
   const active = document.activeElement instanceof Element ? document.activeElement : null;
-  const focused = active && favoritesRoot.contains(active) ? active.closest("[data-widget-id], .favorite-settings") : null;
-  const focusedId = focused ? focused.dataset.widgetId ?? "gear" : null;
+  const owner = active && favoritesRoot.contains(active) ? active.closest("[data-widget-id], [data-remove-for]") : null;
+  return owner ? { id: owner.dataset.widgetId ?? owner.dataset.removeFor, badge: "removeFor" in owner.dataset } : null;
+}
 
+function restoreFocus(target) {
+  if (!target || (document.activeElement && document.activeElement !== document.body)) return;
+  const selector = target.badge ? `[data-remove-for="${CSS.escape(target.id)}"]` : `[data-widget-id="${CSS.escape(target.id)}"]`;
+  suppressTooltipOnFocus = true;
+  try {
+    favoritesRoot.querySelector(selector)?.focus();
+  } finally {
+    suppressTooltipOnFocus = false;
+  }
+}
+
+let renderedColumns = 0;
+let renderedCell = 0;
+
+// The only render path: tiles absolutely positioned in the displayed layout (pure function of the stored grids and
+// the current column count; never written by a render), in (y, x) DOM order.
+function renderDesktop() {
+  if (!favoritesRoot) return;
+  hideTooltip();
   if (widgetsNewer) {
-    favoritesRoot.replaceChildren(
-      createStatus(NEWER_WIDGETS_MESSAGE, { error: true, live: "assertive", full: true })
-    );
+    favoritesRoot.replaceChildren(createStatus(NEWER_WIDGETS_MESSAGE, { error: true, live: "assertive", full: true }));
     return;
   }
-
   if (widgetsMigrationFailed) {
-    favoritesRoot.replaceChildren(
-      createStatus(favoritesError, { error: true, live: "assertive", full: true })
-    );
+    favoritesRoot.replaceChildren(createStatus(favoritesError, { error: true, live: "assertive", full: true }));
+    return;
+  }
+  if (!widgetsState) {
+    // Unavailable APIs or a failed read: say so instead of an empty, silently broken page.
+    favoritesRoot.replaceChildren(...(favoritesError ? [createStatus(favoritesError, { error: true, live: "assertive", full: true })] : []));
     return;
   }
 
-  const layout = gridLayout(widgetsState);
-  favoritesRoot.dataset.position = layout.position;
-
-  const fragment = document.createDocumentFragment();
-  const items = widgetsState?.items ?? [];
-
-  const list = createNode("div", "favorites-grid");
-  list.style.setProperty("--columns", String(layout.columns));
+  const focusTarget = focusedWidgetId();
+  const metrics = applyGridMetrics();
+  const columns = currentColumns();
+  renderedColumns = columns;
+  renderedCell = metrics.cell;
+  const items = widgetsState.items;
+  const layout = displayLayout(items, columns);
   const view = weatherService ? effectiveWeatherResult() : undefined;
+
+  const entries = [];
   let hintPlaced = false;
   for (const item of items) {
-    if (item.type === "favorite") {
-      list.appendChild(createFavoriteTile(item, layout.columns));
-    } else if (item.enabled && weatherService) {
-      if (view?.status === "no-location") {
-        if (!hintPlaced) {
-          list.appendChild(createCityHintTile(layout.columns));
-          hintPlaced = true;
-        }
-      } else {
-        const tile = createWeatherMetricTile(item, layout.columns, view);
-        if (tile) list.appendChild(tile);
+    const cell = layout.get(item.id);
+    if (!cell) continue; // hidden metric: no cell, no tile
+    let tile = null;
+    if (item.type === "favorite") tile = createFavoriteTile(item, cell);
+    else if (item.type === "chrome") tile = createChromeTile(item, cell);
+    else if (weatherService && view?.status === "no-location") {
+      if (!hintPlaced) {
+        tile = createCityHintTile(cell, item); // the other metrics wait for a city; their cells stay reserved
+        hintPlaced = true;
       }
+    } else if (weatherService) tile = createWeatherMetricTile(item, cell, view);
+    if (!tile) continue;
+    placeTile(tile, cell);
+    const nodes = [tile];
+    if (desktopUi.editMode && item.type !== "chrome") {
+      const badge = createRemoveBadge(item);
+      placeTile(badge, { ...cell, w: 1, h: 1 });
+      nodes.push(badge);
     }
+    entries.push({ cell, nodes });
   }
-  if (list.childElementCount > 0) {
-    fragment.appendChild(list);
-  }
+  entries.sort((a, b) => a.cell.y - b.cell.y || a.cell.x - b.cell.x);
 
-  fragment.appendChild(createFavoritesGear());
-  favoritesRoot.replaceChildren(fragment);
-
-  if (focusedId) {
-    const again =
-      focusedId === "gear"
-        ? favoritesRoot.querySelector(GEAR_SELECTOR)
-        : [...favoritesRoot.querySelectorAll("[data-widget-id]")].find((el) => el.dataset.widgetId === focusedId);
-    suppressTooltipOnFocus = true;
-    try {
-      (again ?? favoritesRoot.querySelector(GEAR_SELECTOR))?.focus();
-    } finally {
-      suppressTooltipOnFocus = false;
-    }
-  }
+  const grid = createNode("div", "desktop-grid");
+  grid.style.setProperty("--grid-columns", String(columns));
+  grid.style.setProperty("--rows", String(Math.max(1, ...entries.map(({ cell }) => cell.y + cell.h))));
+  grid.append(...entries.flatMap(({ nodes }) => nodes));
+  favoritesRoot.dataset.edit = String(desktopUi.editMode);
+  favoritesRoot.replaceChildren(grid);
+  restoreFocus(focusTarget);
 }
 
-const GEAR_SELECTOR = '[data-favorite-action="open-settings"]';
-const HEADING_SELECTOR = "[data-panel-heading]";
-const ADD_BUTTON_SELECTOR = '[data-favorite-action="start-add"]';
-
-function formFieldSelector(kind) {
-  return `form[data-favorite-form="${kind}"] input[name="url"]`;
-}
-
-function itemActionSelector(action, id) {
-  return `[data-favorite-action="${action}"][data-favorite-id="${String(id).replace(/["\\]/g, "\\$&")}"]`;
-}
-
-function renderFavoritesPanel() {
-  if (!favoritesPanelRoot) {
-    return;
-  }
-
-  favoritesPanelRoot.dataset.barPosition = gridLayout(widgetsState).position;
-  publishPanelDock();
-
-  const open = isSettingsOpen(favoritesUi);
-  favoritesPanelRoot.hidden = !open;
-
-  if (!open) {
-    favoritesPanelRoot.replaceChildren();
-    return;
-  }
-
-  const previousScrollTop =
-    favoritesPanelRoot.querySelector(".favorites-panel__body")?.scrollTop ?? 0;
-
-  const fragment = document.createDocumentFragment();
-  const items = widgetsState?.items ?? [];
-
-  const top = createNode("div", "favorites-panel__top");
-  const heading = createNode("div");
-  const title = createNode("h2", null, "Widgets");
-  title.tabIndex = -1;
-  title.dataset.panelHeading = "";
-  heading.appendChild(title);
-  heading.appendChild(
-    createNode("p", null, "Add, reorder, and style your links and weather tiles.")
-  );
-  const addButton = createIconButton("button button--primary", "Add link", "plus");
-  addButton.type = "button";
-  addButton.dataset.favoriteAction = "start-add";
-  addButton.disabled = favoritesBusy || isFormOpen(favoritesUi);
-  top.append(heading, addButton);
-  fragment.appendChild(top);
-
-  // Everything below the heading scrolls together inside the panel.
-  const body = createNode("div", "favorites-panel__body");
-
-  if (widgetsState) {
-    body.appendChild(createGridSettingsRow(widgetsState));
-  }
-
-  const links = items.filter((item) => item.type === "favorite");
-  const metrics = items.filter((item) => item.type !== "favorite");
-
-  const linksSection = createNode("section", "links-block panel-section");
-  const linksHead = createNode("div", "panel-section__head");
-  linksHead.append(createNode("h3", null, "Links"), createNode("span", "links-block__count", String(links.length)));
-  linksSection.appendChild(linksHead);
-
-  if (isAdding(favoritesUi)) {
-    linksSection.appendChild(createFavoriteForm(null));
-  }
-  const currentEditingId = editingId(favoritesUi);
-  const editingItem = items.find((item) => item.id === currentEditingId);
-  if (editingItem) {
-    linksSection.appendChild(createFavoriteForm(editingItem));
-  }
-  if (favoritesError) {
-    const errorNode = createStatus(favoritesError, { error: true, live: "assertive" });
-    errorNode.dataset.favoritesError = "";
-    linksSection.appendChild(errorNode);
-  }
-
-  const listWrap = createNode("div", "panel-card favorites-panel__list");
-  if (links.length === 0) {
-    listWrap.appendChild(createNode("p", "panel-card__empty", "No links yet. Use Add link to create the first one."));
-  }
-  for (const item of links) {
-    listWrap.appendChild(createFavoritesPanelRow(item, items));
-  }
-  linksSection.appendChild(listWrap);
-  body.appendChild(linksSection);
-
-  body.appendChild(createWeatherBlock(metrics, items));
-  fragment.appendChild(body);
-
-  favoritesPanelRoot.replaceChildren(fragment);
-  body.scrollTop = previousScrollTop;
-}
+// A resize only re-renders (when the column count or the cell size changed); it never writes.
+let resizeFrame = 0;
+window.addEventListener("resize", () => {
+  cancelAnimationFrame(resizeFrame);
+  resizeFrame = requestAnimationFrame(() => {
+    if (!widgetsState || widgetsNewer || widgetsMigrationFailed) return;
+    if (currentColumns() !== renderedColumns || gridMetrics(viewportWidth()).cell !== renderedCell) renderFavorites();
+  });
+});
 
 function applyPendingFocus() {
   if (!pendingFocus || favoritesBusy) {
@@ -1473,8 +1203,7 @@ function applyPendingFocus() {
   pendingFocus = null;
 
   for (const selector of selectors) {
-    const target =
-      favoritesPanelRoot?.querySelector(selector) ?? favoritesRoot?.querySelector(selector);
+    const target = favoritesRoot?.querySelector(selector);
     if (target instanceof HTMLElement && !target.matches(":disabled")) {
       target.focus();
       return;
@@ -1482,20 +1211,10 @@ function applyPendingFocus() {
   }
 }
 
-function revealFavoritesError() {
-  const errorNode = favoritesPanelRoot?.querySelector("[data-favorites-error]");
-  if (errorNode instanceof HTMLElement && typeof errorNode.scrollIntoView === "function") {
-    errorNode.scrollIntoView({ block: "nearest" });
-  }
-}
-
 function renderFavorites() {
-  renderFavoritesToolbar();
-  renderFavoritesPanel();
+  renderDesktop();
   applyPendingFocus();
-  revealFavoritesError();
 }
-
 function setFavoritesBusy(nextBusy) {
   favoritesBusy = nextBusy;
 }
@@ -1526,6 +1245,8 @@ if (favoritesRoot) {
       return;
     }
 
+    // R7 bootstrap order: legacy → widgets v1, v1 → v2, then ensure, then the first read. No read or mutation runs
+    // before the v2 migration has succeeded; any failure locks the grid and leaves the stored data untouched.
     try {
       const rawMeta = hasStorageArea(syncStorageArea)
         ? await syncStorageArea.get(WIDGETS_META_KEY)
@@ -1543,6 +1264,7 @@ if (favoritesRoot) {
           renderFavorites();
           return;
         }
+        await migrateWidgetsToV2(syncStorageArea);
       }
     } catch (error) {
       widgetsMigrationFailed = true;
@@ -1578,6 +1300,7 @@ if (favoritesRoot) {
     }
 
     renderFavorites();
+    if (widgetsEnsureFailed) showDesktopStatus(ENSURE_FAILED_MESSAGE);
     void startWeather();
 
     // The flag is read after the first render so it never delays the grid.
@@ -1598,6 +1321,8 @@ if (favoritesRoot) {
     }
   })();
 
+  // Normal mode: a link tile opens its URL, the hint tile opens the city modal. A click on the background does
+  // nothing. The chrome tiles (Settings, Add) render but are wired by the edit-mode and add-link tasks.
   function handleFavoritesClick(event) {
     if (!(event.target instanceof Element)) {
       return;
@@ -1612,100 +1337,7 @@ if (favoritesRoot) {
     const action = target.dataset.favoriteAction;
 
     if (action === "set-city") {
-      showCityModal("change", HINT_TILE_SELECTOR);
-    } else if (action === "open-settings") {
-      favoritesUi = openSettings(favoritesUi);
-      favoritesError = "";
-      pendingFocus = [HEADING_SELECTOR];
-      renderFavorites();
-    } else if (action === "start-add") {
-      favoritesUi = startAdd(favoritesUi);
-      favoritesError = "";
-      pendingFocus = [formFieldSelector("add")];
-      renderFavorites();
-    } else if (action === "cancel") {
-      const cancelledId = editingId(favoritesUi);
-      favoritesUi = cancelForm(favoritesUi);
-      favoritesError = "";
-      pendingFocus = cancelledId
-        ? [itemActionSelector("edit", cancelledId), ADD_BUTTON_SELECTOR]
-        : [ADD_BUTTON_SELECTOR];
-      renderFavorites();
-    } else if (action === "edit") {
-      const id = target.dataset.favoriteId;
-      if (id) {
-        favoritesUi = startEdit(favoritesUi, id);
-        favoritesError = "";
-        pendingFocus = [formFieldSelector("edit")];
-        renderFavorites();
-      }
-    } else if (action === "delete") {
-      pendingFocus = [ADD_BUTTON_SELECTOR];
-      const generation = startFavoritesAction();
-
-      void (async () => {
-        if (!widgetsService) {
-          finishFavoritesAction(generation, () => {
-            favoritesError = "Chrome APIs for favorites are unavailable.";
-          });
-          return;
-        }
-
-        try {
-          const nextState = await widgetsService.deleteFavorite(
-            target.dataset.favoriteId
-          );
-          finishFavoritesAction(generation, () => {
-            widgetsState = nextState;
-            favoritesUi = cancelForm(favoritesUi);
-            favoritesError = "";
-          });
-        } catch (error) {
-          finishFavoritesAction(generation, () => {
-            favoritesError = error instanceof Error ? error.message : String(error);
-          });
-        }
-      })();
-    } else if (action === "move-earlier" || action === "move-later") {
-      const movedId = target.dataset.favoriteId;
-      const otherMove = action === "move-earlier" ? "move-later" : "move-earlier";
-      pendingFocus = [
-        itemActionSelector(action, movedId),
-        itemActionSelector(otherMove, movedId),
-        itemActionSelector("edit", movedId),
-        ADD_BUTTON_SELECTOR
-      ];
-      const generation = startFavoritesAction();
-
-      void (async () => {
-        if (!widgetsService) {
-          finishFavoritesAction(generation, () => {
-            favoritesError = "Chrome APIs for favorites are unavailable.";
-          });
-          return;
-        }
-
-        try {
-          const nextState = await widgetsService.moveWidget(
-            target.dataset.favoriteId,
-            action === "move-earlier" ? -1 : 1
-          );
-          finishFavoritesAction(generation, () => {
-            widgetsState = nextState;
-            favoritesError = "";
-            metricErrorText = "";
-          });
-        } catch (error) {
-          finishFavoritesAction(generation, () => {
-            const message = error instanceof Error ? error.message : String(error);
-            if (String(movedId).startsWith("weather:")) {
-              metricErrorText = message;
-            } else {
-              favoritesError = message;
-            }
-          });
-        }
-      })();
+      if (!weatherBusy) showCityModal("change", HINT_TILE_SELECTOR);
     } else if (action === "open") {
       const favorite = widgetsState?.items.find(
         (item) => item.id === target.dataset.favoriteId
@@ -1717,68 +1349,9 @@ if (favoritesRoot) {
     }
   }
 
-  favoritesPanelRoot?.addEventListener("change", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLInputElement) || !widgetsService) {
-      return;
-    }
-
-    if (target.dataset.metricSetting === "tileSize") {
-      writeMetric(target.dataset.metricId, { tileSize: target.value });
-      return;
-    }
-
-    const setting = target.dataset.gridSetting;
-    if (!setting) {
-      return;
-    }
-
-    const value = target.value;
-
-    void (async () => {
-      try {
-        widgetsState =
-          setting === "columns"
-            ? await widgetsService.setColumns(value)
-            : await widgetsService.setPosition(value);
-
-        const errorNode = favoritesPanelRoot.querySelector("[data-grid-error]");
-        if (errorNode) {
-          errorNode.textContent = "";
-          errorNode.hidden = true;
-        }
-        renderFavoritesToolbar();
-        favoritesPanelRoot.dataset.barPosition = gridLayout(widgetsState).position;
-        publishPanelDock();
-      } catch (error) {
-        const errorNode = favoritesPanelRoot.querySelector("[data-grid-error]");
-        if (errorNode) {
-          errorNode.textContent = error instanceof Error ? error.message : String(error);
-          errorNode.hidden = false;
-        }
-      }
-
-      syncGridSettingInputs();
-    })();
-  });
-
-  // The eye button: the new value comes from the DOM and is shown at once (as the checkbox did), so two quick presses
-  // never write the same value; syncMetricRows() restores the stored state once no write is pending.
-  favoritesPanelRoot?.addEventListener("click", (event) => {
-    const toggle = event.target instanceof Element ? event.target.closest(".metric-toggle") : null;
-    if (!(toggle instanceof HTMLElement) || !widgetsService) return;
-    const next = toggle.getAttribute("aria-pressed") !== "true";
-    const row = toggle.closest("[data-metric-row]");
-    toggle.setAttribute("aria-pressed", String(next));
-    toggle.replaceChildren(createIconNode(next ? "eye" : "eyeOff", { size: 20 }));
-    row.dataset.hidden = String(!next);
-    row.querySelector("[data-hidden-badge]").hidden = next;
-    writeMetric(toggle.dataset.metricId, { enabled: next });
-  });
-
   favoritesRoot.addEventListener("click", handleFavoritesClick);
-  favoritesPanelRoot?.addEventListener("click", handleFavoritesClick);
 
+  // One Escape handler, topmost layer first: tooltip, city suggestions, city modal.
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") {
       return;
@@ -1796,21 +1369,10 @@ if (favoritesRoot) {
       return;
     }
 
-    // The modal is the layer above the panel; while a city request runs Escape does nothing at all (I1).
+    // While a city request runs Escape does nothing at all (I1).
     if (cityModalRoot) {
       if (!weatherBusy) hideCityModal({ dismiss: true });
       return;
-    }
-
-    if (favoritesBusy) {
-      return;
-    }
-
-    if (isSettingsOpen(favoritesUi)) {
-      favoritesUi = closeSettings(favoritesUi);
-      favoritesError = "";
-      pendingFocus = [GEAR_SELECTOR];
-      renderFavorites();
     }
   });
 
@@ -1836,189 +1398,10 @@ if (favoritesRoot) {
       first.focus();
     }
   });
-
-  document.addEventListener("pointerdown", (event) => {
-    if (cityModalRoot) return; // an outside click never closes the panel while the modal is open
-    if (!isSettingsOpen(favoritesUi) || favoritesBusy) {
-      return;
-    }
-
-    if (!(event.target instanceof Node)) {
-      return;
-    }
-
-    if (
-      favoritesPanelRoot?.contains(event.target) ||
-      favoritesRoot?.contains(event.target)
-    ) {
-      return;
-    }
-
-    favoritesUi = closeSettings(favoritesUi);
-    favoritesError = "";
-    pendingFocus = [GEAR_SELECTOR];
-    renderFavorites();
-  });
-
-  favoritesPanelRoot?.addEventListener("submit", (event) => {
-    const form = event.target;
-
-    if (
-      !(form instanceof HTMLFormElement) ||
-      !["add", "edit"].includes(form.dataset.favoriteForm ?? "")
-    ) {
-      return;
-    }
-
-    event.preventDefault();
-
-    if (favoritesBusy) {
-      return;
-    }
-
-    const generation = startFavoritesAction();
-
-    void (async () => {
-      if (!widgetsService) {
-        finishFavoritesAction(generation, () => {
-          favoritesError = "Chrome APIs for favorites are unavailable.";
-        });
-        return;
-      }
-
-      const data = new FormData(form);
-
-      try {
-        if (form.dataset.favoriteForm === "edit") {
-          const payload = readFavoriteFormPayload(data);
-          widgetsState = await widgetsService.updateFavorite(
-            form.dataset.favoriteId,
-            payload
-          );
-
-          finishFavoritesAction(generation, () => {
-            pendingFocus = [itemActionSelector("edit", form.dataset.favoriteId), ADD_BUTTON_SELECTOR];
-            favoritesUi = cancelForm(favoritesUi);
-            favoritesError = "";
-          });
-
-          if (payload.backgroundColorSource === "auto") {
-            void refreshAutoAccent(form.dataset.favoriteId);
-          }
-          return;
-        }
-
-        const payload = readFavoriteFormPayload(data);
-        const previousIds = new Set(widgetsState.items.map((item) => item.id));
-        widgetsState = await widgetsService.addFavorite(payload);
-        const added = widgetsState.items.find((item) => !previousIds.has(item.id));
-
-        finishFavoritesAction(generation, () => {
-          pendingFocus = [ADD_BUTTON_SELECTOR];
-          favoritesUi = cancelForm(favoritesUi);
-          favoritesError = "";
-        });
-
-        if (added) {
-          void refreshAutoAccent(added.id);
-        }
-      } catch (error) {
-        finishFavoritesAction(generation, () => {
-          pendingFocus = [formFieldSelector(form.dataset.favoriteForm)];
-          favoritesError = error instanceof Error ? error.message : String(error);
-        });
-      }
-    })();
-  });
 }
 
 const CITY_INPUT_SELECTOR = 'input[name="city"]';
-const OPEN_CITY_MODAL_SELECTOR = '[data-weather-action="open-city-modal"]';
 const HINT_TILE_SELECTOR = '[data-widget-id="weather:hint"]';
-
-function weatherStatusModel() {
-  if (!weatherService) return { text: "Chrome APIs for weather are unavailable.", role: "alert" };
-  if (widgetsEnsureFailed) {
-    return {
-      text: "Couldn't add the weather tiles - Chrome Sync may be full or unavailable. Free up sync space, then reload this tab to try again.",
-      role: "alert"
-    };
-  }
-  const view = weatherResult ?? (weatherLocationError ? { status: "error", error: weatherLocationError } : null);
-  if (view?.status === "error") return { text: `Weather unavailable: ${view.error}`, role: "alert" };
-  if (view?.status === "stale") return { text: "Couldn't refresh weather - showing saved data", role: "status" };
-  return null;
-}
-
-function createWeatherBlock(metrics, items) {
-  const block = createNode("section", "weather-block panel-section");
-  block.appendChild(createNode("h3", null, "Weather"));
-  const card = createNode("div", "panel-card");
-
-  const cityRow = createNode("div", "favorites-panel__row favorites-panel__row--city");
-  const cityTitle = createNode("div", "favorites-panel__item");
-  const cityLabel = createNode("span", "weather-block__label", "City");
-  cityLabel.dataset.weatherCityLabel = "";
-  const city = createNode("strong", "weather-block__city");
-  city.dataset.weatherCity = "";
-  cityTitle.append(cityLabel, city);
-  cityRow.append(cityTitle, createNode("div", "weather-block__action"));
-  card.appendChild(cityRow);
-
-  const status = createNode("p", "status status--full panel-card__status");
-  status.dataset.weatherStatus = "";
-  card.appendChild(status);
-  const metricError = createNode("p", "status status--error status--full panel-card__status");
-  metricError.dataset.metricError = "";
-  metricError.setAttribute("role", "alert");
-  metricError.textContent = metricErrorText;
-  metricError.hidden = metricErrorText === "";
-  card.appendChild(metricError);
-
-  for (const item of metrics) {
-    card.appendChild(createWeatherMetricRow(item, items));
-  }
-  block.appendChild(card);
-  mountWeatherBlockContent(block);
-  return block;
-}
-
-// Updates the city line, the status slot and the city button in place (the button node is reused so focus survives).
-function syncWeatherBlock() {
-  const block = favoritesPanelRoot?.querySelector(".weather-block");
-  if (block) mountWeatherBlockContent(block);
-}
-
-function mountWeatherBlockContent(block) {
-  const location = weatherLocationError ? null : currentLocation(); // I2: a read error counts as no location
-  const cityLine = block.querySelector("[data-weather-city]");
-  const cityLabel = block.querySelector("[data-weather-city-label]");
-  cityLine.textContent = location ? location.name : weatherLocationError ? "" : "No city set";
-  cityLabel.hidden = !location; // "No city set" stands alone
-  cityLine.hidden = cityLine.textContent === ""; // the read error is shown by the status line instead
-  const status = block.querySelector("[data-weather-status]");
-  const model = weatherStatusModel();
-  status.textContent = model?.text ?? "";
-  status.hidden = !model;
-  if (model) {
-    status.setAttribute("role", model.role);
-    status.classList.toggle("status--error", model.role === "alert");
-  }
-
-  const actionHost = block.querySelector(".weather-block__action");
-  if (!weatherService) {
-    actionHost.replaceChildren();
-    return;
-  }
-  let button = actionHost.querySelector(OPEN_CITY_MODAL_SELECTOR);
-  if (!button) {
-    button = createNode("button", "button");
-    button.type = "button";
-    button.dataset.weatherAction = "open-city-modal";
-    actionHost.replaceChildren(button);
-  }
-  button.replaceChildren(createIconNode("mapPin"), document.createTextNode(location ? "Change city" : "Set a city"));
-}
 
 async function startWeather() {
   if (!weatherService) {
@@ -2044,8 +1427,7 @@ async function startWeather() {
   }
 
   weatherResult = result;
-  renderFavoritesToolbar();
-  syncWeatherBlock();
+  renderFavorites();
 }
 
 // D15: a city request that has not finished after CITY_REQUEST_TIMEOUT_MS is treated as failed; a later result is ignored.
@@ -2077,7 +1459,7 @@ function changeCity(run) {
   activeCityForm?.renderSuggestions();
   cityModalError = "";
   syncCityModal();
-  renderFavoritesToolbar();
+  renderFavorites();
   void (async () => {
     let ok = false;
     try {
@@ -2093,8 +1475,7 @@ function changeCity(run) {
     } finally {
       weatherBusy = false;
       weatherChanging = false;
-      renderFavoritesToolbar();
-      syncWeatherBlock();
+      renderFavorites();
       if (ok) {
         hideCityModal(); // selection never writes the flag
       } else {
@@ -2104,11 +1485,3 @@ function changeCity(run) {
     }
   })();
 }
-
-favoritesPanelRoot?.addEventListener("click", (event) => {
-  const target = event.target instanceof Element ? event.target.closest("[data-weather-action]") : null;
-  if (!(target instanceof HTMLElement) || weatherBusy) return;
-  if (target.dataset.weatherAction === "open-city-modal") {
-    showCityModal("change", OPEN_CITY_MODAL_SELECTOR);
-  }
-});

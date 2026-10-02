@@ -46,16 +46,13 @@ describe("newtab weather source", () => {
     assert.doesNotMatch(code, /weatherFormError/);
   });
 
-  it("opens the city modal via data-weather-action and closes it from its own dismiss button, with no editing state", async () => {
+  it("closes the city modal from its own dismiss button, with no editing state", async () => {
     const code = await source();
-    assert.match(code, /dataset\.weatherAction = "open-city-modal"/);
-    assert.match(code, /showCityModal\("change", OPEN_CITY_MODAL_SELECTOR\)/);
     assert.match(code, /dataset\.cityModalAction = mode === "first-run" \? "dismiss" : "cancel"/);
     assert.doesNotMatch(code, /"edit-city"/);
     assert.doesNotMatch(code, /"cancel-edit-city"/);
     assert.doesNotMatch(code, /startEditingCity|stopEditingCity|isEditingCity/);
   });
-
   it("blocks weather actions while a request is in flight", async () => {
     const code = await source();
     assert.match(code, /let weatherBusy = false;/);
@@ -64,17 +61,15 @@ describe("newtab weather source", () => {
     assert.match(code, /if \(!cityName\) \{\s*cityModalError = "Enter a city name";/);
   });
 
-  it("has no weather panel markup, and labels the bar and panel as widgets", async () => {
+  it("has no weather panel markup, and labels the desktop root as widgets", async () => {
     const markup = await html();
     assert.doesNotMatch(markup, /id="weather"/);
     assert.doesNotMatch(markup, /weather-panel/);
-    assert.match(markup, /<nav class="favorites-bar" id="favorites" aria-label="Widgets"/);
-    assert.match(markup, /aria-label="Widgets settings"/);
+    assert.match(markup, /<main class="desktop" id="favorites" aria-label="Widgets"/);
+    assert.doesNotMatch(markup, /favorites-panel/);
     assert.doesNotMatch(markup, /data-position/);
     assert.doesNotMatch(markup, /id="app"/);
-    assert.doesNotMatch(markup, /<main\b/);
   });
-
   it("describes temperature, rain, air, and UV tiles in toolbar order", async () => {
     const tiles = await readFile(new URL("../src/weatherTiles.js", import.meta.url), "utf8");
 
@@ -119,33 +114,12 @@ describe("newtab weather source", () => {
     assert.doesNotMatch(code, /function createTooltip\(/);
   });
 
-  it("shows the city and the change-city control in the settings Weather block, not on the tiles", async () => {
-    const code = await source();
-    const start = code.indexOf("function createWeatherMetricTile(");
-    const end = code.indexOf("function createCityHintTile(", start);
-    const tile = code.slice(start, end);
-    const blockStart = code.indexOf("function mountWeatherBlockContent(");
-    const block = code.slice(blockStart);
-
-    assert.doesNotMatch(tile, /location\.(?:name|country)/);
-    assert.match(block, /const cityLine = block\.querySelector\("\[data-weather-city\]"\);/);
-    assert.match(block, /const cityLabel = block\.querySelector\("\[data-weather-city-label\]"\);/);
-    assert.match(block, /cityLine\.textContent = location \? location\.name : weatherLocationError \? "" : "No city set";/);
-    assert.match(block, /cityLabel\.hidden = !location;/);
-    assert.match(block, /button\.dataset\.weatherAction = "open-city-modal";/);
-    assert.match(block, /button = createNode\("button", "button"\);/);
-    assert.match(block, /button\.replaceChildren\(createIconNode\("mapPin"\), document\.createTextNode\(location \? "Change city" : "Set a city"\)\);/);
-    assert.match(code, /favoritesPanelRoot\?\.addEventListener\("click"/);
-    assert.match(code, /\broot\.addEventListener\("submit"[\s\S]{0,200}dataset\.weatherForm !== "city"/);
-  });
-
-  it("styles wide weather tiles by spanning two grid columns of the shared tile height", async () => {
+  it("sizes weather tiles from their cell (no span or fixed tile height)", async () => {
     const styles = await css();
-    assert.match(styles, /\.weather-tile\[data-tile-size="wide"\]\s*\{[^}]*grid-column: span 2;/s);
+    assert.doesNotMatch(styles, /\.weather-tile\[data-tile-size="wide"\]\s*\{[^}]*grid-column/s);
     assert.doesNotMatch(styles, /\.weather-tile--wide/);
     assert.doesNotMatch(styles, /--weather-tile-height/);
   });
-
   it("leaves tooltip placement to the shared layer: no per-tile tooltip boxes or edge rules remain", async () => {
     const styles = await css();
     assert.doesNotMatch(styles, /\.weather-tile:first-child > \.tooltip/);
@@ -160,9 +134,7 @@ describe("newtab weather source", () => {
 
     assert.match(code, /if \(model\.stale\) tile\.dataset\.stale = "true";/);
     assert.match(styles, /\.weather-tile\[data-stale="true"\]\s*\{[^}]*border-style: dashed;/s);
-    assert.match(code, /Couldn't refresh weather - showing saved data/);
   });
-
   it("wires searchCities for live city suggestions with debounce, minimum length, and request cancellation", async () => {
     const code = await source();
     assert.match(code, /searchCities/);
@@ -336,8 +308,7 @@ describe("newtab weather source", () => {
     const code = await source();
 
     assert.doesNotMatch(code, /formHost/);
-    assert.match(code, /if \(!button\) \{/);
-    assert.match(code, /renderFavoritesToolbar\(\);\s*syncWeatherBlock\(\);/);
+    assert.match(code, /weatherResult = result;\s*renderFavorites\(\);/);
     assert.match(code, /if \(generation !== weatherGeneration\) \{\s*return;\s*\}/);
     assert.match(code, /const result = await withTimeout\(run\(\)\);[\s\S]*?weatherGeneration \+= 1;\s*weatherResult = result;/);
     assert.doesNotMatch(code, /function changeCity\(run\) \{\s*weatherGeneration \+= 1;/);

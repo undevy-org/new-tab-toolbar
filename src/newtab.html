@@ -7,13 +7,9 @@
     <link rel="stylesheet" href="./newtab.css">
   </head>
   <body>
-    <nav class="favorites-bar" id="favorites" aria-label="Widgets"></nav>
-    <section
-      class="favorites-panel"
-      id="favorites-panel"
-      aria-label="Widgets settings"
-      hidden
-    ></section>
+    <main class="desktop" id="favorites" aria-label="Widgets" data-edit="false"></main>
+    <div class="sr-only" id="desktop-live" role="status" aria-live="polite"></div>
+    <div class="desktop-status" id="desktop-status" role="alert" hidden></div>
     <script type="module" src="./newtab.js"></script>
   </body>
 </html>
