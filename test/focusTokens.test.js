@@ -65,3 +65,44 @@ describe("every tile type uses the tile focus ring token", () => {
     assert.match(rule('.desktop[data-edit="true"] .desktop-grid > [data-widget-id]:focus-visible'), /outline: 3px solid var\(--focus-ring\);/);
   });
 });
+
+describe("no focus rule hides the outline without a visible replacement (fix wave 3, L3-R2-01)", () => {
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selector: m[1].replace(/\/\*[\s\S]*?\*\//g, "").trim(), body: m[2] }));
+  const ruleFor = (selector) => rules.find((r) => r.selector === selector);
+  // Shared base rules: a transparent outline for forced colors; each control type they cover has its own ring rule.
+  const replacements = {
+    ".desktop-dialog :is(button, input):focus-visible": [
+      ".desktop-dialog .favorite-input:focus-visible",
+      ".desktop-dialog .button:focus-visible",
+      ".desktop-dialog .text-button:focus-visible",
+      ".desktop-dialog .favorite-color-input:focus-visible",
+      ".desktop-dialog .segmented:has(input:focus-visible)"
+    ],
+    ".city-modal :is(button, input, .weather-form__suggestion):focus-visible": [
+      ".city-modal .favorite-input:focus-visible",
+      ".city-modal .button:focus-visible,\n.city-modal .icon-button:focus-visible",
+      ".city-modal .weather-form__suggestion:focus-visible"
+    ]
+  };
+  it("every :focus-visible rule with a transparent outline draws a box-shadow ring or is a listed base rule", () => {
+    const transparent = rules.filter((r) => /focus-visible|:focus\b/.test(r.selector) && /outline:[^;]*transparent/.test(r.body));
+    assert.ok(transparent.length >= 3);
+    for (const r of transparent) {
+      if (/box-shadow:/.test(r.body)) continue;
+      assert.ok(Object.hasOwn(replacements, r.selector), `transparent outline without a ring: ${r.selector}`);
+    }
+  });
+  for (const [base, list] of Object.entries(replacements)) {
+    for (const selector of list) {
+      it(`${base.split(" ")[0]}: ${selector.split("\n")[0]} draws a 2px --soft-ring ring`, () => {
+        const rule = ruleFor(selector);
+        assert.ok(rule, selector);
+        assert.match(rule.body, /box-shadow: 0 0 0 2px var\(--soft-ring\);/);
+      });
+    }
+  }
+  it("the color input is at full opacity while focused and the segmented option has no inner --focus outline in dialogs", () => {
+    assert.match(ruleFor(".desktop-dialog .favorite-color-input:focus-visible").body, /opacity: 1;/);
+    assert.match(ruleFor(".desktop-dialog .segmented__option:has(input:focus-visible)").body, /outline: none;/);
+  });
+});

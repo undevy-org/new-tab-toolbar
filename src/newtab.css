@@ -1060,6 +1060,26 @@ button.weather-tile {
   background: var(--primary);
 }
 
+/* The color input: the shared transparent outline above (forced colors) plus the same soft ring as the other fields.
+   While Auto is selected it is dimmed; at full opacity while focused so the ring keeps its contrast. */
+.desktop-dialog .favorite-color-input:focus-visible {
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--soft-ring);
+}
+
+/* Segmented switches and the size radiogroup: the focused radio is clipped, so the whole group shows the soft ring (the
+   focused option is the checked one). It sits outside the group on the panel, so it keeps 3:1 next to the selected fill too;
+   the transparent outline becomes visible under forced colors. Replaces the option's inner --focus outline in dialogs. */
+.desktop-dialog .segmented:has(input:focus-visible) {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--soft-ring);
+}
+
+.desktop-dialog .segmented__option:has(input:focus-visible) {
+  outline: none;
+}
+
 /* Remove badge keyboard focus (normal and reduced-motion edit mode): the tile focus ring token, never the UA default. */
 .desktop-grid > .tile-remove:focus-visible {
   outline: 3px solid var(--focus-ring);
