@@ -265,7 +265,8 @@ describe("newtab favorites source", () => {
   it("places the favorites error with the form, ahead of the list, and keeps the scroll position across re-renders", async () => {
     const code = await source();
     const panel = code.slice(code.indexOf("function renderFavoritesPanel"), code.indexOf("function renderFavorites()"));
-    assert.ok(panel.indexOf("favoritesError") < panel.indexOf('createNode("div", "favorites-panel__list")'), "error precedes the list");
+    assert.ok(panel.indexOf("favorites-panel__list") > 0, "the list wrapper is built in the panel");
+    assert.ok(panel.indexOf("favoritesError") < panel.indexOf("favorites-panel__list"), "error precedes the list");
     assert.match(panel, /scrollTop/);
     assert.match(code, /scrollIntoView\(\{ block: "nearest" \}\)/);
   });
@@ -535,7 +536,7 @@ describe("newtab city modal source", () => {
     assert.doesNotMatch(modal, /input\.required/);
     assert.match(modal, /input\.value = "";/);
     assert.match(modal, /errorNode\.setAttribute\("role", "alert"\);/);
-    for (const text of ["Enter a city name", "Show weather on your new tab?", "Not now", "Change city", "Set a city", "No city set.", "Current: "]) {
+    for (const text of ["Enter a city name", "Show weather on your new tab?", "Not now", "Change city", "Set a city", "No city set", "Current: "]) {
       assert.ok(code.includes(text), text);
     }
   });

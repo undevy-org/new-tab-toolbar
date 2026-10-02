@@ -293,8 +293,7 @@ body {
 }
 
 .favorites-panel__list {
-  display: grid;
-  gap: 2px;
+  gap: 0;
 }
 
 .favorites-panel__row {
@@ -337,6 +336,68 @@ body {
 }
 
 .favorites-panel__item .badge[hidden] {
+  display: none;
+}
+
+.panel-section {
+  margin-bottom: 20px;
+}
+
+.panel-section > h3,
+.panel-section__head h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.panel-section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.links-block__count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.panel-card {
+  display: block;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.panel-card__empty {
+  margin: 0;
+  padding: 18px 0;
+  color: var(--muted);
+}
+
+/* `.favorites-panel__body .status { margin-bottom: 12px }` (0,2,0) exists, so this needs the same specificity to win. */
+.favorites-panel__body .panel-card__status {
+  margin: 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.panel-card > .favorites-panel__row:first-child {
+  border-top: none;
+}
+
+.weather-block__label {
+  margin-right: 8px;
+  color: var(--muted);
+}
+
+/* A long unbroken city name wraps inside the row (the city is a flex child of .favorites-panel__item). */
+.weather-block__city {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* `.favorites-panel__item span { display: block }` (0,1,1) would beat the UA `[hidden]` rule: the label of the no-city state must disappear. */
+.favorites-panel__item .weather-block__label[hidden] {
   display: none;
 }
 
@@ -759,24 +820,6 @@ body {
 .weather-tile[data-weather-tone="rain-3"] { background: rgba(var(--weather-tone-rgb), 0.36); }
 .weather-tile[data-weather-tone="rain-4"] { background: rgba(var(--weather-tone-rgb), 0.48); }
 .weather-tile[data-weather-tone="rain-5"] { background: rgba(var(--weather-tone-rgb), 0.6); }
-
-.weather-block {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.weather-block h3 {
-  margin: 0;
-  font-size: 15px;
-}
-
-.weather-block__city {
-  margin: 0;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
 
 .weather-form {
   display: flex;

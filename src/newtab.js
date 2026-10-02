@@ -1386,31 +1386,39 @@ function renderFavoritesPanel() {
     body.appendChild(createGridSettingsRow(widgetsState));
   }
 
-  body.appendChild(createWeatherBlock());
+  const links = items.filter((item) => item.type === "favorite");
+  const metrics = items.filter((item) => item.type !== "favorite");
+
+  const linksSection = createNode("section", "links-block panel-section");
+  const linksHead = createNode("div", "panel-section__head");
+  linksHead.append(createNode("h3", null, "Links"), createNode("span", "links-block__count", String(links.length)));
+  linksSection.appendChild(linksHead);
 
   if (isAdding(favoritesUi)) {
-    body.appendChild(createFavoriteForm(null));
+    linksSection.appendChild(createFavoriteForm(null));
   }
-
   const currentEditingId = editingId(favoritesUi);
   const editingItem = items.find((item) => item.id === currentEditingId);
   if (editingItem) {
-    body.appendChild(createFavoriteForm(editingItem));
+    linksSection.appendChild(createFavoriteForm(editingItem));
   }
-
   if (favoritesError) {
     const errorNode = createStatus(favoritesError, { error: true, live: "assertive" });
     errorNode.dataset.favoritesError = "";
-    body.appendChild(errorNode);
+    linksSection.appendChild(errorNode);
   }
 
-  const listWrap = createNode("div", "favorites-panel__list");
-  items.forEach((item) => {
-    listWrap.appendChild(
-      item.type === "favorite" ? createFavoritesPanelRow(item, items) : createWeatherMetricRow(item, items)
-    );
-  });
-  body.appendChild(listWrap);
+  const listWrap = createNode("div", "panel-card favorites-panel__list");
+  if (links.length === 0) {
+    listWrap.appendChild(createNode("p", "panel-card__empty", "No links yet. Use Add link to create the first one."));
+  }
+  for (const item of links) {
+    listWrap.appendChild(createFavoritesPanelRow(item, items));
+  }
+  linksSection.appendChild(listWrap);
+  body.appendChild(linksSection);
+
+  body.appendChild(createWeatherBlock(metrics, items));
   fragment.appendChild(body);
 
   favoritesPanelRoot.replaceChildren(fragment);
@@ -1904,22 +1912,35 @@ function weatherStatusModel() {
   return null;
 }
 
-function createWeatherBlock() {
-  const block = createNode("section", "weather-block");
+function createWeatherBlock(metrics, items) {
+  const block = createNode("section", "weather-block panel-section");
   block.appendChild(createNode("h3", null, "Weather"));
-  const city = createNode("p", "weather-block__city");
+  const card = createNode("div", "panel-card");
+
+  const cityRow = createNode("div", "favorites-panel__row favorites-panel__row--city");
+  const cityTitle = createNode("div", "favorites-panel__item");
+  const cityLabel = createNode("span", "weather-block__label", "City");
+  cityLabel.dataset.weatherCityLabel = "";
+  const city = createNode("strong", "weather-block__city");
   city.dataset.weatherCity = "";
-  block.appendChild(city);
-  const status = createNode("p", "status status--full");
+  cityTitle.append(cityLabel, city);
+  cityRow.append(cityTitle, createNode("div", "weather-block__action"));
+  card.appendChild(cityRow);
+
+  const status = createNode("p", "status status--full panel-card__status");
   status.dataset.weatherStatus = "";
-  block.appendChild(status);
-  const metricError = createNode("p", "status status--error status--full");
+  card.appendChild(status);
+  const metricError = createNode("p", "status status--error status--full panel-card__status");
   metricError.dataset.metricError = "";
   metricError.setAttribute("role", "alert");
   metricError.textContent = metricErrorText;
   metricError.hidden = metricErrorText === "";
-  block.appendChild(metricError);
-  block.appendChild(createNode("div", "weather-block__action"));
+  card.appendChild(metricError);
+
+  for (const item of metrics) {
+    card.appendChild(createWeatherMetricRow(item, items));
+  }
+  block.appendChild(card);
   mountWeatherBlockContent(block);
   return block;
 }
@@ -1933,7 +1954,9 @@ function syncWeatherBlock() {
 function mountWeatherBlockContent(block) {
   const location = weatherLocationError ? null : currentLocation(); // I2: a read error counts as no location
   const cityLine = block.querySelector("[data-weather-city]");
-  cityLine.textContent = location ? `City: ${location.name}` : weatherLocationError ? "" : "No city set.";
+  const cityLabel = block.querySelector("[data-weather-city-label]");
+  cityLine.textContent = location ? location.name : weatherLocationError ? "" : "No city set";
+  cityLabel.hidden = !location; // "No city set" stands alone
   cityLine.hidden = cityLine.textContent === ""; // the read error is shown by the status line instead
   const status = block.querySelector("[data-weather-status]");
   const model = weatherStatusModel();
@@ -1956,7 +1979,7 @@ function mountWeatherBlockContent(block) {
     button.dataset.weatherAction = "open-city-modal";
     actionHost.replaceChildren(button);
   }
-  button.textContent = location ? "Change city" : "Set a city";
+  button.replaceChildren(createIconNode("mapPin"), document.createTextNode(location ? "Change city" : "Set a city"));
 }
 
 async function startWeather() {

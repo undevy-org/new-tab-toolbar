@@ -128,10 +128,13 @@ describe("newtab weather source", () => {
     const block = code.slice(blockStart);
 
     assert.doesNotMatch(tile, /location\.(?:name|country)/);
-    assert.match(block, /`City: \$\{location\.name\}`/);
+    assert.match(block, /const cityLine = block\.querySelector\("\[data-weather-city\]"\);/);
+    assert.match(block, /const cityLabel = block\.querySelector\("\[data-weather-city-label\]"\);/);
+    assert.match(block, /cityLine\.textContent = location \? location\.name : weatherLocationError \? "" : "No city set";/);
+    assert.match(block, /cityLabel\.hidden = !location;/);
     assert.match(block, /button\.dataset\.weatherAction = "open-city-modal";/);
-    assert.match(block, /button\.textContent = location \? "Change city" : "Set a city";/);
-    assert.doesNotMatch(block, /createIconButton\(/);
+    assert.match(block, /button = createNode\("button", "button"\);/);
+    assert.match(block, /button\.replaceChildren\(createIconNode\("mapPin"\), document\.createTextNode\(location \? "Change city" : "Set a city"\)\);/);
     assert.match(code, /favoritesPanelRoot\?\.addEventListener\("click"/);
     assert.match(code, /\broot\.addEventListener\("submit"[\s\S]{0,200}dataset\.weatherForm !== "city"/);
   });
