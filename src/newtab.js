@@ -7,7 +7,7 @@ import {
 import { getFavoriteIconModel, getFavoriteLetter } from "./favoriteIcon.js";
 import { createIconNode } from "./icons.js";
 import { displayLayout, effectiveColumns, gridMetrics } from "./desktopLayout.js";
-import { createDesktopUiState } from "./desktopUiState.js";
+import { closeDialog, createDesktopUiState, openDialog } from "./desktopUiState.js";
 import { createWidgetsService } from "./widgetsService.js";
 import {
   WIDGETS_META_KEY,
@@ -41,11 +41,23 @@ const desktopStatus = document.querySelector("#desktop-status");
 const ENSURE_FAILED_MESSAGE =
   "Couldn't add the weather and settings tiles - Chrome Sync may be full or unavailable. Free up sync space, then reload this tab to try again.";
 
-// Page-level status line (role="alert"), text only.
+const desktopLive = document.querySelector("#desktop-live");
+const DESKTOP_STATUS_MS = 8000;
+let desktopStatusTimer = 0;
+
+// Page-level status line (role="alert"), text only. It clears after 8 s or at the next action; no message is exempt
+// (the ensure-failure text clears like any other).
 function showDesktopStatus(text) {
   if (!desktopStatus) return;
+  clearTimeout(desktopStatusTimer);
   desktopStatus.textContent = text;
   desktopStatus.hidden = text === "";
+  if (text !== "") desktopStatusTimer = setTimeout(() => showDesktopStatus(""), DESKTOP_STATUS_MS);
+}
+
+// Polite live region for outcomes that have no visible change at the focused element.
+function announce(text) {
+  if (desktopLive) desktopLive.textContent = text;
 }
 
 function createNode(tagName, className, textContent) {
@@ -336,6 +348,7 @@ function createFavoriteForm(item) {
   const isEdit = item !== null;
   const form = createNode("form", "favorite-form");
   form.dataset.favoriteForm = isEdit ? "edit" : "add";
+  form.noValidate = true; // the service validates and its message lands in the dialog's alert slot
   if (isEdit) {
     form.dataset.favoriteId = item.id;
   }
@@ -392,15 +405,6 @@ function createFavoriteForm(item) {
   colorControls.append(backgroundColorSource, color);
   const colorRow = createFormRow("Color", colorControls);
 
-  const tileSize = createSegmentedControl(
-    "tileSize",
-    [
-      ["square", "Square"],
-      ["wide", "Wide 2:1"]
-    ],
-    isEdit ? item.tileSize ?? "square" : "square"
-  );
-
   const footer = createNode("div", "favorite-form__footer");
 
   if (isEdit) {
@@ -433,7 +437,6 @@ function createFavoriteForm(item) {
     createFormRow("Icon", iconMode),
     customIconRow,
     colorRow,
-    createFormRow("Tile size", tileSize),
     footer
   );
 
@@ -448,8 +451,7 @@ function readFavoriteFormPayload(data) {
     label: data.get("label"),
     iconMode: data.get("iconMode"),
     customIconUrl: data.get("customIconUrl"),
-    backgroundColorSource,
-    tileSize: data.get("tileSize") === "wide" ? "wide" : "square"
+    backgroundColorSource
   };
 
   if (backgroundColorSource === "manual") {
@@ -1078,6 +1080,134 @@ function createRemoveBadge(item) {
   return badge;
 }
 
+const ADD_TILE_SELECTOR = '[data-widget-id="chrome:add"]';
+const DIALOG_BACKDROP_GUARD_MS = 300;
+let desktopDialogRoot = null;
+let desktopDialogOpener = null; // widget id of the tile that had focus when the dialog opened, looked up again at close
+let desktopDialogOpenedAt = 0;
+
+function buildDialogContent(root, dialog) {
+  const title = createNode("h2", "desktop-dialog__title");
+  title.id = "desktop-dialog-title";
+  const error = createNode("div", "desktop-dialog__error", "");
+  error.setAttribute("role", "alert");
+  error.dataset.dialogError = "";
+  error.hidden = true;
+
+  // Task 10 adds edit-link, edit-weather and confirm-delete as further branches here.
+  switch (dialog.kind) {
+    case "add-link": {
+      title.textContent = "Add link";
+      const form = createFavoriteForm(null);
+      form.insertBefore(error, form.querySelector(".favorite-form__footer"));
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const payload = readFavoriteFormPayload(new FormData(form));
+        void runDesktopMutation(
+          (columns) => widgetsService.addFavorite(payload, { columns }),
+          { dialogRoot: root }
+        ).then((ok) => {
+          if (ok) {
+            announce("Link added");
+            closeDesktopDialog();
+          }
+        });
+      });
+      root.append(title, form);
+      break;
+    }
+    default:
+      throw new Error(`Unknown dialog: ${dialog.kind}`);
+  }
+}
+
+function openDesktopDialog(dialog) {
+  if (!favoritesRoot || desktopDialogRoot) return;
+  showDesktopStatus("");
+  desktopDialogOpener = focusedWidgetId()?.id ?? null;
+  desktopUi = openDialog(desktopUi, dialog);
+  const root = createNode("div", "desktop-dialog");
+  root.setAttribute("role", "dialog");
+  root.setAttribute("aria-modal", "true");
+  root.setAttribute("aria-labelledby", "desktop-dialog-title");
+  root.dataset.dialog = dialog.kind;
+  try {
+    buildDialogContent(root, dialog);
+  } catch (error) {
+    desktopUi = closeDialog(desktopUi);
+    throw error;
+  }
+  const backdrop = createNode("div", "desktop-backdrop");
+  backdrop.addEventListener("click", () => {
+    if (Date.now() - desktopDialogOpenedAt < DIALOG_BACKDROP_GUARD_MS || favoritesBusy) return;
+    closeDesktopDialog();
+  });
+  root.querySelector('[data-favorite-action="cancel"]')?.addEventListener("click", () => closeDesktopDialog());
+  desktopDialogRoot = root;
+  desktopDialogOpenedAt = Date.now();
+  favoritesRoot.inert = true;
+  document.body.append(backdrop, root);
+  root.querySelector("input, button")?.focus();
+}
+
+function closeDesktopDialog({ restoreFocusTo = desktopDialogOpener } = {}) {
+  document.querySelectorAll(".desktop-dialog, .desktop-backdrop").forEach((node) => node.remove());
+  desktopDialogRoot = null;
+  if (favoritesRoot) favoritesRoot.inert = false;
+  desktopUi = closeDialog(desktopUi);
+  desktopDialogOpener = null;
+  if (typeof restoreFocusTo === "string") {
+    suppressTooltipOnFocus = true;
+    try {
+      favoritesRoot?.querySelector(`[data-widget-id="${CSS.escape(restoreFocusTo)}"]`)?.focus();
+    } finally {
+      suppressTooltipOnFocus = false;
+    }
+  }
+}
+
+// The first field a service message is about; anything else leaves focus on the submit button.
+function invalidFieldFor(message) {
+  if (/image url/i.test(message)) return 'input[name="customIconUrl"]';
+  if (/url/i.test(message)) return 'input[name="url"]';
+  if (/color/i.test(message)) return 'input[name="backgroundColor"]';
+  return 'button[type="submit"]';
+}
+
+function showDialogError(root, message) {
+  const slot = root.querySelector("[data-dialog-error]");
+  if (!slot) return;
+  slot.textContent = message;
+  slot.hidden = false;
+  const field = root.querySelector(invalidFieldFor(message)) ?? root.querySelector('button[type="submit"]');
+  if (field instanceof HTMLElement && !field.matches(":disabled")) field.focus();
+}
+
+// Every explicit mutation goes through here. On failure nothing is persisted and the UI returns to the stored state.
+async function runDesktopMutation(action, { dialogRoot = null } = {}) {
+  if (favoritesBusy) return false;
+  showDesktopStatus("");
+  const slot = dialogRoot?.querySelector("[data-dialog-error]");
+  if (slot) {
+    slot.textContent = "";
+    slot.hidden = true;
+  }
+  const generation = startFavoritesAction();
+  try {
+    const next = await action(currentColumns());
+    finishFavoritesAction(generation, () => {
+      widgetsState = next;
+    });
+    return true;
+  } catch (error) {
+    finishFavoritesAction(generation, () => {});
+    const message = error instanceof Error ? error.message : String(error);
+    if (dialogRoot?.isConnected) showDialogError(dialogRoot, message);
+    else showDesktopStatus(message);
+    return false;
+  }
+}
+
 const SETTINGS_TILE_SELECTOR = '[data-widget-id="chrome:settings"]';
 
 function viewportWidth() {
@@ -1335,6 +1465,11 @@ if (favoritesRoot) {
       return;
     }
 
+    if (event.target.closest(ADD_TILE_SELECTOR)) {
+      if (!favoritesBusy && !desktopUi.editMode && widgetsService && widgetsState) openDesktopDialog({ kind: "add-link" });
+      return;
+    }
+
     const target = event.target.closest("[data-favorite-action]");
 
     if (!(target instanceof HTMLElement) || favoritesBusy) {
@@ -1381,12 +1516,17 @@ if (favoritesRoot) {
       if (!weatherBusy) hideCityModal({ dismiss: true });
       return;
     }
+
+    if (desktopDialogRoot) {
+      if (!favoritesBusy) closeDesktopDialog();
+    }
   });
 
   // Tab inside the open modal wraps; from body or outside it enters the modal (I3).
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Tab" || !cityModalRoot) return;
-    const controls = [...cityModalRoot.querySelectorAll("input, button")].filter((el) => !el.disabled && !el.hidden);
+    const trapRoot = cityModalRoot ?? desktopDialogRoot;
+    if (event.key !== "Tab" || !trapRoot) return;
+    const controls = [...trapRoot.querySelectorAll("input, button")].filter((el) => !el.disabled && !el.hidden);
     if (controls.length === 0) {
       event.preventDefault(); // busy: nothing to enter, focus stays on body and never leaves the page
       return;
@@ -1394,7 +1534,7 @@ if (favoritesRoot) {
     const first = controls[0];
     const last = controls[controls.length - 1];
     const active = document.activeElement;
-    if (!(active instanceof Element) || !cityModalRoot.contains(active)) {
+    if (!(active instanceof Element) || !trapRoot.contains(active)) {
       event.preventDefault();
       (event.shiftKey ? last : first).focus();
     } else if (event.shiftKey && active === first) {

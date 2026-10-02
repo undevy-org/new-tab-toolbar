@@ -11,7 +11,7 @@ async function source() {
 describe("newtab favorites source", () => {
   it("drives the desktop UI from the pure desktopUiState module, not a mode string", async () => {
     const code = await source();
-    assert.match(code, /import \{ createDesktopUiState \} from "\.\/desktopUiState\.js";/);
+    assert.match(code, /import \{ closeDialog, createDesktopUiState, openDialog \} from "\.\/desktopUiState\.js";/);
     assert.match(code, /let desktopUi = createDesktopUiState\(\);/);
     assert.doesNotMatch(code, /favoritesMode/);
     assert.doesNotMatch(code, /favoritesUiState\.js/);
@@ -115,7 +115,29 @@ describe("newtab favorites source", () => {
   it("reads a single form payload shape shared by add and edit submits", async () => {
     const code = await source();
     assert.match(code, /function readFavoriteFormPayload\(data\)/);
-    assert.match(code, /tileSize: data\.get\("tileSize"\) === "wide" \? "wide" : "square"/);
+    assert.doesNotMatch(code, /tileSize: data\.get/);
+    assert.doesNotMatch(code, /createSegmentedControl\(\s*"tileSize"/);
+  });
+
+  it("has a desktop dialog shell: modal role, add-link branch, atomic mutation runner, live region", async () => {
+    const code = await source();
+    assert.match(code, /function openDesktopDialog\(dialog\)/);
+    assert.match(code, /function closeDesktopDialog\(/);
+    assert.match(code, /root\.setAttribute\("aria-modal", "true"\);/);
+    assert.match(code, /case "add-link":/);
+    assert.match(code, /async function runDesktopMutation\(action, \{ dialogRoot = null \} = \{\}\)/);
+    assert.match(code, /widgetsService\.addFavorite\(payload, \{ columns \}\)/);
+    assert.match(code, /function announce\(text\)/);
+    assert.match(code, /querySelector\("#desktop-live"\)/);
+    assert.match(code, /error\.setAttribute\("role", "alert"\);/);
+  });
+
+  it("clears the page status after 8 s or at the next action, with no exemption for the ensure failure", async () => {
+    const code = await source();
+    assert.match(code, /DESKTOP_STATUS_MS = 8000/);
+    assert.match(code, /setTimeout\(\(\) => showDesktopStatus\(""\), DESKTOP_STATUS_MS\)/);
+    assert.match(code, /if \(favoritesBusy\) return false;\n  showDesktopStatus\(""\);/);
+    assert.match(code, /if \(widgetsEnsureFailed\) showDesktopStatus\(ENSURE_FAILED_MESSAGE\);/);
   });
 
   it("gives the favorite form action buttons a leading icon instead of bare text", async () => {
@@ -275,9 +297,9 @@ describe("newtab city modal source", () => {
   });
   it("traps Tab inside the modal; open list items are part of the cycle, hidden controls are not", async () => {
     const code = await source();
-    const trap = between(code, 'if (event.key !== "Tab" || !cityModalRoot) return;', "});");
+    const trap = between(code, 'if (event.key !== "Tab" || !trapRoot) return;', "});");
     assert.doesNotMatch(trap, /select-city/);
-    assert.match(trap, /cityModalRoot\.querySelectorAll\("input, button"\)\]\.filter\(\(el\) => !el\.disabled && !el\.hidden\)/);
+    assert.match(trap, /trapRoot\.querySelectorAll\("input, button"\)\]\.filter\(\(el\) => !el\.disabled && !el\.hidden\)/);
   });
 
   it("modal controls get a transparent 2px outline only while focused, plus the soft ring", async () => {
@@ -293,9 +315,14 @@ describe("newtab city modal source", () => {
     assert.doesNotMatch(css, /\.weather-form__suggestion:focus-visible \{\s*outline: 3px/);
   });
 
+  it("the Tab trap covers the city modal or the desktop dialog, whichever is open", async () => {
+    const code = await source();
+    assert.match(code, /const trapRoot = cityModalRoot \?\? desktopDialogRoot;/);
+  });
+
   it("keeps Tab on the page (preventDefault) when every modal control is disabled", async () => {
     const code = await source();
-    const trap = between(code, 'if (event.key !== "Tab" || !cityModalRoot) return;', "});");
+    const trap = between(code, 'if (event.key !== "Tab" || !trapRoot) return;', "});");
     assert.match(trap, /if \(controls\.length === 0\) \{\s*event\.preventDefault\(\);[^\n]*\s*return;\s*\}/);
   });
 
