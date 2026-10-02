@@ -199,8 +199,11 @@ describe("newtab weather source", () => {
     assert.ok(formStart > -1 && formEnd > formStart);
     assert.match(
       form,
-      /suggestionsList\.addEventListener\("mousedown", \(event\) => \{\s*event\.preventDefault\(\);\s*\}\);/
+      /suggestionsList\.addEventListener\("mousedown", \(event\) => \{\s*event\.preventDefault\(\);[^\n]*\n/
     );
+    // A press on an item also cancels the pending request, so a late response never replaces the list under the press.
+    const press = form.slice(form.indexOf('suggestionsList.addEventListener("mousedown"'), form.indexOf("});", form.indexOf('suggestionsList.addEventListener("mousedown"')));
+    assert.match(press, /closest\("\.weather-form__suggestion"\)\) cancelPendingSuggestionRequest\(\);/);
   });
 
   it("cancels a pending suggestion request when focus leaves the field wrapper or Escape is pressed (Escape is central)", async () => {
@@ -276,6 +279,28 @@ describe("newtab weather source", () => {
     assert.match(handler, /chosenCity = null;/);
     assert.match(handler, /closeList\(\);/);
     assert.match(handler, /input\.focus\(\);/);
+  });
+
+  it("a pointer press is tracked for the main button only, cleared on window blur, and every listener is disposed", async () => {
+    const code = await source();
+    const form = code.slice(code.indexOf("function createCityForm(mode) {"), code.indexOf("function buildCityModal("));
+    const down = form.slice(form.indexOf("const onPointerDown"), form.indexOf("const onPointerUp"));
+    assert.match(down, /if \(event\.button !== 0\) return;/);
+    assert.match(form, /const onWindowBlur = \(\) => \{\s*pressing = false;/);
+    assert.match(form, /window\.addEventListener\("blur", onWindowBlur\);/);
+    const dispose = form.slice(form.indexOf("dispose: () => {"), form.indexOf("choose(city) {"));
+    for (const line of [
+      'window.removeEventListener("resize", onResize)',
+      'document.removeEventListener("pointerdown", onPointerDown, true)',
+      'document.removeEventListener("pointerup", onPointerUp, true)',
+      'document.removeEventListener("pointercancel", onPointerUp, true)',
+      'window.removeEventListener("blur", onWindowBlur)'
+    ]) {
+      assert.ok(dispose.includes(line), line);
+    }
+    // A failed modal build disposes the half-built form before dropping it.
+    const show = code.slice(code.indexOf("function showCityModal("), code.indexOf("function hideCityModal("));
+    assert.match(show, /\} catch \(error\) \{[\s\S]*?activeCityForm\?\.dispose\?\.\(\);[^\n]*\n\s*activeCityForm = null;/);
   });
 
   it("ignores the second click of a double click on an item, but never a keyboard activation", async () => {

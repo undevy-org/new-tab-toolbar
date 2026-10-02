@@ -292,10 +292,6 @@ body {
   margin-bottom: 12px;
 }
 
-.favorites-panel__list {
-  gap: 0;
-}
-
 .favorites-panel__row {
   display: flex;
   align-items: center;

@@ -472,6 +472,14 @@ describe("newtab city modal source", () => {
     assert.match(code, /addEventListener\("pointerdown", \(event\) => \{\s*if \(cityModalRoot\) return;/);
   });
 
+  it("the panel dock falls back to center like gridLayout; no dead list gap rule", async () => {
+    const code = await source();
+    assert.match(code, /position: favoritesRoot\.dataset\.position \?\? "center",/);
+    assert.doesNotMatch(code, /dataset\.position \?\? "top"/);
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.doesNotMatch(css, /\.favorites-panel__list\s*\{\s*gap: 0;\s*\}/);
+  });
+
   it("traps Tab inside the modal; open list items are part of the cycle, hidden controls are not", async () => {
     const code = await source();
     const trap = between(code, 'if (event.key !== "Tab" || !cityModalRoot) return;', "});");

@@ -67,7 +67,7 @@ function publishPanelDock() {
     Number.parseFloat(getComputedStyle(favoritesPanelRoot).getPropertyValue("--panel-inset")) || 16;
   const bar = favoritesRoot.getBoundingClientRect();
   const { dock, maxHeight } = panelDock({
-    position: favoritesRoot.dataset.position ?? "top",
+    position: favoritesRoot.dataset.position ?? "center",
     barTop: bar.top,
     barBottom: bar.bottom,
     viewportHeight: window.innerHeight,
@@ -888,7 +888,10 @@ function createCityForm(mode) {
   window.addEventListener("resize", onResize);
 
   suggestionsList.addEventListener("mousedown", (event) => {
-    event.preventDefault();
+    event.preventDefault(); // the field keeps focus, so the item never gets focusin
+    // A press on an item cancels the pending request: a late response must never replace the list under the pressed item
+    // (the click would be lost or land on another item). The click then chooses the item; later typing gets suggestions again.
+    if (event.target instanceof Element && event.target.closest(".weather-form__suggestion")) cancelPendingSuggestionRequest();
   });
 
   let debounceTimer = null;
@@ -966,7 +969,11 @@ function createCityForm(mode) {
   // delivered: in docked mode the buttons would move between press and release and the click would be lost. The list closes
   // after the release instead (setTimeout 0 runs after the click event).
   const onPointerDown = (event) => {
+    if (event.button !== 0) return; // a right click opens a context menu and may never deliver a pointerup
     pressing = event.target instanceof Element && Boolean(event.target.closest(".city-modal__dialog"));
+  };
+  const onWindowBlur = () => {
+    pressing = false; // a press interrupted by leaving the window never gets its pointerup
   };
   const onPointerUp = () => {
     if (!pressing) return;
@@ -976,6 +983,7 @@ function createCityForm(mode) {
   document.addEventListener("pointerdown", onPointerDown, true);
   document.addEventListener("pointerup", onPointerUp, true);
   document.addEventListener("pointercancel", onPointerUp, true);
+  window.addEventListener("blur", onWindowBlur);
 
   // Window focus loss does nothing. Moving focus to something outside the field wrapper cancels the debounce and the request
   // in flight at once (list open or not) and closes the list, unless a pointer press inside the dialog is still going on.
@@ -1039,6 +1047,7 @@ function createCityForm(mode) {
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("pointerup", onPointerUp, true);
       document.removeEventListener("pointercancel", onPointerUp, true);
+      window.removeEventListener("blur", onWindowBlur);
     },
     choose(city) {
       closeList(); // cancels the debounce and the in-flight request; late responses are ignored (signal aborted)
@@ -1177,6 +1186,7 @@ function showCityModal(mode, openerSelector) {
   } catch (error) {
     // Nothing half-open: a failed build must not leave the UI state "open" and block every later open.
     root?.remove();
+    activeCityForm?.dispose?.(); // the form's document and window listeners must not outlive it
     activeCityForm = null;
     throw error;
   }
