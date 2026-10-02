@@ -79,8 +79,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Notes
 
-- A build from before the desktop grid treats the new layout as written by a newer
-  version: it shows that message and keeps it read-only until it is updated.
+- Update Quiet Tab on every device that shares your Chrome Sync. Version 0.1.0 does
+  not read the new layout (the migration removes the old favorites keys), so a
+  device still on 0.1.0 shows no links until it is updated, and a link added there
+  in the meantime is not carried over: the updated version treats it as leftover
+  old data and removes it.
 - If you update with no city set, the city modal appears once on your next new tab.
   Leaving that tab without closing the modal does not count as closing it, so it
   appears again on the next new tab. The choice to close it is remembered per
