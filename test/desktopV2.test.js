@@ -208,20 +208,35 @@ describe("ensureWidgetsLayout (Defaults, AS-1, AS-35)", () => {
     const meta = { version: 2, order: items.map((i) => i.id).concat([CHROME_IDS.settings]), createdAt: now, updatedAt: now };
     await area.set({ [WIDGETS_META_KEY]: meta, ...Object.fromEntries(items.map((i) => [widgetItemStorageKey(i.id), i])) });
     const gridsBefore = await gridsOf(area);
+    const originalOrder = [...meta.order];
 
     const result = await ensureWidgetsLayout(area, { now: () => now });
     assert.equal(result.changed, true);
     assert.equal(result.meta, "valid");
 
+    const metaAfter = (await area.get([WIDGETS_META_KEY]))[WIDGETS_META_KEY];
     const gridsAfter = await gridsOf(area);
-    assert.ok(gridsAfter["chrome:settings"]); // was added
-    assert.deepEqual(gridsAfter.a, gridsBefore.a); // existing items unchanged
+
+    // Exact grid for added item: row 0 occupied x=0-6 (a,temp,precip 2x1,aq 2x1,uv), so first free is (7,0)
+    assert.deepEqual(gridsAfter["chrome:settings"], g(7, 0));
+
+    // Meta.order unchanged (no duplicates added)
+    assert.deepEqual(metaAfter.order, originalOrder);
+    assert.equal(new Set(metaAfter.order).size, metaAfter.order.length, "no duplicate ids in order");
+
+    // All other items' grids unchanged
+    assert.deepEqual(gridsAfter.a, gridsBefore.a);
     assert.deepEqual(gridsAfter["weather:temperature"], gridsBefore["weather:temperature"]);
+    assert.deepEqual(gridsAfter["weather:precipitation"], gridsBefore["weather:precipitation"]);
+    assert.deepEqual(gridsAfter["weather:airQuality"], gridsBefore["weather:airQuality"]);
+    assert.deepEqual(gridsAfter["weather:uv"], gridsBefore["weather:uv"]);
+    assert.deepEqual(gridsAfter["chrome:add"], gridsBefore["chrome:add"]);
 
     // Second call is idempotent
-    const before = await area.get(null);
-    assert.equal((await ensureWidgetsLayout(area)).changed, false);
-    assert.deepEqual(await area.get(null), before);
+    const afterFirstCall = await area.get(null);
+    const result2 = await ensureWidgetsLayout(area, { now: () => now });
+    assert.equal(result2.changed, false);
+    assert.deepEqual(await area.get(null), afterFirstCall);
   });
   it("write order: items written before meta in both migrations and ensures", async () => {
     const writeLog = [];
