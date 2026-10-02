@@ -27,7 +27,7 @@ import {
   WIDGETS_MUTATION_LOCK_NAME,
   WIDGET_TYPES
 } from "./widgetsShared.js";
-import { defaultColumnsForItems } from "./widgetsLayout.js";
+import { defaultColumnsForItems, groupWidgets } from "./widgetsLayout.js";
 
 export const WIDGETS_META_KEY = "quietTabWidgetsMeta";
 
@@ -43,12 +43,12 @@ export function widgetItemStorageKey(id) {
   return `quietTabWidget:${id}`;
 }
 
-export function createInitialWidgetsState(now = new Date().toISOString()) {
+export function createInitialWidgetsState(now = new Date().toISOString(), position = "top") {
   return {
     version: WIDGETS_VERSION,
     items: [],
     columns: DEFAULT_GRID_COLUMNS,
-    position: "top",
+    position,
     createdAt: now,
     updatedAt: now
   };
@@ -225,7 +225,8 @@ export function createWidgetsStore(
       const meta = await readMeta(storageArea);
 
       if (!meta) {
-        return createInitialWidgetsState(now());
+        const kind = inspectWidgetsMeta(await storageArea.get(WIDGETS_META_KEY));
+        return createInitialWidgetsState(now(), kind === "missing" ? "center" : "top");
       }
 
       if (meta.order.length === 0) {
@@ -248,7 +249,7 @@ export function createWidgetsStore(
 
       const candidate = {
         version: WIDGETS_VERSION,
-        items,
+        items: groupWidgets(items),
         columns: meta.columns,
         position: meta.position,
         createdAt: meta.createdAt,
@@ -265,7 +266,7 @@ export function createWidgetsStore(
       }
       await assertWritable();
 
-      const nextState = cloneValue(state);
+      const nextState = cloneValue({ ...state, items: groupWidgets(state.items) });
       const previousMeta = await readMeta(storageArea);
       const previousOrder = previousMeta?.order ?? [];
       const nextIds = new Set(nextState.items.map((item) => item.id));
@@ -481,7 +482,7 @@ export function ensureWeatherMetrics(storageArea, { now = () => new Date().toISO
             version: WIDGETS_VERSION,
             order: [],
             columns: DEFAULT_GRID_COLUMNS,
-            position: "top",
+            position: "center",
             createdAt: timestamp,
             updatedAt: timestamp
           };
