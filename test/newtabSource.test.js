@@ -49,7 +49,7 @@ describe("newtab favorites source", () => {
     assert.match(code, /window\.addEventListener\("blur", \(\) => \{\s*backgroundPressed = false;\s*cancelDrag\(\);/);
     assert.match(code, /event\.relatedTarget === null && outsideViewport\(event\)\) cancelDrag\(\)/);
     assert.match(code, /window\.addEventListener\("resize", \(\) => \{\s*cancelDrag\(\);/);
-    assert.match(code, /function setEditMode\(on\) \{\s*if \(!on\) cancelDrag\(\);/);
+    assert.match(code, /function setEditMode\(on\) \{\s*if \(!on\) \{\s*cancelDrag\(\);\s*closeAddMenu\(\);/); // leaving edit mode also closes the Add menu
     // One-shot suppression of the click that trails a started drag.
     assert.match(code, /suppressDragClick = true;/);
     assert.match(code, /if \(!suppressDragClick \|\| event\.detail === 0\) return;\s*suppressDragClick = false;\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);/);
@@ -83,14 +83,15 @@ describe("newtab favorites source", () => {
   it("guards the background click (primary button only, reset on cancel) and falls back to Settings for a vanished badge", async () => {
     const code = await source();
     assert.match(code, /const isPrimaryPress = \(event\) => event\.button === 0 && event\.isPrimary;/);
-    assert.match(code, /backgroundPressed = desktopUi\.editMode && isPrimaryPress\(event\) && isBackground\(event\.target\);/);
+    // The press that closed the Add menu never also exits edit mode (Task 10).
+    assert.match(code, /backgroundPressed = desktopUi\.editMode && event !== addMenuDismissPress && isPrimaryPress\(event\) && isBackground\(event\.target\);/);
     assert.match(code, /favoritesRoot\.addEventListener\("pointercancel", \(\) => \{\s*backgroundPressed = false;/);
     assert.match(code, /\?\? \(target\.badge \? favoritesRoot\.querySelector\(SETTINGS_TILE_SELECTOR\) : null\)/);
   });
 
   it("drives the desktop UI from the pure desktopUiState module, not a mode string", async () => {
     const code = await source();
-    assert.match(code, /import \{\s*closeDialog,\s*createDesktopUiState,\s*endDrag,\s*enterEditMode,\s*escapeLayer,\s*exitEditMode,\s*openDialog,\s*startDrag,\s*updateDrag\s*\} from "\.\/desktopUiState\.js";/);
+    assert.match(code, /import \{\s*closeDialog,\s*createDesktopUiState,\s*endDrag,\s*enterEditMode,\s*escapeLayer,\s*exitEditMode,\s*closeMenu,\s*openDialog,\s*openMenu,\s*startDrag,\s*updateDrag\s*\} from "\.\/desktopUiState\.js";/);
     assert.match(code, /let desktopUi = createDesktopUiState\(\);/);
     assert.doesNotMatch(code, /favoritesMode/);
     assert.doesNotMatch(code, /favoritesUiState\.js/);
@@ -116,7 +117,9 @@ describe("newtab favorites source", () => {
   });
   it("never stacks the city modal on a desktop dialog, and Cancel respects favoritesBusy", async () => {
     const code = await source();
-    assert.match(code, /if \(cityModalRoot \|\| desktopDialogRoot \|\| isCityModalOpen\(weatherUi\)/);
+    // The only stacking: the change-mode city modal over the weather edit dialog; first-run never opens over a dialog.
+    assert.match(code, /const overWeatherDialog = mode === "change" && desktopDialogRoot !== null && desktopUi\.dialog\?\.kind === "edit-weather";/);
+    assert.match(code, /if \(cityModalRoot \|\| \(desktopDialogRoot && !overWeatherDialog\) \|\| isCityModalOpen\(weatherUi\)/);
     assert.match(code, /if \(cityModalRoot \|\| desktopDialogRoot \|\| cityModalShownThisLoad\) return;/);
     assert.match(code, /\[data-favorite-action="cancel"\]'\)\?\.addEventListener\("click", \(\) => \{\s+if \(!favoritesBusy\) closeDesktopDialog\(\);/);
   });
@@ -225,7 +228,7 @@ describe("newtab favorites source", () => {
 
   it("has a desktop dialog shell: modal role, add-link branch, atomic mutation runner, live region", async () => {
     const code = await source();
-    assert.match(code, /function openDesktopDialog\(dialog\)/);
+    assert.match(code, /function openDesktopDialog\(dialog, \{ opener = focusedWidgetId\(\) \} = \{\}\)/);
     assert.match(code, /function closeDesktopDialog\(/);
     assert.match(code, /root\.setAttribute\("aria-modal", "true"\);/);
     assert.match(code, /case "add-link":/);
@@ -707,6 +710,72 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
     const code = await source();
     assert.match(code, /if \(widgetsEnsureFailed\) showDesktopStatus\(ENSURE_FAILED_MESSAGE\);/);
     assert.match(fn(code, "showDesktopStatus"), /desktopStatus\.textContent = text;/);
+  });
+
+  it("Task 10: edit, confirm-delete and weather dialogs, the Add menu and the hide/restore actions (copy, kinds, wiring)", async () => {
+    const code = await source();
+    const build = fn(code, "buildDialogContent");
+    for (const kind of ["add-link", "edit-link", "confirm-delete", "edit-weather"]) assert.ok(build.includes(`case "${kind}":`), kind);
+    assert.match(build, /title\.textContent = "Delete link\?";/);
+    assert.match(build, /createNode\("p", "desktop-dialog__body", "This removes the link from your grid\."\)/);
+    assert.match(build, /createIconButton\("button button--danger", "Delete", "trash2"\)/);
+    assert.match(build, /widgetsService\.updateFavorite\(item\.id, payload, \{ columns \}\)/);
+    assert.match(build, /widgetsService\.updateWeatherMetric\(item\.id, size, \{ columns \}\)/);
+    assert.match(build, /save\.disabled = true; \/\/ enabled only when the size changed/);
+    assert.match(build, /showCityModal\("change", WEATHER_DIALOG_CITY_SELECTOR\)/);
+    assert.match(code, /const WEATHER_DIALOG_CITY_SELECTOR = '\[data-dialog="edit-weather"\] \[data-weather-action="open-city-modal"\]';/);
+    assert.match(fn(code, "syncWeatherDialogCity"), /location\?\.name \?\? "No city set"/);
+    assert.match(fn(code, "syncWeatherDialogCity"), /location \? "Change city" : "Set a city"/);
+    // Size radiogroup: one shared control, values 1x1|2x1|2x2, shown as 1×1 / 2×1 / 2×2.
+    assert.match(code, /const SIZE_OPTIONS = \[\s*\["1x1", "1×1"\],\s*\["2x1", "2×1"\],\s*\["2x2", "2×2"\]\s*\];/);
+    assert.match(fn(code, "createSizeControl"), /createSegmentedControl\("size", SIZE_OPTIONS,/);
+    assert.match(fn(code, "createFavoriteForm"), /if \(isEdit\) rows\.push\(createFormRow\("Size", createSizeControl\(item\.grid\)\)\);/);
+    // Both favorite-form branches carry the role=alert slot (the edit dialog had none before Task 10).
+    assert.match(fn(code, "createFavoriteForm"), /form\.append\(\.\.\.rows, createDialogErrorSlot\(\), footer\);/);
+    assert.match(fn(code, "createDialogErrorSlot"), /error\.setAttribute\("role", "alert"\);\s*error\.dataset\.dialogError = "";/);
+    // Add menu: role=menu named Add; the second level lists hidden metrics by name; one menu per activation.
+    assert.match(code, /menu\.setAttribute\("role", "menu"\);\s*menu\.setAttribute\("aria-label", "Add"\);/);
+    assert.match(fn(code, "fillAddMenu"), /\["add-link", "Add link", null\], \["add-weather", "Add weather tile…", null\]/);
+    assert.match(fn(code, "fillAddMenu"), /hiddenMetrics\(\)\.map\(\(item\) => \["restore", metricName\(item\.id\), item\.id\]\)/);
+    assert.match(fn(code, "fillAddMenu"), /entry\.setAttribute\("role", "menuitem"\);/);
+    assert.match(fn(code, "activateAddTile"), /if \(!desktopUi\.editMode \|\| hiddenMetrics\(\)\.length === 0\) \{\s*openDesktopDialog\(\{ kind: "add-link" \}\);/);
+    assert.match(fn(code, "activateAddTile"), /if \(addMenuRoot\) \{\s*focusMenuItem\(0\);\s*return;/, "a second activation keeps the one menu");
+    assert.match(code, /\} else if \(layer === "menu"\) \{\s*closeAddMenu\(\{ focusAdd: true \}\);/);
+    // Hide / restore / delete go through the atomic runner; the hint's badge carries its metric id, never weather:hint.
+    assert.match(fn(code, "hideWeatherMetric"), /widgetsService\.updateWeatherMetric\(metricId, \{ enabled: false \}, \{ columns \}\)/);
+    assert.match(fn(code, "restoreWeatherMetric"), /widgetsService\.updateWeatherMetric\(metricId, \{ enabled: true \}, \{ columns \}\)/);
+    assert.match(fn(code, "confirmDeleteFavorite"), /const next = neighborTargets\(id\);[\s\S]*widgetsService\.deleteFavorite\(id, \{ columns \}\)/);
+    assert.match(fn(code, "neighborTargets"), /\[ids\[index \+ 1\], ids\[index - 1\]\]\), SETTINGS_TILE_ID\]/);
+    assert.match(fn(code, "handleEditModeClick"), /tile\.dataset\.metricId \?\? tile\.dataset\.widgetId/);
+    assert.match(fn(code, "createCityHintTile"), /if \(!desktopUi\.editMode\) button\.dataset\.favoriteAction = "set-city";/);
+    // closeDesktopDialog takes a widget id, an { id, badge } target or a list; the weather dialog falls back to its metric.
+    assert.match(fn(code, "closeDesktopDialog"), /if \(restoreFocusTo\) focusWidgetTarget\(\[restoreFocusTo, fallback\]\.flat\(\)\);/);
+    assert.match(fn(code, "focusWidgetTarget"), /typeof target === "string" \? \{ id: target, badge: false \} : target/);
+  });
+
+  it("Task 10: the city modal stacked over the weather dialog keeps the grid inert and restores only the dialog on close", async () => {
+    const code = await source();
+    const show = fn(code, "showCityModal");
+    assert.match(show, /if \(overWeatherDialog\) \{\s*desktopDialogRoot\.inert = true;/);
+    assert.match(show, /cityModalRoot\.classList\.add\("city-modal--stacked"\);/);
+    const hide = fn(code, "hideCityModal");
+    assert.match(hide, /if \(desktopDialogRoot\) \{[^}]*desktopDialogRoot\.inert = false;\s*syncWeatherDialogCity\(\);\s*\} else if \(favoritesRoot\) favoritesRoot\.inert = false;/);
+    // The opener of a stacked city modal lives in the dialog, outside the grid: focus lookup is document-wide.
+    assert.match(fn(code, "applyPendingFocus"), /const target = document\.querySelector\(selector\);/);
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /\.city-modal\.city-modal--stacked \{ z-index: 102; \}/);
+    assert.match(css, /\.desktop-dialog \{[^}]*z-index: 101;/s);
+  });
+
+  it("Task 10: the first-run copy points to a weather tile (the Widgets panel is gone)", async () => {
+    const code = await source();
+    assert.match(code, /skip this and you can add a city later from a weather tile\./);
+    assert.doesNotMatch(code, /later in Widgets/);
+  });
+
+  it("Task 10: the − badge has an explicit focus ring from the --focus token", async () => {
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /\.desktop-grid > \.tile-remove:focus-visible \{\s*outline: 3px solid var\(--focus\);/);
   });
 
   it("never uses innerHTML in newtab.js and adds no chrome.storage.onChanged listener", async () => {

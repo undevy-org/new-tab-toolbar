@@ -1059,3 +1059,84 @@ button.weather-tile {
 .desktop-dialog .button--primary:focus-visible {
   background: var(--primary);
 }
+
+/* Remove badge keyboard focus (normal and reduced-motion edit mode): the shared focus ring token, never the UA default. */
+.desktop-grid > .tile-remove:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Delete confirm and weather edit dialog (Task 10). */
+.desktop-dialog__body { margin: 0 0 4px; color: var(--muted); font-size: 14px; }
+
+.desktop-dialog[data-dialog="confirm-delete"] .favorite-form__footer { justify-content: flex-end; margin-top: 12px; padding-bottom: 0; }
+.desktop-dialog[data-dialog="confirm-delete"] .favorite-form__footer .button--danger { margin-right: 0; }
+
+.desktop-dialog__city {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  margin-bottom: 8px;
+}
+
+.desktop-dialog__city-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.text-button {
+  flex: none;
+  min-height: 32px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.text-button:disabled { color: var(--muted); cursor: default; }
+
+.desktop-dialog .text-button:focus-visible { box-shadow: 0 0 0 2px var(--soft-ring); }
+
+/* The change-mode city modal stacked over the weather edit dialog (z-index 101). */
+.city-modal.city-modal--stacked { z-index: 102; }
+
+/* Add menu (edit mode, >= 1 hidden metric): a popover anchored to the Add tile, placed by newtab.js. */
+.add-menu {
+  position: absolute;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 20%);
+}
+
+.add-menu__item {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.add-menu__item:hover { background: var(--soft-fill); }
+
+.add-menu__item:focus-visible,
+.add-menu__item:focus {
+  outline: 2px solid transparent; /* forced colors turn this into a visible indicator */
+  background: var(--soft-fill-strong);
+  box-shadow: inset 0 0 0 2px var(--soft-ring);
+}

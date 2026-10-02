@@ -14,7 +14,9 @@ import {
   enterEditMode,
   escapeLayer,
   exitEditMode,
+  closeMenu,
   openDialog,
+  openMenu,
   startDrag,
   updateDrag
 } from "./desktopUiState.js";
@@ -417,6 +419,8 @@ function createFavoriteForm(item) {
   const colorRow = createFormRow("Color", colorControls);
 
   const footer = createNode("div", "favorite-form__footer");
+  const rows = [createFormRow("Link", url), createFormRow("Name", label), createFormRow("Icon", iconMode), customIconRow, colorRow];
+  if (isEdit) rows.push(createFormRow("Size", createSizeControl(item.grid))); // the add dialog adds 1×1 (spec § Placement rules)
 
   if (isEdit) {
     const remove = createIconButton("button button--danger", "Delete", "trash2");
@@ -442,16 +446,34 @@ function createFavoriteForm(item) {
 
   footer.append(cancel, save);
 
-  form.append(
-    createFormRow("Link", url),
-    createFormRow("Name", label),
-    createFormRow("Icon", iconMode),
-    customIconRow,
-    colorRow,
-    footer
-  );
+  form.append(...rows, createDialogErrorSlot(), footer); // both branches carry the dialog's role=alert slot above the buttons
 
   return form;
+}
+
+// The dialog's write/validation message slot (spec § Write failures: inside the open modal, above its buttons).
+function createDialogErrorSlot() {
+  const error = createNode("div", "desktop-dialog__error", "");
+  error.setAttribute("role", "alert");
+  error.dataset.dialogError = "";
+  error.hidden = true;
+  return error;
+}
+
+const SIZE_OPTIONS = [
+  ["1x1", "1×1"],
+  ["2x1", "2×1"],
+  ["2x2", "2×2"]
+];
+
+// Size radiogroup (name "size", values 1x1|2x1|2x2) shared by the link and weather edit dialogs.
+function createSizeControl(grid) {
+  return createSegmentedControl("size", SIZE_OPTIONS, grid ? `${grid.w}x${grid.h}` : "1x1");
+}
+
+function readSize(value) {
+  const match = /^([12])x([12])$/.exec(String(value ?? ""));
+  return match ? { w: Number(match[1]), h: Number(match[2]) } : null;
 }
 
 function readFavoriteFormPayload(data) {
@@ -849,7 +871,7 @@ function buildCityModal(mode, location) {
     const description = createNode(
       "p",
       "city-modal__description",
-      "Pick a city to see local weather next to your links. Weather is optional: skip this and you can add a city later in Widgets."
+      "Pick a city to see local weather next to your links. Weather is optional: skip this and you can add a city later from a weather tile."
     );
     description.id = "city-modal-description";
     dialog.setAttribute("aria-describedby", description.id);
@@ -944,7 +966,10 @@ function attachCityModalListeners(root) {
 let cityModalShownThisLoad = false; // the automatic prompt never reopens a modal that was already shown this page load
 
 function showCityModal(mode, openerSelector) {
-  if (cityModalRoot || desktopDialogRoot || isCityModalOpen(weatherUi) || !weatherService || !document.body) return false; // one modal at a time, never stacked on a desktop dialog
+  // One modal at a time; the only stacking is the change-mode city modal over the weather edit dialog (spec § Weather
+  // edit modal). The first-run modal never opens over a desktop dialog.
+  const overWeatherDialog = mode === "change" && desktopDialogRoot !== null && desktopUi.dialog?.kind === "edit-weather";
+  if (cityModalRoot || (desktopDialogRoot && !overWeatherDialog) || isCityModalOpen(weatherUi) || !weatherService || !document.body) return false;
   cityModalError = "";
   let root = null;
   try {
@@ -966,7 +991,12 @@ function showCityModal(mode, openerSelector) {
   cityModalHadFocus = false;
   cityModalOpenedAt = performance.now();
   hideTooltip();
+  closeAddMenu();
   if (favoritesRoot) favoritesRoot.inert = true;
+  if (overWeatherDialog) {
+    desktopDialogRoot.inert = true; // the dialog under the city modal is not interactive until the city modal closes
+    cityModalRoot.classList.add("city-modal--stacked");
+  }
   if (mode === "change") cityModalRoot.querySelector(CITY_INPUT_SELECTOR)?.focus(); // first-run never steals focus
   return true;
 }
@@ -985,7 +1015,11 @@ function hideCityModal({ dismiss = false } = {}) {
   weatherUi = closeCityModalState(weatherUi);
   cityModalError = "";
   cityModalHadFocus = false;
-  if (favoritesRoot) favoritesRoot.inert = false;
+  if (desktopDialogRoot) {
+    // Stacked over the weather dialog: the grid stays inert under the dialog, the dialog becomes interactive again.
+    desktopDialogRoot.inert = false;
+    syncWeatherDialogCity();
+  } else if (favoritesRoot) favoritesRoot.inert = false;
   if (dismiss && mode === "first-run") onFirstRunDismissed();
   if (mode === "change") {
     pendingFocus = [cityModalOpener, SETTINGS_TILE_SELECTOR].filter(Boolean);
@@ -1025,7 +1059,7 @@ function createWeatherMetricTile(item, cell, view) {
   const model = describeWeatherMetric({ metricKey: weatherMetricKey(item.id), result: view, size });
   if (!model) return null;
 
-  // Edit mode: the tile becomes a button named "Edit <metric name>"; its click is a no-op until Task 10.
+  // Edit mode: the tile becomes a button named "Edit <metric name>"; a tap opens the weather edit dialog.
   const editing = desktopUi.editMode;
   const tile = createNode(editing ? "button" : "div", "weather-tile");
   tile.dataset.widgetId = item.id;
@@ -1066,7 +1100,7 @@ function createWeatherMetricTile(item, cell, view) {
 function createCityHintTile(cell, item) {
   const button = createNode("button", "city-hint-tile");
   button.type = "button";
-  button.dataset.favoriteAction = "set-city";
+  if (!desktopUi.editMode) button.dataset.favoriteAction = "set-city"; // edit mode: it behaves as its metric (weather dialog)
   button.dataset.widgetId = "weather:hint";
   button.dataset.metricId = item.id;
   button.setAttribute("aria-label", "Set a city");
@@ -1101,23 +1135,35 @@ function createRemoveBadge(item) {
 const ADD_TILE_SELECTOR = '[data-widget-id="chrome:add"]';
 const DIALOG_BACKDROP_GUARD_MS = 300;
 let desktopDialogRoot = null;
-let desktopDialogOpener = null; // widget id of the tile that had focus when the dialog opened, looked up again at close
+let desktopDialogOpener = null; // { id, badge } of the tile or − badge that opened the dialog, looked up again at close
 let desktopDialogOpenedAt = 0;
 
+const itemById = (id) => widgetsState?.items.find((item) => item.id === id) ?? null;
+const metricName = (id) => METRIC_LABELS[weatherMetricKey(id)];
+const WEATHER_DIALOG_CITY_SELECTOR = '[data-dialog="edit-weather"] [data-weather-action="open-city-modal"]';
+
+function createDialogFooter(...buttons) {
+  const footer = createNode("div", "favorite-form__footer");
+  footer.append(...buttons);
+  return footer;
+}
+
+function createDialogCancel() {
+  const cancel = createIconButton("button", "Cancel", "x");
+  cancel.type = "button";
+  cancel.dataset.favoriteAction = "cancel"; // openDesktopDialog wires every Cancel the same way
+  return cancel;
+}
+
+// One branch per dialog kind (desktopUiState DIALOG_KINDS). Strings only through text nodes.
 function buildDialogContent(root, dialog) {
   const title = createNode("h2", "desktop-dialog__title");
   title.id = "desktop-dialog-title";
-  const error = createNode("div", "desktop-dialog__error", "");
-  error.setAttribute("role", "alert");
-  error.dataset.dialogError = "";
-  error.hidden = true;
 
-  // Task 10 adds edit-link, edit-weather and confirm-delete as further branches here.
   switch (dialog.kind) {
     case "add-link": {
       title.textContent = "Add link";
       const form = createFavoriteForm(null);
-      form.insertBefore(error, form.querySelector(".favorite-form__footer"));
       form.addEventListener("submit", (event) => {
         event.preventDefault();
         const payload = readFavoriteFormPayload(new FormData(form));
@@ -1134,15 +1180,111 @@ function buildDialogContent(root, dialog) {
       root.append(title, form);
       break;
     }
+    case "edit-link": {
+      const item = itemById(dialog.id);
+      if (item?.type !== "favorite") throw new Error("Favorite not found");
+      title.textContent = "Edit link";
+      const form = createFavoriteForm(item);
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const data = new FormData(form);
+        const payload = { ...readFavoriteFormPayload(data), ...readSize(data.get("size")) };
+        void runDesktopMutation(
+          (columns) => widgetsService.updateFavorite(item.id, payload, { columns }),
+          { dialogRoot: root }
+        ).then((ok) => {
+          if (ok) {
+            announce("Link saved");
+            closeDesktopDialog();
+          }
+        });
+      });
+      // Delete inside the edit dialog swaps it for the delete confirmation (one dialog at a time, same opener).
+      form.querySelector('[data-favorite-action="delete"]')?.addEventListener("click", () => {
+        if (favoritesBusy) return;
+        const opener = desktopDialogOpener;
+        closeDesktopDialog({ restoreFocusTo: null });
+        openDesktopDialog({ kind: "confirm-delete", id: item.id }, { opener });
+      });
+      root.append(title, form);
+      break;
+    }
+    case "confirm-delete": {
+      const item = itemById(dialog.id);
+      if (item?.type !== "favorite") throw new Error("Favorite not found");
+      title.textContent = "Delete link?";
+      const body = createNode("p", "desktop-dialog__body", "This removes the link from your grid.");
+      body.id = "desktop-dialog-body";
+      root.setAttribute("aria-describedby", body.id);
+      const remove = createIconButton("button button--danger", "Delete", "trash2");
+      remove.type = "button";
+      remove.dataset.dialogAction = "delete";
+      remove.addEventListener("click", () => void confirmDeleteFavorite(item.id));
+      root.append(title, body, createDialogErrorSlot(), createDialogFooter(createDialogCancel(), remove));
+      break;
+    }
+    case "edit-weather": {
+      const item = itemById(dialog.id);
+      if (item?.type !== "weather-metric" || item.enabled !== true) throw new Error("Weather tile not found");
+      title.textContent = metricName(item.id);
+      // City row: the city change commits on its own in the city modal, stacked on top of this dialog.
+      const cityRow = createNode("div", "desktop-dialog__city");
+      const cityName = createNode("span", "desktop-dialog__city-name");
+      cityName.dataset.weatherDialogCity = "";
+      const cityButton = createNode("button", "text-button");
+      cityButton.type = "button";
+      cityButton.dataset.weatherAction = "open-city-modal";
+      cityButton.disabled = !weatherService;
+      cityButton.addEventListener("click", () => {
+        if (!weatherBusy && !favoritesBusy) showCityModal("change", WEATHER_DIALOG_CITY_SELECTOR);
+      });
+      cityRow.append(cityName, cityButton);
+
+      const form = createNode("form", "favorite-form");
+      form.dataset.weatherSizeForm = "";
+      form.noValidate = true;
+      const initial = `${item.grid.w}x${item.grid.h}`;
+      const save = createIconButton("button button--primary", "Save", "check");
+      save.type = "submit";
+      save.disabled = true; // enabled only when the size changed
+      form.addEventListener("change", () => {
+        save.disabled = new FormData(form).get("size") === initial;
+      });
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const size = readSize(new FormData(form).get("size"));
+        if (!size || save.disabled) return;
+        void runDesktopMutation(
+          (columns) => widgetsService.updateWeatherMetric(item.id, size, { columns }),
+          { dialogRoot: root }
+        ).then((ok) => {
+          if (ok) closeDesktopDialog();
+        });
+      });
+      form.append(createFormRow("Size", createSizeControl(item.grid)), createDialogErrorSlot(), createDialogFooter(createDialogCancel(), save));
+      root.append(title, cityRow, form);
+      syncWeatherDialogCity(root);
+      break;
+    }
     default:
       throw new Error(`Unknown dialog: ${dialog.kind}`);
   }
 }
 
-function openDesktopDialog(dialog) {
-  if (!favoritesRoot || desktopDialogRoot) return;
+// The weather dialog's city row follows the stored city (it changes under the dialog through the stacked city modal).
+function syncWeatherDialogCity(root = desktopDialogRoot) {
+  if (root?.dataset.dialog !== "edit-weather") return;
+  const location = weatherLocationError ? null : currentLocation();
+  root.querySelector("[data-weather-dialog-city]").textContent = location?.name ?? "No city set";
+  root.querySelector('[data-weather-action="open-city-modal"]').textContent = location ? "Change city" : "Set a city";
+}
+
+// `opener`: { id, badge } of the control to refocus at close (a tile or its − badge), looked up again at close time.
+function openDesktopDialog(dialog, { opener = focusedWidgetId() } = {}) {
+  if (!favoritesRoot || desktopDialogRoot || cityModalRoot) return false;
+  closeAddMenu();
   showDesktopStatus("");
-  desktopDialogOpener = focusedWidgetId()?.id ?? null;
+  desktopDialogOpener = opener ?? null;
   desktopUi = openDialog(desktopUi, dialog);
   const root = createNode("div", "desktop-dialog");
   root.setAttribute("role", "dialog");
@@ -1153,6 +1295,7 @@ function openDesktopDialog(dialog) {
     buildDialogContent(root, dialog);
   } catch (error) {
     desktopUi = closeDialog(desktopUi);
+    desktopDialogOpener = null;
     throw error;
   }
   const backdrop = createNode("div", "desktop-backdrop");
@@ -1165,26 +1308,221 @@ function openDesktopDialog(dialog) {
   });
   desktopDialogRoot = root;
   desktopDialogOpenedAt = Date.now();
+  hideTooltip();
   favoritesRoot.inert = true;
   document.body.append(backdrop, root);
   root.querySelector("input, button")?.focus();
+  return true;
 }
 
+// `restoreFocusTo`: a widget id, an { id, badge } target, a list of those (first present wins), or null for none.
+// A weather dialog falls back to its metric's tile (the hint that opened it is gone once a city is set).
 function closeDesktopDialog({ restoreFocusTo = desktopDialogOpener } = {}) {
+  const fallback = desktopUi.dialog?.id ?? null;
   document.querySelectorAll(".desktop-dialog, .desktop-backdrop").forEach((node) => node.remove());
   desktopDialogRoot = null;
   if (favoritesRoot) favoritesRoot.inert = false;
   desktopUi = closeDialog(desktopUi);
   desktopDialogOpener = null;
-  if (typeof restoreFocusTo === "string") {
+  if (restoreFocusTo) focusWidgetTarget([restoreFocusTo, fallback].flat());
+}
+
+// Focuses the first present, enabled target: a widget id string (its tile) or { id, badge } (the tile or its − badge).
+function focusWidgetTarget(targets) {
+  for (const target of [targets].flat()) {
+    if (!target) continue;
+    const { id, badge } = typeof target === "string" ? { id: target, badge: false } : target;
+    const selector = badge ? `[data-remove-for="${CSS.escape(id)}"]` : `.desktop-grid > [data-widget-id="${CSS.escape(id)}"]`;
+    const node = favoritesRoot?.querySelector(selector);
+    if (!(node instanceof HTMLElement) || node.matches(":disabled")) continue;
     suppressTooltipOnFocus = true;
     try {
-      favoritesRoot?.querySelector(`[data-widget-id="${CSS.escape(restoreFocusTo)}"]`)?.focus();
+      node.focus();
     } finally {
       suppressTooltipOnFocus = false;
     }
+    return true;
   }
+  return false;
 }
+
+// Spec § DOM order and focus: after a delete or hide, focus goes to the next tile in DOM order, else the previous,
+// else Settings — read from the displayed (y, x) order before the action.
+function neighborTargets(domId) {
+  const ids = [...(favoritesRoot?.querySelectorAll(".desktop-grid > [data-widget-id]") ?? [])].map((tile) => tile.dataset.widgetId);
+  const index = ids.indexOf(domId);
+  return [...(index === -1 ? [] : [ids[index + 1], ids[index - 1]]), SETTINGS_TILE_ID].filter((id) => id && id !== domId);
+}
+
+// Delete confirm (spec § Write failures: a failure is reported in the page-level status line; the favorite stays).
+async function confirmDeleteFavorite(id) {
+  if (favoritesBusy) return;
+  const next = neighborTargets(id);
+  const opener = desktopDialogOpener;
+  const ok = await runDesktopMutation((columns) => widgetsService.deleteFavorite(id, { columns }));
+  if (!desktopDialogRoot) return; // closed meanwhile
+  closeDesktopDialog({ restoreFocusTo: ok ? next : opener });
+  if (ok) announce("Link deleted");
+}
+
+// − on a weather tile (or on the hint, which stands for its metric): hide it, no dialog.
+async function hideWeatherMetric(metricId, domId) {
+  const next = neighborTargets(domId);
+  const ok = await runDesktopMutation((columns) => widgetsService.updateWeatherMetric(metricId, { enabled: false }, { columns }));
+  focusWidgetTarget(ok ? next : [{ id: metricId, badge: true }, domId]);
+}
+
+// Add menu → a hidden metric: restored at the first free block for its size, then focused (or the hint standing for it).
+async function restoreWeatherMetric(metricId) {
+  const ok = await runDesktopMutation((columns) => widgetsService.updateWeatherMetric(metricId, { enabled: true }, { columns }));
+  const hint = favoritesRoot?.querySelector('[data-widget-id="weather:hint"]');
+  focusWidgetTarget(ok ? [metricId, hint?.dataset.metricId === metricId ? "weather:hint" : null, "chrome:add"] : "chrome:add");
+}
+
+// Edit-mode taps (spec § Edit mode): − badges, link and weather tiles (the hint stands for its metric). Chrome tiles are
+// handled by the caller (Settings exits, Add opens the add flow) and never open an edit dialog.
+function handleEditModeClick(target) {
+  if (favoritesBusy || !widgetsService || !widgetsState || desktopDialogRoot) return;
+  const badge = target.closest(".tile-remove");
+  if (badge instanceof HTMLElement) {
+    const item = itemById(badge.dataset.removeFor);
+    if (item?.type === "favorite") {
+      openDesktopDialog({ kind: "confirm-delete", id: item.id }, { opener: { id: item.id, badge: true } });
+    } else if (item?.type === "weather-metric" && item.enabled === true) {
+      void hideWeatherMetric(item.id, badge.previousElementSibling?.dataset.widgetId ?? item.id);
+    }
+    return;
+  }
+  const tile = target.closest(".desktop-grid > [data-widget-id]");
+  if (!(tile instanceof HTMLElement)) return;
+  const item = itemById(tile.dataset.metricId ?? tile.dataset.widgetId);
+  const opener = { id: tile.dataset.widgetId, badge: false };
+  if (item?.type === "favorite") openDesktopDialog({ kind: "edit-link", id: item.id }, { opener });
+  else if (item?.type === "weather-metric" && item.enabled === true) openDesktopDialog({ kind: "edit-weather", id: item.id }, { opener });
+}
+
+// ---- Add tile and Add menu (spec § Add menu (edit mode), AS-30) ----
+let addMenuRoot = null;
+let addMenuDismissPress = null; // the pointerdown that closed the menu: it never also exits edit mode
+
+const hiddenMetrics = () => (widgetsState?.items ?? []).filter((item) => item.type === "weather-metric" && item.enabled !== true);
+
+// Normal mode, or nothing hidden: the add-link dialog. Edit mode with >= 1 hidden metric: the Add menu. A second
+// activation while the menu is open keeps the one menu (Review focus 3).
+function activateAddTile() {
+  if (favoritesBusy || !widgetsService || !widgetsState || desktopDialogRoot) return;
+  if (!desktopUi.editMode || hiddenMetrics().length === 0) {
+    openDesktopDialog({ kind: "add-link" });
+    return;
+  }
+  if (addMenuRoot) {
+    focusMenuItem(0);
+    return;
+  }
+  const menu = createNode("div", "add-menu");
+  menu.id = "add-menu";
+  menu.setAttribute("role", "menu");
+  menu.setAttribute("aria-label", "Add");
+  menu.addEventListener("keydown", onAddMenuKeydown);
+  menu.addEventListener("click", onAddMenuClick);
+  addMenuRoot = menu;
+  hideTooltip();
+  document.body.appendChild(menu);
+  fillAddMenu("add");
+}
+
+function fillAddMenu(kind) {
+  const entries =
+    kind === "add"
+      ? [["add-link", "Add link", null], ["add-weather", "Add weather tile…", null]]
+      : hiddenMetrics().map((item) => ["restore", metricName(item.id), item.id]);
+  if (entries.length === 0) {
+    closeAddMenu({ focusAdd: true });
+    return;
+  }
+  desktopUi = openMenu(desktopUi, kind);
+  addMenuRoot.replaceChildren(
+    ...entries.map(([action, text, metricId]) => {
+      const entry = createNode("button", "add-menu__item", text);
+      entry.type = "button";
+      entry.tabIndex = -1;
+      entry.setAttribute("role", "menuitem");
+      entry.dataset.menuAction = action;
+      if (metricId) entry.dataset.metricId = metricId;
+      return entry;
+    })
+  );
+  placeAddMenu();
+  focusMenuItem(0);
+}
+
+const menuItems = () => (addMenuRoot ? [...addMenuRoot.querySelectorAll('[role="menuitem"]')] : []);
+
+function focusMenuItem(index) {
+  const items = menuItems();
+  if (items.length > 0) items[((index % items.length) + items.length) % items.length].focus();
+}
+
+// Anchored to the Add tile: below it, or above when there is no room below; kept inside the viewport horizontally.
+function placeAddMenu() {
+  const anchor = favoritesRoot?.querySelector(ADD_TILE_SELECTOR);
+  if (!addMenuRoot || !anchor) return;
+  const a = anchor.getBoundingClientRect();
+  const m = addMenuRoot.getBoundingClientRect();
+  const margin = 8;
+  const above = a.top - POPOVER_GAP - m.height;
+  const below = a.bottom + POPOVER_GAP;
+  const top = below + m.height > window.innerHeight - margin && above >= margin ? above : below;
+  const left = Math.max(margin, Math.min(a.left, document.documentElement.clientWidth - m.width - margin));
+  addMenuRoot.style.left = `${left + window.scrollX}px`;
+  addMenuRoot.style.top = `${top + window.scrollY}px`;
+}
+
+function closeAddMenu({ focusAdd = false } = {}) {
+  if (!addMenuRoot) return;
+  addMenuRoot.remove();
+  addMenuRoot = null;
+  desktopUi = closeMenu(desktopUi);
+  if (focusAdd) focusWidgetTarget("chrome:add");
+}
+
+function onAddMenuKeydown(event) {
+  const index = menuItems().indexOf(document.activeElement);
+  if (event.key === "ArrowDown") focusMenuItem(index + 1);
+  else if (event.key === "ArrowUp") focusMenuItem(index - 1);
+  else if (event.key === "Home") focusMenuItem(0);
+  else if (event.key === "End") focusMenuItem(-1);
+  else if (event.key === "Tab") closeAddMenu({ focusAdd: true });
+  else return;
+  event.preventDefault();
+}
+
+function onAddMenuClick(event) {
+  const entry = event.target instanceof Element ? event.target.closest('[role="menuitem"]') : null;
+  if (!(entry instanceof HTMLElement) || favoritesBusy) return;
+  const action = entry.dataset.menuAction;
+  if (action === "add-weather") {
+    fillAddMenu("restore-weather");
+    return;
+  }
+  closeAddMenu();
+  if (action === "add-link") openDesktopDialog({ kind: "add-link" }, { opener: { id: "chrome:add", badge: false } });
+  else if (action === "restore") void restoreWeatherMetric(entry.dataset.metricId);
+}
+
+// An outside press closes the menu and returns focus to Add (after the press's own focus change). A press on the Add
+// tile itself is a second activation and keeps the menu.
+document.addEventListener(
+  "pointerdown",
+  (event) => {
+    if (!addMenuRoot || !(event.target instanceof Element)) return;
+    if (addMenuRoot.contains(event.target) || event.target.closest(ADD_TILE_SELECTOR)) return;
+    addMenuDismissPress = event;
+    closeAddMenu();
+    setTimeout(() => focusWidgetTarget("chrome:add"), 0);
+  },
+  true
+);
 
 // The first field a service message is about; anything else leaves focus on the submit button.
 function invalidFieldFor(message) {
@@ -1236,6 +1574,7 @@ async function runDesktopMutation(action, { dialogRoot = null, renderPending = t
 }
 
 const SETTINGS_TILE_SELECTOR = '[data-widget-id="chrome:settings"]';
+const SETTINGS_TILE_ID = "chrome:settings";
 
 function viewportWidth() {
   return document.documentElement.clientWidth;
@@ -1363,6 +1702,7 @@ window.addEventListener("resize", () => {
   resizeFrame = requestAnimationFrame(() => {
     if (!widgetsState || widgetsNewer || widgetsMigrationFailed) return;
     if (currentColumns() !== renderedColumns || gridMetrics(viewportWidth()).cell !== renderedCell) renderFavorites();
+    placeAddMenu(); // after the re-render: the Add tile may have moved
   });
 });
 
@@ -1423,6 +1763,7 @@ function onDragPointerMove(event) {
     if (Math.hypot(event.clientX - s.startX, event.clientY - s.startY) < DRAG_THRESHOLD_PX) return; // still a tap
     s.started = true;
     suppressDragClick = true;
+    closeAddMenu();
     hideTooltip();
     desktopUi = startDrag(desktopUi, { id: s.id, grab: s.grab, size: { w: s.cell.w, h: s.cell.h }, pointerId: s.pointerId });
   }
@@ -1633,7 +1974,7 @@ function applyPendingFocus() {
   pendingFocus = null;
 
   for (const selector of selectors) {
-    const target = favoritesRoot?.querySelector(selector);
+    const target = document.querySelector(selector); // an opener may live in a desktop dialog, outside the grid
     if (target instanceof HTMLElement && !target.matches(":disabled")) {
       target.focus();
       return;
@@ -1642,7 +1983,10 @@ function applyPendingFocus() {
 }
 
 function setEditMode(on) {
-  if (!on) cancelDrag();
+  if (!on) {
+    cancelDrag();
+    closeAddMenu();
+  }
   hideTooltip();
   const before = desktopUi.editMode;
   desktopUi = on ? enterEditMode(desktopUi) : exitEditMode(desktopUi);
@@ -1774,9 +2118,14 @@ if (favoritesRoot) {
       return;
     }
 
-    // Add: with no Add menu yet (Task 10) it opens the add-link dialog in both modes.
+    // Add: the add-link dialog, or in edit mode with a hidden metric the Add menu.
     if (event.target.closest(ADD_TILE_SELECTOR)) {
-      if (!favoritesBusy && widgetsService && widgetsState) openDesktopDialog({ kind: "add-link" });
+      activateAddTile();
+      return;
+    }
+
+    if (desktopUi.editMode) {
+      handleEditModeClick(event.target);
       return;
     }
 
@@ -1810,7 +2159,7 @@ if (favoritesRoot) {
   const isPrimaryPress = (event) => event.button === 0 && event.isPrimary;
   let backgroundPressed = false;
   favoritesRoot.addEventListener("pointerdown", (event) => {
-    backgroundPressed = desktopUi.editMode && isPrimaryPress(event) && isBackground(event.target);
+    backgroundPressed = desktopUi.editMode && event !== addMenuDismissPress && isPrimaryPress(event) && isBackground(event.target);
   });
   favoritesRoot.addEventListener("pointerup", (event) => {
     if (backgroundPressed && isPrimaryPress(event) && isBackground(event.target) && !desktopUi.drag) setEditMode(false);
@@ -1898,7 +2247,7 @@ if (favoritesRoot) {
     } else if (layer === "dialog") {
       if (!favoritesBusy) closeDesktopDialog();
     } else if (layer === "menu") {
-      // Task 10 closes the Add menu here.
+      closeAddMenu({ focusAdd: true });
     } else if (layer === "exitEdit") {
       setEditMode(false);
     }
