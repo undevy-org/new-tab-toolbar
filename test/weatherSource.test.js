@@ -212,11 +212,17 @@ describe("newtab weather source", () => {
     const blurHandler = form.slice(blurStart);
 
     assert.ok(helperStart > -1 && blurStart > helperStart);
-    assert.doesNotMatch(form, /input\.addEventListener\("keydown"/);
+    const keydownStart = form.indexOf('input.addEventListener("keydown"');
+    const keydownHandler = form.slice(keydownStart, form.indexOf('input.addEventListener("blur"'));
+    assert.ok(keydownStart > -1);
+    assert.doesNotMatch(keydownHandler, /Escape/);
     assert.match(helperBody, /clearTimeout\(debounceTimer\)/);
     assert.match(helperBody, /abortController\.abort\(\)/);
     assert.match(blurHandler, /cancelPendingSuggestionRequest\(\)/);
-    assert.match(form, /activeCityForm = \{ cancelPending: cancelPendingSuggestionRequest, renderSuggestions: renderSuggestionsList \};/);
+    const formObject = form.slice(form.indexOf("activeCityForm = {"));
+    for (const key of ["cancelPending", "renderSuggestions", "refresh", "place", "focusField"]) {
+      assert.match(formObject, new RegExp(`\\b${key}\\b`), key);
+    }
     assert.match(
       code,
       /if \(isSuggestionsOpen\(weatherUi\)\) \{\s*activeCityForm\?\.cancelPending\(\);\s*weatherUi = hideSuggestions\(weatherUi\);\s*activeCityForm\?\.renderSuggestions\(\);/

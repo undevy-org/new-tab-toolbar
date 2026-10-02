@@ -516,7 +516,8 @@ describe("newtab city modal source", () => {
     const code = await source();
     const modal = between(code, "function createCityForm(mode)", "function createWeatherMetricTile(");
     assert.doesNotMatch(modal, /innerHTML/);
-    assert.doesNotMatch(modal, /createIconButton\(/);
+    assert.match(modal, /createIconButton\("button", mode === "first-run" \? "Not now" : "Cancel", "x"\)/);
+    assert.match(modal, /createIconButton\("button button--primary", "Save", "check"\)/);
     assert.match(modal, /form\.noValidate = true;/);
     assert.doesNotMatch(modal, /input\.required/);
     assert.match(modal, /input\.value = "";/);
@@ -530,9 +531,9 @@ describe("newtab city modal source", () => {
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
     assert.match(css, /\.city-modal \{[^}]*position: fixed;[^}]*z-index: 100;/s);
     assert.match(css, /\.city-modal__backdrop \{[^}]*background: rgb\(0 0 0 \/ 50%\);/s);
-    assert.match(css, /\.city-modal__dialog \{[^}]*width: min\(420px, calc\(100vw - 32px\)\);[^}]*max-height: calc\(100vh - 32px\);[^}]*overflow-y: auto;/s);
+    assert.match(css, /\.city-modal__dialog \{[^}]*width: min\(420px, calc\(100vw - 32px\)\);/s);
+    assert.match(css, /\.city-modal__dialog--scroll \{[^}]*max-height: calc\(100vh - 32px\);[^}]*overflow-y: auto;/s);
     assert.match(css, /\.city-modal \.favorite-input::placeholder \{[^}]*color: var\(--muted\);[^}]*opacity: 1;/s);
-    assert.match(css, /\.city-modal :is\(button, input\):focus-visible \{[^}]*outline: 2px solid var\(--text\);[^}]*outline-offset: 2px;/s);
     assert.doesNotMatch(css, /\.city-modal[^{]*\{[^}]*transition/s);
   });
 });

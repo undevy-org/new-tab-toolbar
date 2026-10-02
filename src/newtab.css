@@ -783,44 +783,81 @@ body {
   flex-direction: column;
 }
 
-.weather-form__row {
-  display: flex;
-  gap: 10px;
+.weather-form__field {
+  position: relative;
 }
 
-.weather-form__row > .favorite-input {
-  flex: 1;
-  min-width: 0;
+.weather-form__field > .favorite-input {
+  width: 100%;
+  min-height: 44px;
+  padding-right: 48px;
+}
+
+/* Pinned to the input (44 px high, 36 px button), not to the wrapper's middle: the wrapper also holds the list while it is docked. */
+.weather-form__clear {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  border-color: transparent;
+}
+
+.weather-form__clear[hidden] {
+  display: none;
 }
 
 .weather-form__suggestions {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
 }
 
 .weather-form__suggestions:empty {
   display: none;
 }
 
+/* Low window: no room to overlay, so the list joins the dialog's flow and the dialog scrolls. */
+.weather-form__suggestions--docked {
+  position: static;
+  margin-top: 6px;
+  max-height: none;
+  box-shadow: none;
+}
+
 .weather-form__suggestion {
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--panel);
+  min-height: 36px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--text);
   font: inherit;
   text-align: left;
   cursor: pointer;
-  min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.weather-form__suggestion:hover,
+.weather-form__suggestion:hover {
+  background: var(--soft-fill);
+}
+
+.weather-form__suggestion:active {
+  background: var(--soft-fill-strong);
+}
+
 .weather-form__suggestion:focus-visible {
-  border-color: var(--primary);
   outline: 3px solid var(--focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
 .weather-block__action {
@@ -848,9 +885,6 @@ body {
   position: relative;
   box-sizing: border-box;
   width: min(420px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
-  overflow-y: auto;
-  overflow-x: hidden;
   padding: 20px;
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -859,10 +893,28 @@ body {
   box-shadow: 0 24px 70px rgb(0 0 0 / 32%);
 }
 
+/* Set by placePopover when the list is docked or the dialog alone does not fit the viewport (never in plain overlay mode, where the
+   popover has to extend past the dialog's bottom edge). */
+.city-modal__dialog--scroll {
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.city-modal__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.city-modal__actions .button {
+  flex: 1;
+  min-height: 40px;
+  justify-content: center;
+  gap: 8px;
+}
+
 .city-modal__title { margin: 0 0 8px; font-size: 18px; }
 .city-modal__description, .city-modal__current { margin: 0 0 12px; color: var(--muted); overflow-wrap: anywhere; }
-.city-modal .weather-form__row { flex-wrap: wrap; }
-.city-modal :is(button, input):focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .city-modal .status--full { display: block; -webkit-line-clamp: unset; line-clamp: unset; overflow: visible; overflow-wrap: anywhere; }
 /* The rule above must not defeat [hidden] on the empty error slot. */
 .city-modal .status--full[hidden] { display: none; }
@@ -900,10 +952,6 @@ body {
 
   .weather-tile__secondary {
     font-size: 10px;
-  }
-
-  .weather-form__row {
-    flex-direction: column;
   }
 }
 

@@ -246,7 +246,7 @@ let widgetsEnsureFailed = false;
 let widgetsNewer = false;
 let metricWritesPending = 0; // metric writes in flight; controls are re-synced only when none is
 let metricErrorText = ""; // write-error slot of the metric controls; module state so a panel rebuild keeps it
-let activeCityForm = null; // { cancelPending, renderSuggestions } of the mounted city form
+let activeCityForm = null; // { cancelPending, renderSuggestions, refresh, place, focusField, dispose } of the mounted city form
 let weatherUi = createInitialWeatherUiState();
 let weatherBusy = false;
 let weatherFormGeneration = 0;
@@ -750,6 +750,11 @@ function showMetricError(message) {
   node.hidden = message === "";
 }
 
+const POPOVER_MAX_HEIGHT = 240;
+const POPOVER_MIN_FREE = 96;
+const POPOVER_GAP = 6;
+const VIEWPORT_MARGIN = 16;
+
 function createCityForm(mode) {
   weatherFormGeneration += 1;
   const formGeneration = weatherFormGeneration;
@@ -759,47 +764,83 @@ function createCityForm(mode) {
   form.dataset.weatherForm = "city";
   form.noValidate = true;
 
+  const field = createNode("div", "weather-form__field");
+
   const input = createNode("input", "favorite-input");
   input.name = "city";
   input.type = "text";
   input.id = "weather-city-input";
-  input.placeholder = "City";
+  input.placeholder = "Search for a city";
+  input.setAttribute("aria-label", "City");
   input.value = "";
   input.autocomplete = "off";
   input.disabled = weatherBusy;
 
-  const cityLabel = createNode("label", "favorite-form__row-label", "City");
-  cityLabel.htmlFor = "weather-city-input";
+  const clear = createNode("button", "icon-button weather-form__clear");
+  clear.type = "button";
+  clear.dataset.cityModalClear = "";
+  clear.setAttribute("aria-label", "Clear city");
+  clear.appendChild(createIconNode("x"));
+  clear.hidden = true;
 
-  const row = createNode("div", "weather-form__row");
-  row.appendChild(input);
+  const suggestionsList = createNode("div", "weather-form__suggestions");
+  field.append(input, clear, suggestionsList);
 
-  const save = createNode("button", "button button--primary", "Save");
-  save.type = "submit";
-  save.disabled = weatherBusy;
+  const errorNode = createNode("p", "status status--error status--full", cityModalError);
+  errorNode.dataset.cityModalError = "";
+  errorNode.setAttribute("role", "alert");
+  errorNode.hidden = cityModalError === "";
 
-  const dismiss = createNode("button", "button", mode === "first-run" ? "Not now" : "Cancel");
+  const actions = createNode("div", "city-modal__actions");
+  const dismiss = createIconButton("button", mode === "first-run" ? "Not now" : "Cancel", "x");
   dismiss.type = "button";
   dismiss.dataset.cityModalAction = mode === "first-run" ? "dismiss" : "cancel";
   dismiss.disabled = weatherBusy;
-  row.append(save, dismiss);
+  const save = createIconButton("button button--primary", "Save", "check");
+  save.type = "submit";
+  actions.append(dismiss, save);
 
-  form.append(cityLabel, row);
+  form.append(field, errorNode, actions);
 
-  const suggestionsList = createNode("div", "weather-form__suggestions");
-  form.appendChild(suggestionsList);
+  // Save needs text; Clear needs text and no running request.
+  function refresh() {
+    const empty = input.value.trim() === "";
+    save.disabled = weatherBusy || empty;
+    clear.hidden = weatherBusy || input.value === "";
+    clear.disabled = weatherBusy;
+  }
+
+  // Overlay popover while there is room below the input; otherwise docked in the dialog's flow with a scrolling dialog.
+  // The free space is measured as if the popover were an overlay: the docked class and the scroll cap are dropped for the
+  // measurement (layout is flushed, nothing is painted in between), so the result depends neither on the current mode nor on the
+  // dialog's scroll position and the mode cannot flip back and forth. It is measured from the INPUT's bottom edge, not from
+  // the field wrapper, because the wrapper contains the list while it is docked. A dialog that does not fit the viewport on
+  // its own (a very low window, large zoom) scrolls in every mode, also before the first suggestion appears.
+  function placePopover() {
+    const dialog = field.closest(".city-modal__dialog");
+    if (!dialog) return;
+    const scrollTop = dialog.scrollTop;
+    suggestionsList.classList.remove("weather-form__suggestions--docked");
+    dialog.classList.remove("city-modal__dialog--scroll");
+    const free = window.innerHeight - input.getBoundingClientRect().bottom - POPOVER_GAP - VIEWPORT_MARGIN;
+    const tooTall = dialog.getBoundingClientRect().height > window.innerHeight - 2 * VIEWPORT_MARGIN;
+    const docked = free < POPOVER_MIN_FREE;
+    suggestionsList.classList.toggle("weather-form__suggestions--docked", docked);
+    dialog.classList.toggle("city-modal__dialog--scroll", docked || tooTall);
+    suggestionsList.style.maxHeight = docked ? "" : `${Math.min(POPOVER_MAX_HEIGHT, free)}px`;
+    dialog.scrollTop = scrollTop;
+  }
 
   function renderSuggestionsList() {
     suggestionsList.replaceChildren();
 
     if (!isSuggestionsOpen(weatherUi)) {
+      placePopover();
       return;
     }
 
     for (const suggestion of citySuggestions(weatherUi)) {
-      const labelParts = [suggestion.name, suggestion.admin1, suggestion.country].filter(
-        (part) => part
-      );
+      const labelParts = [suggestion.name, suggestion.admin1, suggestion.country].filter((part) => part);
       const label = labelParts.join(", ");
       const button = createNode("button", "weather-form__suggestion", label);
       button.type = "button";
@@ -810,14 +851,12 @@ function createCityForm(mode) {
       button.dataset.cityLongitude = String(suggestion.longitude);
       suggestionsList.appendChild(button);
     }
-
-    // On a short window the list can sit below the visible part of the panel body: bring it into view.
-    if (suggestionsList.isConnected && typeof suggestionsList.scrollIntoView === "function") {
-      suggestionsList.scrollIntoView({ block: "nearest" });
-    }
+    placePopover();
   }
 
   renderSuggestionsList();
+  const onResize = placePopover;
+  window.addEventListener("resize", onResize);
 
   suggestionsList.addEventListener("mousedown", (event) => {
     event.preventDefault();
@@ -842,6 +881,7 @@ function createCityForm(mode) {
     const query = input.value.trim();
 
     cancelPendingSuggestionRequest();
+    refresh();
 
     if (query.length < 2) {
       weatherUi = hideSuggestions(weatherUi);
@@ -864,7 +904,7 @@ function createCityForm(mode) {
           results = null;
         }
 
-        if (signal.aborted || formGeneration !== weatherFormGeneration) {
+        if (signal.aborted || formGeneration !== weatherFormGeneration || weatherBusy) {
           return;
         }
 
@@ -877,6 +917,17 @@ function createCityForm(mode) {
     }, 250);
   });
 
+  // A disabled Save blocks the browser's implicit form submit, so the field reports the empty case itself.
+  // (Task 5 extends this handler with the arrow keys.)
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.isComposing && !weatherBusy && input.value.trim() === "") {
+      event.preventDefault();
+      cityModalError = "Enter a city name";
+      syncCityModal();
+    }
+  });
+
+  // Closes the list shortly after the field loses focus (the field-wrapper rule replaces this in the keyboard-path step).
   input.addEventListener("blur", () => {
     cancelPendingSuggestionRequest();
 
@@ -889,13 +940,15 @@ function createCityForm(mode) {
     }, 150);
   });
 
-  const errorNode = createNode("p", "status status--error status--full", cityModalError);
-  errorNode.dataset.cityModalError = "";
-  errorNode.setAttribute("role", "alert");
-  errorNode.hidden = cityModalError === "";
-  form.appendChild(errorNode);
-
-  activeCityForm = { cancelPending: cancelPendingSuggestionRequest, renderSuggestions: renderSuggestionsList };
+  refresh();
+  activeCityForm = {
+    cancelPending: cancelPendingSuggestionRequest,
+    renderSuggestions: renderSuggestionsList,
+    refresh,
+    place: placePopover,
+    focusField: () => input.focus(),
+    dispose: () => window.removeEventListener("resize", onResize)
+  };
   return form;
 }
 
@@ -939,10 +992,12 @@ function syncCityModal() {
   for (const control of cityModalRoot.querySelectorAll("input, button")) {
     if (control.dataset.weatherAction !== "select-city") control.disabled = weatherBusy;
   }
+  activeCityForm?.refresh();
   cityModalRoot.querySelector('[role="dialog"]').setAttribute("aria-busy", String(weatherBusy)); // spec: aria-busy while a request runs
   const errorNode = cityModalRoot.querySelector("[data-city-modal-error]");
   errorNode.textContent = cityModalError;
   errorNode.hidden = cityModalError === "";
+  activeCityForm?.place();
 }
 
 // One listener per event on the modal root (backdrop, dismiss button, suggestions, submit).
@@ -1009,6 +1064,7 @@ function showCityModal(mode, openerSelector) {
     throw error;
   }
   cityModalRoot = root;
+  activeCityForm?.place();
   cityModalShownThisLoad = true;
   weatherUi = openCityModalState(weatherUi, mode);
   cityModalOpener = openerSelector;
@@ -1027,6 +1083,7 @@ function hideCityModal({ dismiss = false } = {}) {
   const mode = cityModalMode(weatherUi);
   const focusWasInside = cityModalHadFocus || cityModalRoot.contains(document.activeElement); // D14: a running request or a backdrop click may already have moved focus to body
   activeCityForm?.cancelPending();
+  activeCityForm?.dispose?.();
   activeCityForm = null;
   weatherFormGeneration += 1; // late suggestion responses are ignored
   cityModalRoot.remove();
