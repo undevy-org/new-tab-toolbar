@@ -260,6 +260,21 @@ describe("widgetsService", () => {
     assert.equal("tileSize" in state.items[0], false);
   });
 
+  it("drops a stored legacy tileSize from a favorite on any edit, size or not", async () => {
+    const { service, store } = await createHarness();
+    await seed(store, [favorite({ tileSize: "wide", grid: g(0, 0, 2, 1) }), favorite({ id: "fav-2", tileSize: "square", grid: g(2, 0) })]);
+    assert.equal((await store.getState()).items[0].tileSize, "wide", "the seed keeps the legacy field");
+
+    const labelOnly = await service.updateFavorite("fav-1", { label: "Renamed" }, COLS);
+    assert.equal("tileSize" in labelOnly.items[0], false);
+    assert.deepEqual(labelOnly.items[0].grid, g(0, 0, 2, 1));
+    const resized = await service.updateFavorite("fav-2", { w: 2, h: 2 }, COLS);
+    assert.equal("tileSize" in resized.items[1], false);
+    assert.equal(resized.items[1].label, "Example");
+    const stored = await store.getState();
+    assert.equal(stored.items.some((item) => "tileSize" in item), false);
+  });
+
   it("rejects an unsupported span", async () => {
     const { service } = await createHarness();
 
