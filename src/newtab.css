@@ -104,6 +104,36 @@ html {
   cursor: pointer;
 }
 
+/* Edit mode (AS-3, AS-22): tiles jiggle; with reduced motion they hold still and get a static dashed outline. */
+@keyframes tile-jiggle {
+  0%, 100% { transform: rotate(-0.6deg); }
+  50% { transform: rotate(0.6deg); }
+}
+
+.desktop[data-edit="true"] .desktop-grid > [data-widget-id] {
+  animation: tile-jiggle 0.28s ease-in-out infinite;
+}
+
+.desktop[data-edit="true"] .desktop-grid > [data-widget-id]:nth-child(2n) {
+  animation-delay: -0.14s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop[data-edit="true"] .desktop-grid > [data-widget-id] {
+    animation: none;
+    outline: 2px dashed var(--edit-outline, currentColor);
+    outline-offset: 2px;
+  }
+}
+
+/* In edit mode a weather tile is a <button>: reset the native button look. */
+button.weather-tile {
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
 .desktop-status {
   position: fixed;
   z-index: 50;

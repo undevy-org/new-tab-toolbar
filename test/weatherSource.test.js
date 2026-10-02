@@ -211,7 +211,7 @@ describe("newtab weather source", () => {
     }
     assert.match(
       code,
-      /if \(isSuggestionsOpen\(weatherUi\)\) \{\s*activeCityForm\?\.cancelPending\(\);\s*weatherUi = hideSuggestions\(weatherUi\);\s*activeCityForm\?\.renderSuggestions\(\);\s*activeCityForm\?\.focusField\(\);/
+      /layer === "citySuggestions"\) \{\s*activeCityForm\?\.cancelPending\(\);\s*weatherUi = hideSuggestions\(weatherUi\);\s*activeCityForm\?\.renderSuggestions\(\);\s*activeCityForm\?\.focusField\(\);/
     );
   });
 

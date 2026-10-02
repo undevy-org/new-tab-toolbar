@@ -11,10 +11,35 @@ async function source() {
 describe("newtab favorites source", () => {
   it("drives the desktop UI from the pure desktopUiState module, not a mode string", async () => {
     const code = await source();
-    assert.match(code, /import \{ closeDialog, createDesktopUiState, openDialog \} from "\.\/desktopUiState\.js";/);
+    assert.match(code, /import \{ closeDialog, createDesktopUiState, enterEditMode, escapeLayer, exitEditMode, openDialog \} from "\.\/desktopUiState\.js";/);
     assert.match(code, /let desktopUi = createDesktopUiState\(\);/);
     assert.doesNotMatch(code, /favoritesMode/);
     assert.doesNotMatch(code, /favoritesUiState\.js/);
+  });
+  it("wires edit mode: Settings aria-pressed, live-region announcements, background click, Escape through escapeLayer", async () => {
+    const code = await source();
+    assert.match(code, /aria-pressed/);
+    assert.match(code, /desktop-live/);
+    assert.match(code, /Editing layout\. Activate Settings to finish\./);
+    assert.match(code, /Layout editing off/);
+    assert.match(code, /function setEditMode\(on\)/);
+    assert.match(code, /escapeLayer\(desktopUi, \{/);
+    assert.match(code, /layer === "exitEdit"/);
+    assert.match(code, /addEventListener\("pointerdown"/);
+    assert.match(code, /addEventListener\("pointerup"/);
+    assert.match(code, /!desktopUi\.drag/);
+  });
+  it("jiggles in edit mode and holds still with a dashed outline under prefers-reduced-motion", async () => {
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /@keyframes tile-jiggle/);
+    assert.match(css, /prefers-reduced-motion: reduce/);
+    assert.match(css, /outline: 2px dashed/);
+  });
+  it("never stacks the city modal on a desktop dialog, and Cancel respects favoritesBusy", async () => {
+    const code = await source();
+    assert.match(code, /if \(cityModalRoot \|\| desktopDialogRoot \|\| isCityModalOpen\(weatherUi\)/);
+    assert.match(code, /if \(cityModalRoot \|\| desktopDialogRoot \|\| cityModalShownThisLoad\) return;/);
+    assert.match(code, /\[data-favorite-action="cancel"\]'\)\?\.addEventListener\("click", \(\) => \{\s+if \(!favoritesBusy\) closeDesktopDialog\(\);/);
   });
   it("renders everything into the one desktop root; the settings panel root is gone", async () => {
     const code = await source();
@@ -290,10 +315,10 @@ describe("newtab city modal source", () => {
   it("orders the single Escape handler: tooltip, suggestions, modal", async () => {
     const code = await source();
     const handler = between(code, 'if (event.key !== "Escape")', 'if (event.key !== "Tab"');
-    const order = ["hideTooltipIfVisible()", "isSuggestionsOpen(weatherUi)", "cityModalRoot"].map((n) => handler.indexOf(n));
+    const order = ['tooltip: !tooltipLayer.hidden', "citySuggestions:", "cityModal: Boolean(cityModalRoot)", 'layer === "tooltip"', 'layer === "citySuggestions"', 'layer === "cityModal"', 'layer === "dialog"', 'layer === "exitEdit"'].map((n) => handler.indexOf(n));
     assert.ok(order.every((i) => i >= 0), order.join());
     assert.deepEqual([...order].sort((a, b) => a - b), order);
-    assert.match(handler, /if \(cityModalRoot\) \{\s*if \(!weatherBusy\) hideCityModal\(\{ dismiss: true \}\);\s*return;\s*\}/);
+    assert.match(handler, /layer === "cityModal"\) \{[^}]*if \(!weatherBusy\) hideCityModal\(\{ dismiss: true \}\);/);
   });
   it("traps Tab inside the modal; open list items are part of the cycle, hidden controls are not", async () => {
     const code = await source();
@@ -426,7 +451,7 @@ describe("newtab first-run city prompt source", () => {
     const start = code.indexOf("function maybeAutoShowCityPrompt(");
     assert.ok(start >= 0);
     const body = code.slice(start, code.indexOf("\n}\n", start));
-    assert.match(body, /^function maybeAutoShowCityPrompt\(\{ flagRead, dismissed \}\) \{\s*if \(cityModalRoot \|\| cityModalShownThisLoad\) return;/);
+    assert.match(body, /^function maybeAutoShowCityPrompt\(\{ flagRead, dismissed \}\) \{\s*if \(cityModalRoot \|\| desktopDialogRoot \|\| cityModalShownThisLoad\) return;/);
     for (const part of [
       "locationRead: weatherLocationKnown && !weatherLocationError",
       "hasLocation: Boolean(weatherLocation)",

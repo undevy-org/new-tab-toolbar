@@ -7,7 +7,7 @@ import {
 import { getFavoriteIconModel, getFavoriteLetter } from "./favoriteIcon.js";
 import { createIconNode } from "./icons.js";
 import { displayLayout, effectiveColumns, gridMetrics } from "./desktopLayout.js";
-import { closeDialog, createDesktopUiState, openDialog } from "./desktopUiState.js";
+import { closeDialog, createDesktopUiState, enterEditMode, escapeLayer, exitEditMode, openDialog } from "./desktopUiState.js";
 import { createWidgetsService } from "./widgetsService.js";
 import {
   WIDGETS_META_KEY,
@@ -933,7 +933,7 @@ function attachCityModalListeners(root) {
 let cityModalShownThisLoad = false; // the automatic prompt never reopens a modal that was already shown this page load
 
 function showCityModal(mode, openerSelector) {
-  if (cityModalRoot || isCityModalOpen(weatherUi) || !weatherService || !document.body) return false; // one modal at a time
+  if (cityModalRoot || desktopDialogRoot || isCityModalOpen(weatherUi) || !weatherService || !document.body) return false; // one modal at a time, never stacked on a desktop dialog
   cityModalError = "";
   let root = null;
   try {
@@ -994,7 +994,7 @@ function onFirstRunDismissed() {
 // Evaluated once per page load, after the first grid render, on live state (spec § Storage and the automatic-show rule).
 // First-run open never moves focus (D2): showCityModal only focuses in change mode.
 function maybeAutoShowCityPrompt({ flagRead, dismissed }) {
-  if (cityModalRoot || cityModalShownThisLoad) return; // a modal was opened meanwhile (or already shown and closed): never replace, duplicate or reopen it
+  if (cityModalRoot || desktopDialogRoot || cityModalShownThisLoad) return; // a modal was opened meanwhile (or already shown and closed): never replace, duplicate or reopen it
   const items = widgetsState?.items ?? [];
   const show = shouldAutoShowCityPrompt({
     locationRead: weatherLocationKnown && !weatherLocationError,
@@ -1014,11 +1014,18 @@ function createWeatherMetricTile(item, cell, view) {
   const model = describeWeatherMetric({ metricKey: weatherMetricKey(item.id), result: view, size });
   if (!model) return null;
 
-  const tile = createNode("div", "weather-tile");
+  // Edit mode: the tile becomes a button named "Edit <metric name>"; its click is a no-op until Task 10.
+  const editing = desktopUi.editMode;
+  const tile = createNode(editing ? "button" : "div", "weather-tile");
   tile.dataset.widgetId = item.id;
-  tile.tabIndex = 0;
-  tile.setAttribute("role", "group");
-  tile.setAttribute("aria-label", model.label);
+  if (editing) {
+    tile.type = "button";
+    tile.setAttribute("aria-label", `Edit ${METRIC_LABELS[weatherMetricKey(item.id)]}`);
+  } else {
+    tile.tabIndex = 0;
+    tile.setAttribute("role", "group");
+    tile.setAttribute("aria-label", model.label);
+  }
   if (model.tone) tile.dataset.weatherTone = model.tone;
   if (model.stale) tile.dataset.stale = "true";
   if (model.busy) tile.setAttribute("aria-busy", "true");
@@ -1142,7 +1149,9 @@ function openDesktopDialog(dialog) {
     if (Date.now() - desktopDialogOpenedAt < DIALOG_BACKDROP_GUARD_MS || favoritesBusy) return;
     closeDesktopDialog();
   });
-  root.querySelector('[data-favorite-action="cancel"]')?.addEventListener("click", () => closeDesktopDialog());
+  root.querySelector('[data-favorite-action="cancel"]')?.addEventListener("click", () => {
+    if (!favoritesBusy) closeDesktopDialog();
+  });
   desktopDialogRoot = root;
   desktopDialogOpenedAt = Date.now();
   favoritesRoot.inert = true;
@@ -1348,6 +1357,15 @@ function applyPendingFocus() {
   }
 }
 
+function setEditMode(on) {
+  const before = desktopUi.editMode;
+  desktopUi = on ? enterEditMode(desktopUi) : exitEditMode(desktopUi);
+  if (desktopUi.editMode === before) return;
+  showDesktopStatus("");
+  announce(desktopUi.editMode ? "Editing layout. Activate Settings to finish." : "Layout editing off");
+  renderFavorites();
+}
+
 function renderFavorites() {
   renderDesktop();
   applyPendingFocus();
@@ -1465,8 +1483,14 @@ if (favoritesRoot) {
       return;
     }
 
+    if (event.target.closest('[data-chrome-role="settings"]')) {
+      if (widgetsState && !widgetsNewer && !widgetsMigrationFailed) setEditMode(!desktopUi.editMode);
+      return;
+    }
+
+    // Add: with no Add menu yet (Task 10) it opens the add-link dialog in both modes.
     if (event.target.closest(ADD_TILE_SELECTOR)) {
-      if (!favoritesBusy && !desktopUi.editMode && widgetsService && widgetsState) openDesktopDialog({ kind: "add-link" });
+      if (!favoritesBusy && widgetsService && widgetsState) openDesktopDialog({ kind: "add-link" });
       return;
     }
 
@@ -1493,32 +1517,49 @@ if (favoritesRoot) {
 
   favoritesRoot.addEventListener("click", handleFavoritesClick);
 
+  // Background = the grid element or the root itself (gaps between tiles are background). A click needs pointerdown
+  // AND pointerup on the background, so releasing a drag over it never exits.
+  const isBackground = (target) => target === favoritesRoot || (target instanceof Element && target.classList.contains("desktop-grid"));
+  let backgroundPressed = false;
+  favoritesRoot.addEventListener("pointerdown", (event) => {
+    backgroundPressed = desktopUi.editMode && isBackground(event.target);
+  });
+  favoritesRoot.addEventListener("pointerup", (event) => {
+    if (backgroundPressed && isBackground(event.target) && !desktopUi.drag) setEditMode(false);
+    backgroundPressed = false;
+  });
+
   // One Escape handler, topmost layer first: tooltip, city suggestions, city modal.
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") {
       return;
     }
 
-    if (hideTooltipIfVisible()) {
-      return;
+    // One layer per press, topmost first (desktopUiState.escapeLayer); the DOM-owned flags come from here.
+    const layer = escapeLayer(desktopUi, {
+      tooltip: !tooltipLayer.hidden,
+      citySuggestions: isSuggestionsOpen(weatherUi),
+      cityModal: Boolean(cityModalRoot)
+    });
+    if (layer === "drag") {
+      return; // Task 9 cancels the drag here
     }
-
-    if (isSuggestionsOpen(weatherUi)) {
+    if (layer === "tooltip") {
+      hideTooltipIfVisible();
+    } else if (layer === "citySuggestions") {
       activeCityForm?.cancelPending();
       weatherUi = hideSuggestions(weatherUi);
       activeCityForm?.renderSuggestions();
       activeCityForm?.focusField();
-      return;
-    }
-
-    // While a city request runs Escape does nothing at all (I1).
-    if (cityModalRoot) {
+    } else if (layer === "cityModal") {
+      // While a city request runs Escape does nothing at all (I1).
       if (!weatherBusy) hideCityModal({ dismiss: true });
-      return;
-    }
-
-    if (desktopDialogRoot) {
+    } else if (layer === "dialog") {
       if (!favoritesBusy) closeDesktopDialog();
+    } else if (layer === "menu") {
+      // Task 10 closes the Add menu here.
+    } else if (layer === "exitEdit") {
+      setEditMode(false);
     }
   });
 
