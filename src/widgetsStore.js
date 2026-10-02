@@ -15,8 +15,8 @@ import {
 } from "./favoritesShared.js";
 import {
   DEFAULT_GRID_COLUMNS,
-  DEFAULT_WEATHER_METRIC_SIZES,
   GRID_POSITIONS,
+  MAX_CHROME_WIDGETS,
   MAX_FAVORITE_WIDGETS,
   MAX_GRID_COLUMNS,
   MAX_WEATHER_METRIC_WIDGETS,
@@ -27,15 +27,17 @@ import {
   WIDGETS_MUTATION_LOCK_NAME,
   WIDGET_TYPES
 } from "./widgetsShared.js";
-import { defaultColumnsForItems, groupWidgets } from "./widgetsLayout.js";
+import { defaultColumnsForItems } from "./widgetsLayout.js";
+import { CHROME_IDS, isValidGrid, migrateV1ToV2, placeMissing } from "./desktopLayout.js";
 
 export const WIDGETS_META_KEY = "quietTabWidgetsMeta";
 
-// One lock instance for the whole extension: every widgets mutation AND the migration
+// One lock instance for the whole extension: every widgets mutation AND the migrations
 // run through it, so two new-tab pages can never interleave read-modify-write cycles.
 export const withWidgetsMutationLock = createMutationLock(WIDGETS_MUTATION_LOCK_NAME);
 
-const WIDGETS_VERSION = 1;
+const WIDGETS_VERSION = 2;
+const WIDGETS_VERSION_V1 = 1;
 const SYNC_WRITE_ERROR =
   "Couldn't save this change to Chrome Sync — it may be full, offline, or temporarily unavailable. Try removing a few favorites or try again shortly.";
 
@@ -43,15 +45,8 @@ export function widgetItemStorageKey(id) {
   return `quietTabWidget:${id}`;
 }
 
-export function createInitialWidgetsState(now = new Date().toISOString(), position = "top") {
-  return {
-    version: WIDGETS_VERSION,
-    items: [],
-    columns: DEFAULT_GRID_COLUMNS,
-    position,
-    createdAt: now,
-    updatedAt: now
-  };
+export function createInitialWidgetsState(now = new Date().toISOString()) {
+  return { version: WIDGETS_VERSION, items: [], createdAt: now, updatedAt: now };
 }
 
 function isHttpUrl(value) {
@@ -109,29 +104,75 @@ function isFavoriteWidgetItem(value) {
   );
 }
 
+// v1 items carry `tileSize`; v2 items do not (it stays optional so migrated items can keep it for one release).
 function isWeatherMetricItem(value) {
   return (
-    hasOwnFields(value, ["id", "type", "tileSize", "enabled"]) &&
+    hasOwnFields(value, ["id", "type", "enabled"]) &&
     value.type === "weather-metric" &&
     WEATHER_METRIC_IDS.includes(value.id) &&
-    TILE_SIZES.has(value.tileSize) &&
+    isOptionalTileSize(value) &&
     typeof value.enabled === "boolean"
   );
 }
 
+const CHROME_ROLE_BY_ID = { [CHROME_IDS.settings]: "settings", [CHROME_IDS.add]: "add" };
+
+function isChromeItem(value) {
+  return (
+    hasOwnFields(value, ["id", "type", "role"]) &&
+    value.type === "chrome" &&
+    CHROME_ROLE_BY_ID[value.id] === value.role
+  );
+}
+
+// Field-level validity. The grid is checked separately: reads tolerate a missing/invalid grid (spec § Reading grid).
 export function isWidgetItem(value) {
   if (!isRecord(value) || !WIDGET_TYPES.has(value.type)) {
     return false;
   }
-  return value.type === "favorite" ? isFavoriteWidgetItem(value) : isWeatherMetricItem(value);
+  if (value.type === "favorite") return isFavoriteWidgetItem(value);
+  if (value.type === "weather-metric") return isWeatherMetricItem(value);
+  return isChromeItem(value);
 }
 
-function isColumns(value) {
-  return Number.isInteger(value) && value >= MIN_GRID_COLUMNS && value <= MAX_GRID_COLUMNS;
+function hasValidGrid(item) {
+  return isValidGrid(item.grid) && (item.type !== "chrome" || (item.grid.w === 1 && item.grid.h === 1));
+}
+
+function isStrictWidgetItem(value) {
+  return isWidgetItem(value) && hasValidGrid(value);
+}
+
+function countOf(items, type) {
+  return items.filter((item) => item?.type === type).length;
+}
+
+// `lenient` is for reads: items may lack a valid grid. Writes (setState) are strict: every item has one.
+function isWidgetsStateWith(value, itemCheck) {
+  const requiredFields = ["version", "items", "createdAt", "updatedAt"];
+
+  return (
+    isRecord(value) &&
+    hasOwnFields(value, requiredFields) &&
+    value.version === WIDGETS_VERSION &&
+    Array.isArray(value.items) &&
+    value.items.length <= MAX_WIDGETS &&
+    countOf(value.items, "favorite") <= MAX_FAVORITE_WIDGETS &&
+    countOf(value.items, "weather-metric") <= MAX_WEATHER_METRIC_WIDGETS &&
+    countOf(value.items, "chrome") <= MAX_CHROME_WIDGETS &&
+    new Set(value.items.map((item) => item?.id)).size === value.items.length &&
+    value.items.every(itemCheck) &&
+    isParseableTimestamp(value.createdAt) &&
+    isParseableTimestamp(value.updatedAt)
+  );
+}
+
+export function isWidgetsState(value) {
+  return isWidgetsStateWith(value, isStrictWidgetItem);
 }
 
 function isWidgetsMeta(value) {
-  const requiredFields = ["version", "order", "columns", "position", "createdAt", "updatedAt"];
+  const requiredFields = ["version", "order", "createdAt", "updatedAt"];
 
   return (
     isRecord(value) &&
@@ -141,6 +182,27 @@ function isWidgetsMeta(value) {
     value.order.length <= MAX_WIDGETS &&
     value.order.every(isNonEmptyString) &&
     new Set(value.order).size === value.order.length &&
+    isParseableTimestamp(value.createdAt) &&
+    isParseableTimestamp(value.updatedAt)
+  );
+}
+
+function isColumns(value) {
+  return Number.isInteger(value) && value >= MIN_GRID_COLUMNS && value <= MAX_GRID_COLUMNS;
+}
+
+// The pre-desktop (version 1) meta: still read by the v1 -> v2 migration.
+function isWidgetsMetaV1(value) {
+  const requiredFields = ["version", "order", "columns", "position", "createdAt", "updatedAt"];
+
+  return (
+    isRecord(value) &&
+    hasOwnFields(value, requiredFields) &&
+    value.version === WIDGETS_VERSION_V1 &&
+    Array.isArray(value.order) &&
+    value.order.length <= MAX_FAVORITE_WIDGETS + MAX_WEATHER_METRIC_WIDGETS &&
+    value.order.every(isNonEmptyString) &&
+    new Set(value.order).size === value.order.length &&
     isColumns(value.columns) &&
     GRID_POSITIONS.has(value.position) &&
     isParseableTimestamp(value.createdAt) &&
@@ -148,19 +210,19 @@ function isWidgetsMeta(value) {
   );
 }
 
-export function isWidgetsState(value) {
+function isWidgetsStateV1(value) {
   const requiredFields = ["version", "items", "columns", "position", "createdAt", "updatedAt"];
 
   return (
     isRecord(value) &&
     hasOwnFields(value, requiredFields) &&
-    value.version === WIDGETS_VERSION &&
+    value.version === WIDGETS_VERSION_V1 &&
     Array.isArray(value.items) &&
-    value.items.length <= MAX_WIDGETS &&
-    value.items.filter((item) => item?.type === "favorite").length <= MAX_FAVORITE_WIDGETS &&
-    value.items.filter((item) => item?.type === "weather-metric").length <= MAX_WEATHER_METRIC_WIDGETS &&
+    value.items.length <= MAX_FAVORITE_WIDGETS + MAX_WEATHER_METRIC_WIDGETS &&
+    countOf(value.items, "favorite") <= MAX_FAVORITE_WIDGETS &&
+    countOf(value.items, "weather-metric") <= MAX_WEATHER_METRIC_WIDGETS &&
     new Set(value.items.map((item) => item?.id)).size === value.items.length &&
-    value.items.every(isWidgetItem) &&
+    value.items.every((item) => isWidgetItem(item) && item.type !== "chrome") &&
     isColumns(value.columns) &&
     GRID_POSITIONS.has(value.position) &&
     isParseableTimestamp(value.createdAt) &&
@@ -172,6 +234,15 @@ function buildWidgetsMeta(state) {
   return {
     version: WIDGETS_VERSION,
     order: state.items.map((item) => item.id),
+    createdAt: state.createdAt,
+    updatedAt: state.updatedAt
+  };
+}
+
+function buildWidgetsMetaV1(state) {
+  return {
+    version: WIDGETS_VERSION_V1,
+    order: state.items.map((item) => item.id),
     columns: state.columns,
     position: state.position,
     createdAt: state.createdAt,
@@ -180,6 +251,7 @@ function buildWidgetsMeta(state) {
 }
 
 // `result` is what storageArea.get(WIDGETS_META_KEY) returned.
+// missing | valid (v2) | v1 (valid pre-desktop meta, to be migrated) | newer (version above ours) | invalid
 export function inspectWidgetsMeta(result) {
   if (!Object.hasOwn(result ?? {}, WIDGETS_META_KEY)) {
     return "missing";
@@ -187,6 +259,9 @@ export function inspectWidgetsMeta(result) {
   const raw = result[WIDGETS_META_KEY];
   if (isWidgetsMeta(raw)) {
     return "valid";
+  }
+  if (isWidgetsMetaV1(raw)) {
+    return "v1";
   }
   if (isRecord(raw) && Number.isInteger(raw.version) && raw.version > WIDGETS_VERSION) {
     return "newer";
@@ -208,6 +283,15 @@ async function setOrThrow(storageArea, payload) {
   }
 }
 
+// A read keeps an item whose fields are valid but whose grid is missing or malformed: the grid is dropped and
+// the item is "unplaced" (displayLayout gives it a cell). A read never deletes a key.
+function readItem(value) {
+  if (!isWidgetItem(value)) return null;
+  if (value.grid === undefined || hasValidGrid(value)) return value;
+  const { grid: _dropped, ...rest } = value;
+  return rest;
+}
+
 export function createWidgetsStore(
   storageArea,
   { now = () => new Date().toISOString() } = {}
@@ -221,41 +305,27 @@ export function createWidgetsStore(
   return {
     assertWritable,
 
+    // Items may lack `grid` (unplaced); callers lay them out with displayLayout. Order is `meta.order`.
     async getState() {
       const meta = await readMeta(storageArea);
 
       if (!meta) {
-        const kind = inspectWidgetsMeta(await storageArea.get(WIDGETS_META_KEY));
-        return createInitialWidgetsState(now(), kind === "missing" ? "center" : "top");
-      }
-
-      if (meta.order.length === 0) {
-        const empty = {
-          version: WIDGETS_VERSION,
-          items: [],
-          columns: meta.columns,
-          position: meta.position,
-          createdAt: meta.createdAt,
-          updatedAt: meta.updatedAt
-        };
-        return isWidgetsState(empty) ? empty : createInitialWidgetsState(now());
+        return createInitialWidgetsState(now());
       }
 
       const itemKeys = meta.order.map(widgetItemStorageKey);
-      const itemsResult = await storageArea.get(itemKeys);
+      const itemsResult = itemKeys.length > 0 ? await storageArea.get(itemKeys) : {};
       const items = meta.order
-        .map((id) => itemsResult[widgetItemStorageKey(id)])
-        .filter((item) => isWidgetItem(item));
+        .map((id) => readItem(itemsResult[widgetItemStorageKey(id)]))
+        .filter((item) => item !== null);
 
       const candidate = {
         version: WIDGETS_VERSION,
-        items: groupWidgets(items),
-        columns: meta.columns,
-        position: meta.position,
+        items,
         createdAt: meta.createdAt,
         updatedAt: meta.updatedAt
       };
-      return isWidgetsState(candidate)
+      return isWidgetsStateWith(candidate, isWidgetItem)
         ? cloneValue(candidate)
         : createInitialWidgetsState(now());
     },
@@ -266,7 +336,7 @@ export function createWidgetsStore(
       }
       await assertWritable();
 
-      const nextState = cloneValue({ ...state, items: groupWidgets(state.items) });
+      const nextState = cloneValue(state);
       const previousMeta = await readMeta(storageArea);
       const previousOrder = previousMeta?.order ?? [];
       const nextIds = new Set(nextState.items.map((item) => item.id));
@@ -294,7 +364,6 @@ export function createWidgetsStore(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Migration from the pre-unification favorites-only storage.
 //
 // Legacy keys are read only here. Rules (see the spec's "Migration" section):
@@ -331,7 +400,7 @@ function uniqueValidItems(candidates) {
 }
 
 async function writeMigratedState(storageArea, state, legacyItemKeyFor) {
-  if (!isWidgetsState(state)) {
+  if (!isWidgetsStateV1(state)) {
     throw new Error("Invalid widgets state");
   }
 
@@ -346,7 +415,7 @@ async function writeMigratedState(storageArea, state, legacyItemKeyFor) {
     }
   }
 
-  await setOrThrow(storageArea, { [WIDGETS_META_KEY]: buildWidgetsMeta(state) });
+  await setOrThrow(storageArea, { [WIDGETS_META_KEY]: buildWidgetsMetaV1(state) });
 }
 
 export function migrateToWidgets(
@@ -360,7 +429,7 @@ export function migrateToWidgets(
     if (metaKind === "newer") {
       return { migrated: false, newer: true };
     }
-    const existingMeta = metaKind === "valid" ? widgetsMetaResult[WIDGETS_META_KEY] : null;
+    const existingMeta = metaKind === "valid" || metaKind === "v1" ? widgetsMetaResult[WIDGETS_META_KEY] : null;
 
     const legacyMetaResult = await syncStorageArea.get(LEGACY_FAVORITES_META_KEY);
     const legacyMeta = legacyMetaResult?.[LEGACY_FAVORITES_META_KEY];
@@ -408,7 +477,7 @@ export function migrateToWidgets(
       await writeMigratedState(
         syncStorageArea,
         {
-          version: WIDGETS_VERSION,
+          version: WIDGETS_VERSION_V1,
           items,
           columns: defaultColumnsForItems(items),
           position: "top",
@@ -449,7 +518,7 @@ export function migrateToWidgets(
     await writeMigratedState(
       syncStorageArea,
       {
-        version: WIDGETS_VERSION,
+        version: WIDGETS_VERSION_V1,
         items,
         columns: defaultColumnsForItems(items),
         position: "top",
@@ -461,76 +530,5 @@ export function migrateToWidgets(
 
     await localStorageArea.remove(LEGACY_FAVORITES_BLOB_KEY);
     return { migrated: true, source: "legacy-blob" };
-  });
-}
-
-// Adds the four system weather metrics next to the user's widgets (spec § Ensure step).
-// Only ever writes for a `valid` or `missing` meta; a `newer` or `invalid` meta is left alone.
-export function ensureWeatherMetrics(storageArea, { now = () => new Date().toISOString() } = {}) {
-  return withWidgetsMutationLock(async () => {
-    const metaResult = await storageArea.get(WIDGETS_META_KEY);
-    const kind = inspectWidgetsMeta(metaResult);
-    if (kind === "newer" || kind === "invalid") {
-      return { changed: false, meta: kind };
-    }
-
-    const timestamp = now();
-    const meta =
-      kind === "valid"
-        ? metaResult[WIDGETS_META_KEY]
-        : {
-            version: WIDGETS_VERSION,
-            order: [],
-            columns: DEFAULT_GRID_COLUMNS,
-            position: "center",
-            createdAt: timestamp,
-            updatedAt: timestamp
-          };
-    const stored = await storageArea.get(WEATHER_METRIC_IDS.map(widgetItemStorageKey));
-    const listed = new Set(meta.order);
-
-    const states = WEATHER_METRIC_IDS.map((id) => {
-      const existing = stored[widgetItemStorageKey(id)];
-      return {
-        id,
-        present: isWidgetItem(existing) && existing.type === "weather-metric",
-        listed: listed.has(id)
-      };
-    });
-    // No id is listed yet: the whole block is appended now (orphan items from an interrupted run still count).
-    const allNew = states.every((s) => !s.listed);
-
-    const itemWrites = {};
-    const appended = [];
-    for (const { id, present, listed: isListed } of states) {
-      if (!present) {
-        itemWrites[widgetItemStorageKey(id)] = {
-          id,
-          type: "weather-metric",
-          tileSize: DEFAULT_WEATHER_METRIC_SIZES[id],
-          enabled: true
-        };
-      }
-      if (!isListed) {
-        appended.push(id);
-      }
-    }
-
-    const columns = kind === "valid" && allNew ? Math.max(meta.columns, DEFAULT_GRID_COLUMNS) : meta.columns;
-    const metaChanged = kind === "missing" || appended.length > 0 || columns !== meta.columns;
-
-    if (Object.keys(itemWrites).length === 0 && !metaChanged) {
-      return { changed: false, meta: kind };
-    }
-
-    if (Object.keys(itemWrites).length > 0) {
-      await setOrThrow(storageArea, itemWrites);
-    }
-    if (metaChanged) {
-      await setOrThrow(storageArea, {
-        [WIDGETS_META_KEY]: { ...meta, order: [...meta.order, ...appended], columns, updatedAt: timestamp }
-      });
-    }
-    return { changed: true, meta: kind };
   });
 }
