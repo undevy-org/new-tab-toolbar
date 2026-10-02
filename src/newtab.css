@@ -3,6 +3,7 @@
   --bg: #f3f5f7;
   --panel: #ffffff;
   --text: #111318;
+  --focus-ring: #111318; /* tile keyboard focus ring: solid, >= 3:1 on the page and the panel (WCAG 1.4.11) */
   --muted: #5c6672;
   --border: #d8dee6;
   --primary: #111318;
@@ -20,6 +21,7 @@
     --bg: #14171c;
     --panel: #1d2229;
     --text: #f4f6f8;
+    --focus-ring: #f4f6f8;
     --muted: #a8b0ba;
     --border: #343b45;
     --primary: #f4f6f8;
@@ -123,7 +125,7 @@ html {
 
   /* The dashed edit outline must not hide the keyboard focus ring (WCAG 2.4.7): same token as the other tiles. */
   .desktop[data-edit="true"] .desktop-grid > [data-widget-id]:focus-visible {
-    outline: 3px solid var(--focus);
+    outline: 3px solid var(--focus-ring);
     outline-offset: 2px;
   }
 }
@@ -236,7 +238,7 @@ button.weather-tile {
 }
 
 .chrome-tile:focus-visible {
-  outline: 3px solid var(--focus);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -539,7 +541,11 @@ button.weather-tile {
 }
 
 
-.favorite-tile:focus-visible,
+.favorite-tile:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .favorite-input:focus-visible,
 .favorite-color-input:focus-visible {
   outline: 3px solid var(--focus);
@@ -731,7 +737,7 @@ button.weather-tile {
 
 .weather-tile:focus-visible,
 .city-hint-tile:focus-visible {
-  outline: 2px solid var(--text);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -1015,7 +1021,14 @@ button.weather-tile {
   .desktop-dialog .favorite-form__row > .favorite-input,
   .desktop-dialog .favorite-form__color-controls { flex: 1 1 100%; }
   .desktop-dialog .segmented__option { padding: 0 6px; white-space: nowrap; }
+  /* Edit link: Delete, Cancel and Save do not fit one row; Delete takes its own row, Cancel and Save share the next. */
+  .desktop-dialog[data-dialog="edit-link"] .favorite-form__footer { flex-wrap: wrap; }
+  .desktop-dialog[data-dialog="edit-link"] .favorite-form__footer > .button { flex: 1 1 0; min-width: 0; }
+  .desktop-dialog[data-dialog="edit-link"] .favorite-form__footer > .button--danger { flex-basis: 100%; margin-right: 0; }
 }
+
+/* The − badge of a tile being dragged is hidden (the hidden attribute must win over display:inline-flex). */
+.desktop-grid > .tile-remove[hidden] { display: none; }
 
 .desktop-dialog__error {
   margin: 12px 0;
@@ -1047,9 +1060,9 @@ button.weather-tile {
   background: var(--primary);
 }
 
-/* Remove badge keyboard focus (normal and reduced-motion edit mode): the shared focus ring token, never the UA default. */
+/* Remove badge keyboard focus (normal and reduced-motion edit mode): the tile focus ring token, never the UA default. */
 .desktop-grid > .tile-remove:focus-visible {
-  outline: 3px solid var(--focus);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 

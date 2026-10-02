@@ -33,5 +33,35 @@ describe("focus color tokens", () => {
     it(`${label}: the soft ring reaches 3:1 against the panel`, () => {
       assert.ok(ratio(over(rgba(token(scope, "--soft-ring")), panel), panel) >= 3);
     });
+    it(`${label}: the tile focus ring token reaches 3:1 against the page and the panel (WCAG 1.4.11)`, () => {
+      const bg = rgba(token(scope, "--bg")).slice(0, 3);
+      const ring = rgba(token(scope, "--focus-ring"));
+      assert.ok(ratio(over(ring, bg), bg) >= 3, `page ${ratio(over(ring, bg), bg).toFixed(2)}`);
+      assert.ok(ratio(over(ring, panel), panel) >= 3, `panel ${ratio(over(ring, panel), panel).toFixed(2)}`);
+    });
   }
+});
+
+describe("every tile type uses the tile focus ring token", () => {
+  // The outline rule for `selector` (a selector may also head other rules, e.g. the favorite hover/focus border).
+  const rule = (selector) => {
+    const bodies = [];
+    for (let at = css.indexOf(`${selector} {`); at >= 0; at = css.indexOf(`${selector} {`, at + 1)) bodies.push(css.slice(at, css.indexOf("}", at)));
+    assert.ok(bodies.length > 0, selector);
+    return bodies.find((b) => /outline:/.test(b)) ?? bodies[0];
+  };
+  for (const selector of [
+    ".favorite-tile:focus-visible",
+    ".chrome-tile:focus-visible",
+    ".desktop-grid > .tile-remove:focus-visible",
+    ".weather-tile:focus-visible,\n.city-hint-tile:focus-visible",
+    '.desktop[data-edit="true"] .desktop-grid > [data-widget-id]:focus-visible'
+  ]) {
+    it(`${selector.split("\n")[0]} draws a solid ring in var(--focus-ring)`, () => {
+      assert.match(rule(selector), /outline: \d+px solid var\(--focus-ring\);/);
+    });
+  }
+  it("the reduced-motion edit ring is 3 px (over the 2 px dashed edit outline)", () => {
+    assert.match(rule('.desktop[data-edit="true"] .desktop-grid > [data-widget-id]:focus-visible'), /outline: 3px solid var\(--focus-ring\);/);
+  });
 });

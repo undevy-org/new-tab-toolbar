@@ -774,9 +774,9 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
     assert.doesNotMatch(code, /later in Widgets/);
   });
 
-  it("Task 10: the − badge has an explicit focus ring from the --focus token", async () => {
+  it("Task 10: the − badge has an explicit focus ring from the tile focus ring token (--focus-ring, fix wave 2)", async () => {
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
-    assert.match(css, /\.desktop-grid > \.tile-remove:focus-visible \{\s*outline: 3px solid var\(--focus\);/);
+    assert.match(css, /\.desktop-grid > \.tile-remove:focus-visible \{\s*outline: 3px solid var\(--focus-ring\);/);
   });
 
   it("Task 11: bootstrap runs the v1 -> v2 step whenever the sync area exists and locks on a newer result", async () => {
@@ -836,6 +836,15 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
     const update = fn(code, "updateDragTarget");
     assert.match(update, /const outside = s\.lastX < box\.left \|\| s\.lastX > box\.right \|\| s\.lastY < box\.top;/);
     assert.match(update, /const valid = !outside && canPlace\(/);
+  });
+
+  it("fix wave 2: the link dialog's color input has its own accessible name; narrow Edit link footer wraps; a hidden badge is not displayed", async () => {
+    const code = await source();
+    assert.match(fn(code, "createFavoriteForm"), /color\.type = "color";\s*color\.setAttribute\("aria-label", "Background color"\);/);
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /\.desktop-dialog\[data-dialog="edit-link"\] \.favorite-form__footer \{ flex-wrap: wrap; \}/);
+    assert.match(css, /\.desktop-dialog\[data-dialog="edit-link"\] \.favorite-form__footer > \.button--danger \{ flex-basis: 100%; margin-right: 0; \}/);
+    assert.match(css, /\.desktop-grid > \.tile-remove\[hidden\] \{ display: none; \}/);
   });
 
   it("never uses innerHTML in newtab.js and adds no chrome.storage.onChanged listener", async () => {

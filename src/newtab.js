@@ -412,6 +412,7 @@ function createFavoriteForm(item) {
   const color = createNode("input", "favorite-color-input");
   color.name = "backgroundColor";
   color.type = "color";
+  color.setAttribute("aria-label", "Background color"); // the row label "Color" names the Auto/Manual radiogroup
   color.value = isEdit ? item.backgroundColor : "#24292f";
 
   const colorControls = createNode("div", "favorite-form__color-controls");
