@@ -132,6 +132,63 @@ html {
   }
 }
 
+/* Drag (Task 9). The dragged tile is position:fixed under the pointer (set inline by newtab.js), still, above the
+   badges, and lets the pointer through to the grid. The drop highlight sits under the tiles at the target block. */
+.desktop[data-edit="true"] .desktop-grid {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.desktop[data-edit="true"] .desktop-grid > [data-widget-id] {
+  touch-action: none;
+}
+
+.desktop[data-edit="true"] .desktop-grid img {
+  -webkit-user-drag: none;
+}
+
+.desktop[data-edit="true"] .desktop-grid > [data-widget-id]:is(.is-dragging, .is-returning) {
+  z-index: 3;
+  opacity: 0.9;
+  pointer-events: none;
+  animation: none;
+  cursor: grabbing;
+}
+
+.desktop[data-edit="true"] .desktop-grid > [data-widget-id].is-returning {
+  transition: left 0.18s ease-out, top 0.18s ease-out;
+}
+
+.desktop-grid > .drop-highlight {
+  position: absolute;
+  z-index: 0;
+  left: calc(var(--x) * (var(--cell-size) + var(--grid-gap)));
+  top: calc(var(--y) * (var(--cell-size) + var(--grid-gap)));
+  width: calc(var(--w) * var(--cell-size) + (var(--w) - 1) * var(--grid-gap));
+  height: calc(var(--h) * var(--cell-size) + (var(--h) - 1) * var(--grid-gap));
+  border-radius: 14px;
+  pointer-events: none;
+}
+
+.desktop-grid > .drop-highlight[data-valid="true"] {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+
+/* Invalid target: the error color PLUS a dashed outline (never color alone); --danger is >= 3:1 on --bg in both themes. */
+.desktop-grid > .drop-highlight[data-valid="false"] {
+  outline: 2px dashed var(--danger);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop[data-edit="true"] .desktop-grid > [data-widget-id].is-returning {
+    transition: none;
+  }
+}
+
 /* In edit mode a weather tile is a <button>: reset the native button look. */
 button.weather-tile {
   padding: 0;

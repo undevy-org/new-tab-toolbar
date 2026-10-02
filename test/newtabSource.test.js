@@ -9,9 +9,70 @@ async function source() {
 }
 
 describe("newtab favorites source", () => {
+  it("styles the drop highlight: invalid = --danger dashed outline with >= 3:1 against --bg in both themes", async () => {
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /\.drop-highlight\[data-valid="false"\] \{\s*outline: 2px dashed var\(--danger\);/);
+    assert.match(css, /\.drop-highlight\[data-valid="true"\] \{\s*outline: 2px solid var\(--primary\);/);
+    assert.match(css, /:is\(\.is-dragging, \.is-returning\) \{[^}]*pointer-events: none;[^}]*animation: none;/);
+    const lum = (hex) => {
+      const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    };
+    const ratio = (a, b) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+    const light = css.slice(0, css.indexOf("@media (prefers-color-scheme: dark)"));
+    const dark = css.slice(css.indexOf("@media (prefers-color-scheme: dark)"));
+    for (const block of [light, dark]) {
+      const bg = block.match(/--bg: (#[0-9a-f]{6});/)[1];
+      const danger = block.match(/--danger: (#[0-9a-f]{6});/)[1];
+      assert.ok(ratio(danger, bg) >= 3, `${danger} on ${bg}: ${ratio(danger, bg).toFixed(2)}`);
+    }
+  });
+
+  it("wires the pointer drag controller (Task 9): threshold, cancels, Escape layer, one-shot click suppression", async () => {
+    const code = await source();
+    assert.match(code, /import \{ canPlace, cellFromPoint, displayLayout, effectiveColumns, gridMetrics \} from "\.\/desktopLayout\.js";/);
+    assert.match(code, /const DRAG_THRESHOLD_PX = 6;/);
+    assert.match(code, /const AUTOSCROLL_EDGE_PX = 48;/);
+    assert.match(code, /const AUTOSCROLL_STEP_PX = 12;/);
+    assert.match(code, /function beginPointerDrag\(event, tile\)/);
+    assert.match(code, /function cancelDrag\(\)/);
+    assert.match(code, /event\.button !== 0 \|\| !event\.isPrimary/);
+    assert.match(code, /< DRAG_THRESHOLD_PX\) return; \/\/ still a tap/);
+    // Drop: moveWidget with the metric id behind the hint tile, through the atomic mutation runner; focus re-queried.
+    assert.match(code, /tile\.dataset\.metricId \?\? tile\.dataset\.widgetId/);
+    assert.match(code, /runDesktopMutation\(\(columns\) => widgetsService\.moveWidget\(s\.id, \{ x: target\.x, y: target\.y \}, \{ columns \}\)\)/);
+    assert.match(code, /focusDragTile\(s\.domId\)/);
+    assert.match(code, /canPlace\(s\.layout, s\.id,/);
+    // Cancels: Escape layer, pointercancel, window blur, leaving the window, resize, leaving edit mode.
+    assert.match(code, /if \(layer === "drag"\) \{\s*event\.preventDefault\(\);\s*cancelDrag\(\);/);
+    assert.match(code, /addEventListener\("pointercancel", \(event\) => \{\s*if \(dragSession && event\.pointerId === dragSession\.pointerId\) cancelDrag\(\);/);
+    assert.match(code, /window\.addEventListener\("blur", \(\) => \{\s*backgroundPressed = false;\s*cancelDrag\(\);/);
+    assert.match(code, /event\.relatedTarget === null && outsideViewport\(event\)\) cancelDrag\(\)/);
+    assert.match(code, /window\.addEventListener\("resize", \(\) => \{\s*cancelDrag\(\);/);
+    assert.match(code, /function setEditMode\(on\) \{\s*if \(!on\) cancelDrag\(\);/);
+    // One-shot suppression of the click that trails a started drag.
+    assert.match(code, /suppressDragClick = true;/);
+    assert.match(code, /if \(!suppressDragClick\) return;\s*suppressDragClick = false;\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);/);
+    // Autoscroll per animation frame.
+    assert.match(code, /window\.scrollBy\(0, direction \* AUTOSCROLL_STEP_PX\)/);
+    assert.match(code, /requestAnimationFrame\(autoscrollFrame\)/);
+    // Drop highlight is a DOM node with a validity flag; still no innerHTML in newtab.js.
+    assert.match(code, /createNode\("div", "drop-highlight"\)/);
+    assert.match(code, /highlight\.dataset\.valid = String\(valid\)/);
+    assert.doesNotMatch(code, /innerHTML/);
+  });
+
+  it("guards the background click (primary button only, reset on cancel) and falls back to Settings for a vanished badge", async () => {
+    const code = await source();
+    assert.match(code, /const isPrimaryPress = \(event\) => event\.button === 0 && event\.isPrimary;/);
+    assert.match(code, /backgroundPressed = desktopUi\.editMode && isPrimaryPress\(event\) && isBackground\(event\.target\);/);
+    assert.match(code, /favoritesRoot\.addEventListener\("pointercancel", \(\) => \{\s*backgroundPressed = false;/);
+    assert.match(code, /\?\? \(target\.badge \? favoritesRoot\.querySelector\(SETTINGS_TILE_SELECTOR\) : null\)/);
+  });
+
   it("drives the desktop UI from the pure desktopUiState module, not a mode string", async () => {
     const code = await source();
-    assert.match(code, /import \{ closeDialog, createDesktopUiState, enterEditMode, escapeLayer, exitEditMode, openDialog \} from "\.\/desktopUiState\.js";/);
+    assert.match(code, /import \{\s*closeDialog,\s*createDesktopUiState,\s*endDrag,\s*enterEditMode,\s*escapeLayer,\s*exitEditMode,\s*openDialog,\s*startDrag,\s*updateDrag\s*\} from "\.\/desktopUiState\.js";/);
     assert.match(code, /let desktopUi = createDesktopUiState\(\);/);
     assert.doesNotMatch(code, /favoritesMode/);
     assert.doesNotMatch(code, /favoritesUiState\.js/);

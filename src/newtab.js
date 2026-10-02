@@ -6,8 +6,18 @@ import {
 } from "./favoriteColor.js";
 import { getFavoriteIconModel, getFavoriteLetter } from "./favoriteIcon.js";
 import { createIconNode } from "./icons.js";
-import { displayLayout, effectiveColumns, gridMetrics } from "./desktopLayout.js";
-import { closeDialog, createDesktopUiState, enterEditMode, escapeLayer, exitEditMode, openDialog } from "./desktopUiState.js";
+import { canPlace, cellFromPoint, displayLayout, effectiveColumns, gridMetrics } from "./desktopLayout.js";
+import {
+  closeDialog,
+  createDesktopUiState,
+  endDrag,
+  enterEditMode,
+  escapeLayer,
+  exitEditMode,
+  openDialog,
+  startDrag,
+  updateDrag
+} from "./desktopUiState.js";
 import { createWidgetsService } from "./widgetsService.js";
 import {
   WIDGETS_META_KEY,
@@ -1253,12 +1263,14 @@ function focusedWidgetId() {
   return owner ? { id: owner.dataset.widgetId ?? owner.dataset.removeFor, badge: "removeFor" in owner.dataset } : null;
 }
 
+// A focused − badge disappears when edit mode exits: focus then falls back to the Settings tile, never to <body>.
 function restoreFocus(target) {
   if (!target || (document.activeElement && document.activeElement !== document.body)) return;
   const selector = target.badge ? `[data-remove-for="${CSS.escape(target.id)}"]` : `[data-widget-id="${CSS.escape(target.id)}"]`;
   suppressTooltipOnFocus = true;
   try {
-    favoritesRoot.querySelector(selector)?.focus();
+    const node = favoritesRoot.querySelector(selector) ?? (target.badge ? favoritesRoot.querySelector(SETTINGS_TILE_SELECTOR) : null);
+    node?.focus();
   } finally {
     suppressTooltipOnFocus = false;
   }
@@ -1328,17 +1340,225 @@ function renderDesktop() {
   favoritesRoot.dataset.edit = String(desktopUi.editMode);
   favoritesRoot.replaceChildren(grid);
   restoreFocus(focusTarget);
+  if (dragSession) reattachDrag();
 }
 
 // A resize only re-renders (when the column count or the cell size changed); it never writes.
 let resizeFrame = 0;
 window.addEventListener("resize", () => {
+  cancelDrag(); // Review focus 1: a viewport change cancels an active drag (tile returns, nothing written)
   cancelAnimationFrame(resizeFrame);
   resizeFrame = requestAnimationFrame(() => {
     if (!widgetsState || widgetsNewer || widgetsMigrationFailed) return;
     if (currentColumns() !== renderedColumns || gridMetrics(viewportWidth()).cell !== renderedCell) renderFavorites();
   });
 });
+
+// ---- Pointer drag (edit mode only). Spec § Drag details, § Placement rules, § DOM order and focus. ----
+const DRAG_THRESHOLD_PX = 6;
+const AUTOSCROLL_EDGE_PX = 48;
+const AUTOSCROLL_STEP_PX = 12;
+const DROP_RETURN_MS = 180;
+// { id (widget to move: the metric id for the hint tile), domId (rendered tile), tile, cell, layout, columns, metrics,
+//   pointerId, startX, startY, lastX, lastY, baseLeft, baseTop, grab, started, frame, rows }
+let dragSession = null;
+let dropReturnTimer = 0;
+// One-shot: the click that trails a started drag (same press) is swallowed, so Settings never toggles after a drag.
+let suppressDragClick = false;
+
+const prefersReducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+const dragGridOf = () => favoritesRoot?.querySelector(".desktop-grid") ?? null;
+
+function beginPointerDrag(event, tile) {
+  if (!desktopUi.editMode || event.button !== 0 || !event.isPrimary || dragSession || dropReturnTimer) return;
+  if (favoritesBusy || desktopDialogRoot || cityModalRoot || !widgetsState) return;
+  const grid = dragGridOf();
+  if (!grid || tile.parentElement !== grid) return;
+  const id = tile.dataset.metricId ?? tile.dataset.widgetId; // the hint tile stands for the first enabled metric
+  const columns = currentColumns();
+  const layout = displayLayout(widgetsState.items, columns);
+  const cell = layout.get(id);
+  if (!cell) return; // hidden metrics have no tile and never reach moveWidget
+  const metrics = gridMetrics(viewportWidth());
+  const origin = grid.getBoundingClientRect();
+  const step = metrics.cell + metrics.gap;
+  const grabCell = cellFromPoint({ x: event.clientX, y: event.clientY }, origin, metrics);
+  const clamp = (v, max) => Math.min(max, Math.max(0, v));
+  dragSession = {
+    id, domId: tile.dataset.widgetId, tile, cell, layout, columns, metrics,
+    pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, lastX: event.clientX, lastY: event.clientY,
+    baseLeft: origin.left + cell.x * step, baseTop: origin.top + cell.y * step,
+    grab: { x: clamp(grabCell.x - cell.x, cell.w - 1), y: clamp(grabCell.y - cell.y, cell.h - 1) },
+    started: false, frame: 0,
+    rows: Math.max(0, ...[...layout.values()].map((g) => g.y + g.h)) + 2 // room for the "one row below" drop and its error row
+  };
+}
+
+const outsideViewport = (event) =>
+  event.clientX < 0 || event.clientY < 0 || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight;
+
+function onDragPointerMove(event) {
+  const s = dragSession;
+  if (!s || event.pointerId !== s.pointerId) return;
+  if (outsideViewport(event)) {
+    cancelDrag(); // the pointer left the window
+    return;
+  }
+  s.lastX = event.clientX;
+  s.lastY = event.clientY;
+  if (!s.started) {
+    if (Math.hypot(event.clientX - s.startX, event.clientY - s.startY) < DRAG_THRESHOLD_PX) return; // still a tap
+    s.started = true;
+    suppressDragClick = true;
+    hideTooltip();
+    desktopUi = startDrag(desktopUi, { id: s.id, grab: s.grab, size: { w: s.cell.w, h: s.cell.h }, pointerId: s.pointerId });
+  }
+  applyDragVisuals(s);
+  if (!s.frame && edgeDirection(s.lastY) !== 0) s.frame = requestAnimationFrame(autoscrollFrame);
+}
+
+function edgeDirection(clientY) {
+  if (clientY < AUTOSCROLL_EDGE_PX) return -1;
+  if (clientY > window.innerHeight - AUTOSCROLL_EDGE_PX) return 1;
+  return 0;
+}
+
+// While the pointer stays within 48 px of the top/bottom edge the page scrolls 12 px per frame; the target is
+// recomputed from the last pointer position because the grid moved under it.
+function autoscrollFrame() {
+  const s = dragSession;
+  if (!s) return;
+  s.frame = 0;
+  const direction = edgeDirection(s.lastY);
+  if (direction === 0) return;
+  const before = window.scrollY;
+  window.scrollBy(0, direction * AUTOSCROLL_STEP_PX);
+  if (window.scrollY !== before) updateDragTarget(s);
+  s.frame = requestAnimationFrame(autoscrollFrame);
+}
+
+// The dragged tile is position:fixed under the pointer (it never adds scrollable overflow, so autoscroll ends at
+// the page bottom); the grid keeps two spare rows while dragging and the highlight is clamped inside the grid.
+function applyDragVisuals(s) {
+  const grid = dragGridOf();
+  if (!grid) return;
+  grid.dataset.dragging = "true";
+  grid.style.setProperty("--rows", String(s.rows));
+  s.tile.classList.add("is-dragging");
+  s.tile.style.position = "fixed";
+  s.tile.style.left = `${s.baseLeft + s.lastX - s.startX}px`;
+  s.tile.style.top = `${s.baseTop + s.lastY - s.startY}px`;
+  const badge = grid.querySelector(`[data-remove-for="${CSS.escape(s.id)}"]`);
+  if (badge) badge.hidden = true;
+  updateDragTarget(s);
+}
+
+function updateDragTarget(s) {
+  const grid = dragGridOf();
+  if (!grid) return;
+  const target = cellFromPoint({ x: s.lastX, y: s.lastY }, grid.getBoundingClientRect(), s.metrics, s.grab);
+  const valid = canPlace(s.layout, s.id, { ...target, w: s.cell.w, h: s.cell.h }, s.columns);
+  desktopUi = updateDrag(desktopUi, target, valid);
+  drawDropHighlight(grid, target, s, valid);
+}
+
+function drawDropHighlight(grid, target, s, valid) {
+  let highlight = grid.querySelector(":scope > .drop-highlight");
+  if (!highlight) {
+    highlight = createNode("div", "drop-highlight");
+    highlight.setAttribute("aria-hidden", "true");
+    grid.prepend(highlight);
+  }
+  highlight.dataset.valid = String(valid);
+  highlight.style.setProperty("--x", String(Math.min(target.x, s.columns - s.cell.w)));
+  highlight.style.setProperty("--y", String(Math.min(target.y, s.rows - s.cell.h)));
+  highlight.style.setProperty("--w", String(s.cell.w));
+  highlight.style.setProperty("--h", String(s.cell.h));
+}
+
+function stopDragFrame(s) {
+  if (s?.frame) cancelAnimationFrame(s.frame);
+  if (s) s.frame = 0;
+}
+
+// A re-render while dragging (e.g. weather data arrived) replaced the tiles: pick up the new node and redraw.
+function reattachDrag() {
+  const s = dragSession;
+  const tile = favoritesRoot?.querySelector(`.desktop-grid > [data-widget-id="${CSS.escape(s.domId)}"]`);
+  if (!tile || !desktopUi.editMode) {
+    stopDragFrame(s);
+    dragSession = null;
+    desktopUi = endDrag(desktopUi);
+    return;
+  }
+  s.tile = tile;
+  if (s.started) applyDragVisuals(s);
+}
+
+function focusDragTile(domId) {
+  const tile = favoritesRoot?.querySelector(`.desktop-grid > [data-widget-id="${CSS.escape(domId)}"]`);
+  if (!(tile instanceof HTMLElement)) return;
+  suppressTooltipOnFocus = true;
+  try {
+    tile.focus();
+  } finally {
+    suppressTooltipOnFocus = false;
+  }
+}
+
+async function onDragPointerUp(event) {
+  const s = dragSession;
+  if (!s || event.pointerId !== s.pointerId) return;
+  dragSession = null;
+  stopDragFrame(s);
+  if (!s.started) return; // below the threshold it is a tap: the click handler runs as before
+  const drag = desktopUi.drag;
+  desktopUi = endDrag(desktopUi);
+  const target = drag?.target;
+  if (drag?.valid && target && (target.x !== s.cell.x || target.y !== s.cell.y)) {
+    // Atomic: on a write failure nothing is persisted, the re-render puts the tile back and #desktop-status says why.
+    await runDesktopMutation((columns) => widgetsService.moveWidget(s.id, { x: target.x, y: target.y }, { columns }));
+    focusDragTile(s.domId);
+    return;
+  }
+  if (drag?.valid) {
+    renderFavorites(); // dropped on its own cell: nothing to write
+    focusDragTile(s.domId);
+    return;
+  }
+  returnDraggedTile(s); // rejected drop: the tile animates back, nothing is written
+}
+
+function returnDraggedTile(s) {
+  dragGridOf()?.querySelector(":scope > .drop-highlight")?.remove();
+  const finish = () => {
+    dropReturnTimer = 0;
+    renderFavorites();
+    focusDragTile(s.domId);
+  };
+  const grid = dragGridOf();
+  if (prefersReducedMotion() || !grid || !s.tile.isConnected) {
+    finish();
+    return;
+  }
+  const origin = grid.getBoundingClientRect();
+  const step = s.metrics.cell + s.metrics.gap;
+  s.tile.classList.add("is-returning");
+  s.tile.style.left = `${origin.left + s.cell.x * step}px`;
+  s.tile.style.top = `${origin.top + s.cell.y * step}px`;
+  dropReturnTimer = setTimeout(finish, DROP_RETURN_MS);
+}
+
+// Escape, pointercancel, window blur, the pointer leaving the window, a viewport resize, leaving edit mode.
+function cancelDrag() {
+  const s = dragSession;
+  if (!s) return;
+  dragSession = null;
+  stopDragFrame(s);
+  if (!s.started) return; // a pending press had changed nothing on screen
+  desktopUi = endDrag(desktopUi);
+  renderFavorites();
+}
 
 function applyPendingFocus() {
   if (!pendingFocus || favoritesBusy) {
@@ -1358,6 +1578,7 @@ function applyPendingFocus() {
 }
 
 function setEditMode(on) {
+  if (!on) cancelDrag();
   const before = desktopUi.editMode;
   desktopUi = on ? enterEditMode(desktopUi) : exitEditMode(desktopUi);
   if (desktopUi.editMode === before) return;
@@ -1519,15 +1740,58 @@ if (favoritesRoot) {
 
   // Background = the grid element or the root itself (gaps between tiles are background). A click needs pointerdown
   // AND pointerup on the background, so releasing a drag over it never exits.
+  // Only a primary-button press of the primary pointer counts (a right click on the background never exits).
   const isBackground = (target) => target === favoritesRoot || (target instanceof Element && target.classList.contains("desktop-grid"));
+  const isPrimaryPress = (event) => event.button === 0 && event.isPrimary;
   let backgroundPressed = false;
   favoritesRoot.addEventListener("pointerdown", (event) => {
-    backgroundPressed = desktopUi.editMode && isBackground(event.target);
+    backgroundPressed = desktopUi.editMode && isPrimaryPress(event) && isBackground(event.target);
   });
   favoritesRoot.addEventListener("pointerup", (event) => {
-    if (backgroundPressed && isBackground(event.target) && !desktopUi.drag) setEditMode(false);
+    if (backgroundPressed && isPrimaryPress(event) && isBackground(event.target) && !desktopUi.drag) setEditMode(false);
     backgroundPressed = false;
   });
+  favoritesRoot.addEventListener("pointercancel", () => {
+    backgroundPressed = false;
+  });
+
+  // Drag: a press on a tile (never on a − badge, which is a sibling of its tile) may become a drag.
+  favoritesRoot.addEventListener("pointerdown", (event) => {
+    const tile = event.target instanceof Element ? event.target.closest("[data-widget-id]") : null;
+    if (tile instanceof HTMLElement && !event.target.closest(".tile-remove")) beginPointerDrag(event, tile);
+  });
+  // Native image drag would steal the pointer (pointercancel) in edit mode.
+  favoritesRoot.addEventListener("dragstart", (event) => {
+    if (desktopUi.editMode) event.preventDefault();
+  });
+  window.addEventListener("pointermove", onDragPointerMove);
+  window.addEventListener("pointerup", (event) => {
+    void onDragPointerUp(event);
+    // The trailing click of this press (if any) is dispatched before this timeout runs; clear the flag after it.
+    if (suppressDragClick) setTimeout(() => { suppressDragClick = false; }, 0);
+  });
+  window.addEventListener("pointercancel", (event) => {
+    if (dragSession && event.pointerId === dragSession.pointerId) cancelDrag();
+    if (suppressDragClick) setTimeout(() => { suppressDragClick = false; }, 0);
+  });
+  // The pointer left the window (relatedTarget null and the point is outside the viewport).
+  document.addEventListener("pointerout", (event) => {
+    if (dragSession && event.relatedTarget === null && outsideViewport(event)) cancelDrag();
+  });
+  window.addEventListener("blur", () => {
+    backgroundPressed = false;
+    cancelDrag();
+  });
+  window.addEventListener(
+    "click",
+    (event) => {
+      if (!suppressDragClick) return;
+      suppressDragClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    true
+  );
 
   // One Escape handler, topmost layer first: tooltip, city suggestions, city modal.
   document.addEventListener("keydown", (event) => {
@@ -1542,7 +1806,9 @@ if (favoritesRoot) {
       cityModal: Boolean(cityModalRoot)
     });
     if (layer === "drag") {
-      return; // Task 9 cancels the drag here
+      event.preventDefault();
+      cancelDrag();
+      return;
     }
     if (layer === "tooltip") {
       hideTooltipIfVisible();
