@@ -5,6 +5,7 @@ import {
   WIDGETS_META_KEY, createWidgetsStore, inspectWidgetsMeta, isWidgetsState, widgetItemStorageKey,
   migrateWidgetsToV2, ensureWidgetsLayout
 } from "../src/widgetsStore.js";
+import { PlacementError, createWidgetsService } from "../src/widgetsService.js";
 import { MAX_WIDGETS, WEATHER_METRIC_IDS } from "../src/widgetsShared.js";
 import { CHROME_IDS, isValidGrid } from "../src/desktopLayout.js";
 
@@ -285,5 +286,74 @@ describe("ensureWidgetsLayout (Defaults, AS-1, AS-35)", () => {
     assert.equal(writeLog[writeLog.length - 1], WIDGETS_META_KEY, "meta written in last set call");
     const metaPos = writeLog.lastIndexOf(WIDGETS_META_KEY);
     assert.ok(!writeLog.slice(metaPos + 1).some((k) => k.startsWith("quietTabWidget:")), "no item keys after meta");
+  });
+});
+
+describe("widgetsService (displayed-layout writes)", () => {
+  async function setup(items) {
+    const area = createMemoryStorageArea();
+    await seedV2(area, items);
+    let n = 0;
+    const service = createWidgetsService({ store: createWidgetsStore(area), now: () => NOW, createId: () => `new${++n}` });
+    return { area, service };
+  }
+  it("requires the column count", async () => {
+    const { service } = await setup([]);
+    await assert.rejects(service.addFavorite({ url: "https://a.com" }), /column count/);
+  });
+  it("AS-17: add takes the first free 1×1 from (0,0)", async () => {
+    const { area, service } = await setup([fav("a", { grid: g(0, 0) }), fav("b", { grid: g(1, 0) })]);
+    await service.addFavorite({ url: "https://c.example.com" }, { columns: 12 });
+    assert.deepEqual((await gridsOf(area)).new1, g(2, 0));
+  });
+  it("AS-36: an edit while narrow persists the displayed grids of every widget", async () => {
+    const { area, service } = await setup([fav("A", { grid: g(0, 0) }), fav("B", { grid: g(5, 0, 2, 1) }), fav("D", { grid: g(8, 0, 2, 2) })]);
+    await service.moveWidget("A", { x: 0, y: 2 }, { columns: 6 });
+    assert.deepEqual(await gridsOf(area), { A: g(0, 2), B: g(1, 0, 2, 1), D: g(3, 0, 2, 2) });
+  });
+  it("viewport changes alone never write (getState + display has no side effects)", async () => {
+    const { area } = await setup([fav("A", { grid: g(0, 0) }), fav("B", { grid: g(8, 0) })]);
+    const before = await area.get(null);
+    await createWidgetsStore(area).getState();
+    assert.deepEqual(await area.get(null), before);
+  });
+  it("AS-18: a drop on an occupied cell is rejected and nothing is written", async () => {
+    const { area, service } = await setup([fav("a", { grid: g(0, 0) }), fav("b", { grid: g(1, 0) })]);
+    const before = await area.get(null);
+    await assert.rejects(service.moveWidget("a", { x: 1, y: 0 }, { columns: 12 }), PlacementError);
+    await assert.rejects(service.moveWidget("a", { x: 0, y: 5 }, { columns: 12 }), PlacementError); // too far below
+    await assert.rejects(service.updateFavorite("a", { w: 2 }, { columns: 1 }), /column count/);
+    assert.deepEqual(await area.get(null), before);
+  });
+  it("AS-19: a resize relocates by the scan rule", async () => {
+    const { area, service } = await setup([fav("a", { grid: g(0, 0) }), fav("b", { grid: g(1, 0) })]);
+    await service.updateFavorite("a", { w: 2 }, { columns: 12 });
+    assert.deepEqual((await gridsOf(area)).a, g(2, 0, 2, 1));
+  });
+  it("AS-7/AS-20: hide keeps others; restore takes the first free block", async () => {
+    const { area, service } = await setup([
+      metric("weather:precipitation", { grid: g(0, 0, 2, 1) }), fav("a", { grid: g(2, 0) })
+    ]);
+    await service.updateWeatherMetric("weather:precipitation", { enabled: false }, { columns: 12 });
+    assert.equal((await area.get(widgetItemStorageKey("weather:precipitation")))[widgetItemStorageKey("weather:precipitation")].enabled, false);
+    await service.updateWeatherMetric("weather:precipitation", { enabled: true }, { columns: 12 });
+    assert.deepEqual((await gridsOf(area))["weather:precipitation"], g(0, 0, 2, 1));
+  });
+  it("delete removes the key and keeps the rest displayed", async () => {
+    const { area, service } = await setup([fav("a", { grid: g(0, 0) }), fav("b", { grid: g(1, 0) })]);
+    await service.deleteFavorite("a", { columns: 12 });
+    assert.deepEqual(Object.keys(await gridsOf(area)), ["b"]);
+    assert.equal(widgetItemStorageKey("a") in (await area.get(null)), false);
+  });
+  it("AS-28: items with a broken grid get valid grids on the next write and are not lost", async () => {
+    const { area, service } = await setup([fav("ok", { grid: g(0, 0) }), fav("nogrid"), fav("broken", { grid: g(0, 0, 3, 1) }), fav("gone", { grid: g(5, 5) })]);
+    await service.deleteFavorite("gone", { columns: 12 });
+    assert.deepEqual(await gridsOf(area), { ok: g(0, 0), nogrid: g(1, 0), broken: g(2, 0) });
+  });
+  it("a newer meta refuses every mutation", async () => {
+    const area = createMemoryStorageArea();
+    await area.set({ [WIDGETS_META_KEY]: { version: 9 } });
+    const service = createWidgetsService({ store: createWidgetsStore(area) });
+    await assert.rejects(service.addFavorite({ url: "https://a.com" }, { columns: 12 }), /newer version/);
   });
 });

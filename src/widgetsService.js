@@ -1,16 +1,18 @@
 import { withWidgetsMutationLock } from "./widgetsStore.js";
-import { moveTargetIndex } from "./widgetsLayout.js";
 import {
-  GRID_POSITIONS,
-  MAX_FAVORITE_WIDGETS,
-  MAX_GRID_COLUMNS,
-  MIN_GRID_COLUMNS
-} from "./widgetsShared.js";
+  canPlace,
+  defaultSize,
+  displayLayout,
+  isValidGrid,
+  placeNew,
+  placeResized,
+  sizeOf
+} from "./desktopLayout.js";
+import { MAX_FAVORITE_WIDGETS, MAX_GRID_COLUMNS } from "./widgetsShared.js";
 import {
   BACKGROUND_COLOR_SOURCES,
   HEX_COLOR_VALIDATION_PATTERN,
   ICON_MODES,
-  TILE_SIZES,
   trimString
 } from "./favoritesShared.js";
 
@@ -111,14 +113,6 @@ function normalizeBackgroundColorSource(backgroundColorSource) {
   return backgroundColorSource;
 }
 
-function normalizeTileSize(tileSize) {
-  if (!TILE_SIZES.has(tileSize)) {
-    throw new Error("Choose a supported tile size");
-  }
-
-  return tileSize;
-}
-
 function deriveBackgroundColorSource(input, fallbackSource) {
   const source =
     input.backgroundColorSource ??
@@ -148,35 +142,51 @@ function createDefaultId() {
   return `fav-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function normalizeMoveDirection(direction) {
-  if (typeof direction !== "number" || !Number.isFinite(direction)) {
-    throw new Error("Move direction must be a finite number");
-  }
-
-  return Math.sign(direction);
-}
-
-function findFavoriteIndex(state, id) {
-  return state.items.findIndex((item) => item.type === "favorite" && item.id === id);
-}
-
-function normalizeColumns(columns) {
-  // Number(null)/Number("")/Number([]) are 0 and are rejected by the range check;
-  // Number(undefined)/Number({}) are NaN and are rejected by isInteger.
-  const value = typeof columns === "string" ? Number(columns.trim() === "" ? NaN : columns) : Number(columns);
-  if (!Number.isInteger(value) || value < MIN_GRID_COLUMNS || value > MAX_GRID_COLUMNS) {
-    throw new Error(
-      `Choose a number of columns between ${MIN_GRID_COLUMNS} and ${MAX_GRID_COLUMNS}`
-    );
+function normalizeSpan(value, name) {
+  if (value !== 1 && value !== 2) {
+    throw new Error(`Choose a supported tile ${name}`);
   }
   return value;
 }
 
-function normalizePosition(position) {
-  if (!GRID_POSITIONS.has(position)) {
-    throw new Error("Choose a supported grid position");
+// The caller passes the current column count (effectiveColumns of the viewport): every explicit mutation
+// is computed against the DISPLAYED layout (spec § Writes) and persists the displayed grid of every widget.
+function requireColumns(options) {
+  const columns = options?.columns;
+  if (!Number.isInteger(columns) || columns < 2 || columns > MAX_GRID_COLUMNS) {
+    throw new Error("The current column count is required");
   }
-  return position;
+  return columns;
+}
+
+function placeholderGrid(item) {
+  const size = item.type === "weather-metric" ? defaultSize(item.id) : sizeOf(item);
+  return { x: 0, y: 0, w: size.w, h: size.h };
+}
+
+// Resolve every widget to a valid stored grid: on-grid ones to their displayed cell, hidden metrics keep (or get)
+// a placeholder that is ignored while hidden.
+function rebase(state, columns) {
+  const layout = displayLayout(state.items, columns);
+  return {
+    ...state,
+    items: state.items.map((item) => ({
+      ...item,
+      grid: layout.get(item.id) ?? (isValidGrid(item.grid) ? item.grid : placeholderGrid(item))
+    }))
+  };
+}
+
+export class PlacementError extends Error {
+  constructor(message = "That spot is taken") {
+    super(message);
+    this.name = "PlacementError";
+    this.code = "PLACEMENT_REJECTED";
+  }
+}
+
+function withGrid(items, id, grid) {
+  return items.map((item) => (item.id === id ? { ...item, grid } : item));
 }
 
 export function createWidgetsService({
@@ -185,24 +195,34 @@ export function createWidgetsService({
   createId = createDefaultId,
   defaultBackgroundColor = () => "#24292f"
 }) {
+  async function mutate(options, build) {
+    return withWidgetsMutationLock(async () => {
+      await store.assertWritable();
+      const columns = requireColumns(options);
+      const base = rebase(await store.getState(), columns);
+      const updatedAt = now();
+      const items = build({ base, columns, updatedAt });
+      return store.setState({ ...base, items, updatedAt });
+    });
+  }
+
   return {
     getState() {
       return store.getState();
     },
 
-    async addFavorite(input) {
-      return withWidgetsMutationLock(async () => {
-        await store.assertWritable();
-        const payload = inputObject(input);
-        const state = await store.getState();
-
-        const favoriteCount = state.items.filter((item) => item.type === "favorite").length;
+    // input.w / input.h (1 or 2, default 1×1). The new link takes the first free block from (0,0).
+    addFavorite(input, options) {
+      const payload = inputObject(input);
+      return mutate(options, ({ base, columns, updatedAt }) => {
+        const favoriteCount = base.items.filter((item) => item.type === "favorite").length;
         if (favoriteCount >= MAX_FAVORITE_WIDGETS) {
           throw new Error(`You can save up to ${MAX_FAVORITE_WIDGETS} favorites`);
         }
 
-        const createdAt = now();
         const normalizedUrl = normalizeFavoriteUrl(payload.url);
+        const size = { w: normalizeSpan(payload.w ?? 1, "width"), h: normalizeSpan(payload.h ?? 1, "height") };
+        const layout = displayLayout(base.items, columns);
         const item = {
           id: createId(),
           type: "favorite",
@@ -217,56 +237,39 @@ export function createWidgetsService({
             defaultBackgroundColor
           ),
           backgroundColorSource: deriveBackgroundColorSource(payload, "auto"),
-          tileSize: normalizeTileSize(payload.tileSize ?? "square"),
-          createdAt,
-          updatedAt: createdAt
+          grid: placeNew(layout, size, columns),
+          createdAt: updatedAt,
+          updatedAt
         };
-
-        return store.setState({
-          ...state,
-          items: state.items.toSpliced(
-            state.items.findLastIndex((entry) => entry.type === "favorite") + 1,
-            0,
-            item
-          ),
-          updatedAt: createdAt
-        });
+        return [...base.items, item];
       });
     },
 
-    async updateFavorite(id, input) {
-      return withWidgetsMutationLock(async () => {
-        await store.assertWritable();
-        const payload = inputObject(input);
-        const state = await store.getState();
-        const index = findFavoriteIndex(state, id);
-
+    updateFavorite(id, input, options) {
+      const payload = inputObject(input);
+      return mutate(options, ({ base, columns, updatedAt }) => {
+        const index = base.items.findIndex((item) => item.type === "favorite" && item.id === id);
         if (index === -1) {
           throw new Error("Favorite not found");
         }
 
-        const updatedAt = now();
-        const current = state.items[index];
-        const nextItem = { ...current };
+        const nextItem = { ...base.items[index] };
+        delete nextItem.tileSize; // v2 writes never carry the legacy size
 
         if (Object.hasOwn(payload, "url")) {
           const normalizedUrl = normalizeFavoriteUrl(payload.url);
           nextItem.url = normalizedUrl.url;
           nextItem.domain = normalizedUrl.domain;
         }
-
         if (Object.hasOwn(payload, "label")) {
           nextItem.label = normalizeLabel(payload.label, nextItem.domain);
         }
-
         if (Object.hasOwn(payload, "iconMode")) {
           nextItem.iconMode = normalizeIconMode(payload.iconMode);
         }
-
         if (Object.hasOwn(payload, "customIconUrl")) {
           nextItem.customIconUrl = normalizeNullableImageUrl(payload.customIconUrl);
         }
-
         if (Object.hasOwn(payload, "backgroundColor")) {
           nextItem.backgroundColor = normalizeBackgroundColor(
             payload.backgroundColor,
@@ -274,67 +277,53 @@ export function createWidgetsService({
             defaultBackgroundColor
           );
         }
-
         if (Object.hasOwn(payload, "backgroundColorSource")) {
-          nextItem.backgroundColorSource = normalizeBackgroundColorSource(
-            payload.backgroundColorSource
-          );
+          nextItem.backgroundColorSource = normalizeBackgroundColorSource(payload.backgroundColorSource);
         } else if (Object.hasOwn(payload, "backgroundColor")) {
-          nextItem.backgroundColorSource = deriveBackgroundColorSource(
-            payload,
-            "auto"
-          );
+          nextItem.backgroundColorSource = deriveBackgroundColorSource(payload, "auto");
         }
-
-        if (Object.hasOwn(payload, "tileSize")) {
-          nextItem.tileSize = normalizeTileSize(payload.tileSize);
+        if (Object.hasOwn(payload, "w") || Object.hasOwn(payload, "h")) {
+          const size = {
+            w: normalizeSpan(payload.w ?? nextItem.grid.w, "width"),
+            h: normalizeSpan(payload.h ?? nextItem.grid.h, "height")
+          };
+          nextItem.grid = placeResized(displayLayout(base.items, columns), id, size, columns);
         }
-
         nextItem.updatedAt = updatedAt;
-
-        const items = state.items.with(index, nextItem);
-        return store.setState({
-          ...state,
-          items,
-          updatedAt
-        });
+        return base.items.with(index, nextItem);
       });
     },
 
-    async deleteFavorite(id) {
-      return withWidgetsMutationLock(async () => {
-        await store.assertWritable();
-        const state = await store.getState();
-        const index = findFavoriteIndex(state, id);
-
-        if (index === -1) {
+    deleteFavorite(id, options) {
+      return mutate(options, ({ base }) => {
+        if (!base.items.some((item) => item.type === "favorite" && item.id === id)) {
           throw new Error("Favorite not found");
         }
-
-        const updatedAt = now();
-        return store.setState({
-          ...state,
-          items: state.items.filter((item) => item.id !== id),
-          updatedAt
-        });
+        return base.items.filter((item) => item.id !== id);
       });
     },
 
-    async updateWeatherMetric(id, input) {
-      return withWidgetsMutationLock(async () => {
-        await store.assertWritable();
-        const payload = inputObject(input);
-        const state = await store.getState();
-        const index = state.items.findIndex((item) => item.type === "weather-metric" && item.id === id);
-
+    // payload: { enabled?: boolean, w?: 1|2, h?: 1|2 }. Hiding keeps the placeholder grid; restoring takes the first
+    // free block for its size.
+    updateWeatherMetric(id, input, options) {
+      const payload = inputObject(input);
+      return mutate(options, ({ base, columns }) => {
+        const index = base.items.findIndex((item) => item.type === "weather-metric" && item.id === id);
         if (index === -1) {
           throw new Error("Weather tile not found");
         }
 
-        const next = { ...state.items[index] };
-        if (Object.hasOwn(payload, "tileSize")) {
-          next.tileSize = normalizeTileSize(payload.tileSize);
+        const current = base.items[index];
+        const next = { ...current };
+        delete next.tileSize;
+        let size = { w: current.grid.w, h: current.grid.h };
+        if (Object.hasOwn(payload, "w") || Object.hasOwn(payload, "h")) {
+          size = {
+            w: normalizeSpan(payload.w ?? size.w, "width"),
+            h: normalizeSpan(payload.h ?? size.h, "height")
+          };
         }
+
         if (Object.hasOwn(payload, "enabled")) {
           if (typeof payload.enabled !== "boolean") {
             throw new Error("Choose whether the weather tile is shown");
@@ -342,49 +331,31 @@ export function createWidgetsService({
           next.enabled = payload.enabled;
         }
 
-        return store.setState({ ...state, items: state.items.with(index, next), updatedAt: now() });
+        const layout = displayLayout(base.items, columns);
+        if (next.enabled && !current.enabled) {
+          next.grid = placeNew(layout, size, columns);
+        } else if (next.enabled) {
+          next.grid = placeResized(layout, id, size, columns);
+        } else {
+          next.grid = { ...current.grid, ...size };
+        }
+        return base.items.with(index, next);
       });
     },
 
-    async moveWidget(id, direction) {
-      return withWidgetsMutationLock(async () => {
-        await store.assertWritable();
-        const state = await store.getState();
-        const index = state.items.findIndex((item) => item.id === id);
-
-        if (index === -1) {
+    // Drop at cell (x, y). Rejected with PlacementError when the block overlaps, overflows or is too far below.
+    moveWidget(id, target, options) {
+      return mutate(options, ({ base, columns }) => {
+        const layout = displayLayout(base.items, columns);
+        const current = layout.get(id);
+        if (!current) {
           throw new Error("Widget not found");
         }
-
-        const step = normalizeMoveDirection(direction);
-        const target = moveTargetIndex(state.items, index, step);
-        if (target === -1) {
-          return state;
+        const next = { x: target?.x, y: target?.y, w: current.w, h: current.h };
+        if (!isValidGrid(next) || !canPlace(layout, id, next, columns)) {
+          throw new PlacementError();
         }
-
-        const updatedAt = now();
-        const items = [...state.items];
-        const [moved] = items.splice(index, 1);
-        items.splice(target, 0, moved);
-        return store.setState({ ...state, items, updatedAt });
-      });
-    },
-
-    async setColumns(columns) {
-      return withWidgetsMutationLock(async () => {
-        await store.assertWritable();
-        const nextColumns = normalizeColumns(columns);
-        const state = await store.getState();
-        return store.setState({ ...state, columns: nextColumns, updatedAt: now() });
-      });
-    },
-
-    async setPosition(position) {
-      return withWidgetsMutationLock(async () => {
-        await store.assertWritable();
-        const nextPosition = normalizePosition(position);
-        const state = await store.getState();
-        return store.setState({ ...state, position: nextPosition, updatedAt: now() });
+        return withGrid(base.items, id, next);
       });
     }
   };
