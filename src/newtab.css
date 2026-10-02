@@ -10,6 +10,11 @@
   --primary-contrast: #ffffff;
   --danger: #b42318;
   --focus: rgb(0 0 0 / 24%);
+  --soft-fill: #eef1f5;
+  --soft-fill-strong: #e1e6ed;
+  --soft-ring: rgb(17 19 24 / 55%);
+  --metric-on: #1f7a45;
+  --metric-off: #b3382c;
   --toolbar-h: 72px;
   --tile-height: 52px;
 }
@@ -26,6 +31,11 @@
     --primary-contrast: #14171c;
     --danger: #ff8a80;
     --focus: rgb(255 255 255 / 28%);
+    --soft-fill: #2a313b;
+    --soft-fill-strong: #343c48;
+    --soft-ring: rgb(244 246 248 / 60%);
+    --metric-on: #5fd08a;
+    --metric-off: #ff8a80;
   }
 }
 
