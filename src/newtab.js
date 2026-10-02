@@ -532,6 +532,7 @@ async function refreshAutoAccent(id) {
 }
 
 const METRIC_LABELS = { temperature: "Temperature", precipitation: "Precipitation", airQuality: "Air quality", uv: "UV index" };
+const METRIC_GLYPHS = { temperature: "thermometer", precipitation: "droplet", airQuality: "wind", uv: "sun" };
 
 const POPOVER_MAX_HEIGHT = 240;
 const POPOVER_MIN_FREE = 96;
@@ -1019,6 +1020,12 @@ function createWeatherMetricTile(item, cell, view) {
   if (model.tone) tile.dataset.weatherTone = model.tone;
   if (model.stale) tile.dataset.stale = "true";
   if (model.busy) tile.setAttribute("aria-busy", "true");
+
+  // Spec § Tile content by size: every size leads with the metric glyph (decorative; the name is the aria-label).
+  const glyph = createNode("span", "weather-tile__glyph");
+  glyph.setAttribute("aria-hidden", "true");
+  glyph.appendChild(createIconNode(METRIC_GLYPHS[weatherMetricKey(item.id)], { size: 16 }));
+  tile.appendChild(glyph);
 
   const values = createNode("div", "weather-tile__values");
   values.appendChild(createNode("span", "weather-tile__primary", model.primary));

@@ -41,9 +41,10 @@
   box-sizing: border-box;
 }
 
+/* No min-width: the column count already handles narrow windows, and a forced width would scroll sideways once a
+   classic scrollbar takes its 15 px (spec § Grid metrics: 320 px with a scrollbar = 4 columns, no horizontal scroll). */
 html,
 body {
-  min-width: 320px;
   min-height: 100%;
 }
 
@@ -585,6 +586,34 @@ html {
   border: 1px solid var(--border);
   border-radius: 13px;
   background: var(--panel);
+}
+
+/* Glyph sized by the tile: small above the value at 1 wide, beside it at 2x1, larger on top at 2x2. */
+.weather-tile__glyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--muted);
+}
+
+.weather-tile__glyph svg {
+  width: 14px;
+  height: 14px;
+}
+
+.weather-tile[data-w="2"]:not([data-h="2"]) {
+  flex-direction: row;
+  gap: 8px;
+  padding: 0 10px;
+}
+
+.weather-tile[data-w="2"]:not([data-h="2"]) .weather-tile__glyph svg {
+  width: 16px;
+  height: 16px;
+}
+
+.weather-tile[data-w="2"][data-h="2"] .weather-tile__glyph svg {
+  width: 24px;
+  height: 24px;
 }
 
 /* R6: a 2-high weather tile gets larger type and a muted city line. */

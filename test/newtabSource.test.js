@@ -501,6 +501,22 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
     assert.match(tile, /if \(cell\.h === 2 && cityName\) tile\.appendChild\(createNode\("span", "weather-tile__city", cityName\)\);/);
   });
 
+  it("leads every weather tile with its decorative metric glyph from the vendored icons, sized by CSS per tile size", async () => {
+    const code = await source();
+    assert.match(code, /const METRIC_GLYPHS = \{ temperature: "thermometer", precipitation: "droplet", airQuality: "wind", uv: "sun" \};/);
+    const tile = fn(code, "createWeatherMetricTile");
+    assert.match(tile, /const glyph = createNode\("span", "weather-tile__glyph"\);\s*glyph\.setAttribute\("aria-hidden", "true"\);/);
+    assert.match(tile, /glyph\.appendChild\(createIconNode\(METRIC_GLYPHS\[weatherMetricKey\(item\.id\)\]/);
+    const styles = await css();
+    assert.match(styles, /\.weather-tile__glyph svg \{\s*width: 14px;/);
+    assert.match(styles, /\.weather-tile\[data-w="2"\]\[data-h="2"\] \.weather-tile__glyph svg \{\s*width: 24px;/);
+  });
+
+  it("forces no minimum page width, so a classic scrollbar at 320 px never scrolls sideways", async () => {
+    const styles = await css();
+    assert.doesNotMatch(styles, /min-width: 320px/);
+  });
+
   it("sets the grid metrics from JS (R4), never from CSS media queries, and reserves the scrollbar gutter", async () => {
     const code = await source();
     const metrics = fn(code, "applyGridMetrics");
