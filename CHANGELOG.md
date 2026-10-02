@@ -76,11 +76,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read-only and writes nothing.
 - Add/edit errors (for example the 200-favorites limit) show inside the dialog,
   and keyboard focus returns to the tile that opened a dialog when it closes.
-- All interactive elements show clearly visible focus rings with high contrast
-  (at least 3:1), including in edit mode and with reduced motion.
-- Link and weather dialogs work at 320px width and narrower; buttons wrap at
-  400px and below to keep Save always visible. The colour field has an
-  accessible name.
+- Keyboard focus is clearly visible on the grid tiles, the − badge, the Add menu
+  and the controls of the link, weather and delete dialogs (contrast of at least
+  3:1, also in edit mode and with reduced motion).
+- The link, weather and delete dialogs fit a 320 px window; in the Edit link
+  dialog the buttons wrap onto two rows at 400 px and below so Save is never cut
+  off. The colour field has an accessible name.
 
 ### Notes
 
