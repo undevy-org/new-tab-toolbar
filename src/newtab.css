@@ -124,6 +124,12 @@ html {
     outline: 2px dashed var(--edit-outline, currentColor);
     outline-offset: 2px;
   }
+
+  /* The dashed edit outline must not hide the keyboard focus ring (WCAG 2.4.7): same token as the other tiles. */
+  .desktop[data-edit="true"] .desktop-grid > [data-widget-id]:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
 }
 
 /* In edit mode a weather tile is a <button>: reset the native button look. */
