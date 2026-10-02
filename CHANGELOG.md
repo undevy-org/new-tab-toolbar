@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A full-window, macOS-style desktop grid replaces the favorites bar: links,
+  weather tiles and two fixed tiles (Settings and Add) sit on a 2D grid of
+  1×1, 2×1 or 2×2 cells. The number of columns follows the window (2–12) and a
+  narrower window repacks the tiles for display only; widening it restores your
+  arrangement.
+- Edit mode: the Settings tile turns it on (Settings again, Escape or a click on
+  the background turns it off). The tiles jiggle, shows a − badge to delete a link (with a confirmation)
+  or hide a weather tile, and lets you drag any tile to a free cell with a drop
+  highlight (an occupied or out-of-range cell is rejected and the tile slides back).
+- Dialogs for adding and editing a link (address, name, icon, color, size), a
+  weather edit dialog (size, and the city through the city modal), and an Add menu
+  in edit mode that restores hidden weather tiles.
+- A page status line reports a change that could not be saved; nothing is
+  half-applied.
 - README badge linking to the [Chrome Web Store listing](https://chromewebstore.google.com/detail/quiet-tab/dbcdpffdgfbjmdlomgheeijfkkjkhmma).
 - A live city suggestion dropdown in the city modal: typing two or more
   characters shows matching cities from Open-Meteo's geocoding search;
@@ -25,6 +39,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Widgets storage moves to layout version 2: every widget stores its own cell
+  (`grid: { x, y, w, h }`) and the meta no longer holds columns or position. An
+  existing layout is migrated automatically on the first open (packed with your
+  previous column count, so the arrangement is kept); the migration is chunked and
+  resumable, locks the grid with an explanation if it fails, and never runs over
+  data written by a newer version. A widget whose cell is missing or broken is kept
+  and placed at the first free cell instead of being dropped.
+- The Settings and Add tiles are restored automatically if they are ever missing
+  from the synced layout.
+- Weather and link tiles take their size from the grid cell (72px, 64px on
+  windows up to 600px wide, 56px up to 360px).
 - The favorites bar is now a wrapping grid with a configurable number of columns (1–12)
   instead of a single horizontally scrolling row, and can be placed at the top, center
   or bottom of the page (Widgets settings).
@@ -74,7 +99,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keyboard focus moves into the settings panel when it opens and returns to a logical
   control after Add link, Cancel, Edit, Move earlier/later, Save and Delete.
 
+### Removed
+
+- The Widgets settings panel (with its Links and Weather cards), the grid's column
+  setting and its top/center/bottom position, all introduced earlier in this
+  release cycle, are replaced by the desktop grid, edit mode and the dialogs above.
+
 ### Notes
+
+- A build from before the desktop grid treats the new layout as written by a newer
+  version: it shows that message and keeps it read-only until it is updated.
 
 - If you update with no city set, the city modal appears once on your next new tab.
   Leaving that tab without closing the modal does not count as closing it, so it
