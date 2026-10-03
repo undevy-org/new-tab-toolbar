@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Borders of text fields, the color field, the segmented control, the chrome tiles
+  (Settings, Add) and the first-run hint tile are darker so they meet 3:1 contrast
+  (WCAG 1.4.11) in light and dark. Card edges and dividers keep their quiet look.
 - Design system phase 2: grid and page chrome in `newtab.css` use tokens from
   `design-tokens.css` (tile and drop-highlight radii, status chip padding and
   shadow, tooltip shadow, grid spacing `--space-grid-*`, weather cell font sizes,
