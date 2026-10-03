@@ -114,7 +114,7 @@ git commit -m "feat: add design tokens for grid and page chrome (phase 2)"
 
   - **Tiles (AS-DS-11):** Seed grid with favorite + default metrics + chrome; at **500×800** measure `border-radius` on `.favorite-tile`, `.chrome-tile`, `.weather-tile` (and `.city-hint-tile` if seeded without city).
   - **Drop highlight (AS-DS-12):** Enter edit mode; pointer-drag a tile until `.drop-highlight` is visible; measure **14px** radius.
-  - **Status chip (AS-DS-13):** `failStorageInit(context, { area: "sync", op: "set", key: "quietTabWidgetsMeta" })` then edit-mode drag (first block of `dg-37-write-failure.mjs`); assert status visible with sync error text; measure radius **10px**, font-size **14px**, and `box-shadow` vs `var(--shadow-popover)` (computed style or reference element).
+  - **Status chip (AS-DS-13):** `failStorageInit(context, { area: "sync", op: "set", key: "quietTabWidgetsMeta" })` then edit-mode drag (first block of `dg-37-write-failure.mjs`); assert status visible with sync error text; measure radius **10px**, font-size **14px**, padding **10px** / **14px**, `bottom` **16px**, and `box-shadow` vs `var(--shadow-popover)` (computed style or reference element).
   - **Tooltip (AS-DS-14):** Normal mode hover weather tile; measure `#tooltip` radius **8px** and shadow.
 
   Reuse `harness.mjs` seed helpers from `dg-38-tooltip-modes.mjs` and edit/drag helpers from `dg-05-drag-widget.mjs`.
@@ -142,7 +142,7 @@ git -C .private commit -m "test(e2e): grid chrome metrics (AS-DS-11…14)"
 - Modify: `src/newtab.css`
 - Modify: `test/designSystem.test.js`
 
-- [ ] **Step 1:** Add failing tests forbidding `border-radius: 13px` on tile selectors and `14px` on `.drop-highlight`; require `var(--radius-tile)`, `var(--radius-drop-highlight)`, `var(--shadow-tooltip)` on `.tooltip`, `var(--shadow-status)` or equivalent on `.desktop-status`, `var(--radius-status-chip)`, tile-remove size/offset tokens.
+- [ ] **Step 1:** Add failing tests forbidding `border-radius: 13px` on tile selectors and `14px` on `.drop-highlight`; require `var(--radius-tile)`, `var(--radius-drop-highlight)`, `var(--shadow-tooltip)` on `.tooltip`, `var(--shadow-status)` or equivalent on `.desktop-status`, `var(--radius-status-chip)`, status-chip padding/offset tokens on `.desktop-status`, tile-remove size/offset tokens.
 
 - [ ] **Step 2:** Replace literals in `newtab.css` for: tile classes, `.drop-highlight`, `.desktop-status` (radius, shadow, padding, bottom offset), `.tooltip` (radius, shadow), `.tile-remove` dimensions/offsets; replace shipped **8 / 10 / 12 px** tile and tooltip spacing with `var(--space-grid-*)` (leave **6px** 2×2 favorite `gap` literal per spec). **Do not** edit focus `outline` lines.
 

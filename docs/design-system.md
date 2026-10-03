@@ -140,8 +140,9 @@ Docked suggestion lists use no shadow (in-flow scroll).
 
 - Selector family: `.favorite-tile`, `.chrome-tile`, `.weather-tile`,
   `.city-hint-tile`, `.tile-remove`, edit-mode tiles.
-- `--focus-tile-width`: **3px** solid `var(--focus-ring)`.
-- `--focus-tile-offset`: **2px**.
+- Documented metric names (not CSS custom properties in Phase 2):
+  `--focus-tile-width` **3px** solid `var(--focus-ring)`;
+  `--focus-tile-offset` **2px** (weather/city-hint pair may use **2px** outline).
 
 ### Overlays (desktop dialog, city modal)
 
@@ -346,9 +347,11 @@ E2E or extended unit assertions are expected.
 
 ### AS-DS-11 Tile outer corner radius
 - Given: A grid with at least one favorite, chrome (Settings), weather metric,
-  and (when applicable) city-hint tile visible at **500×800**.
+  and a city-hint tile at **500×800** (seed: no city chosen / harness profile that
+  shows `.city-hint-tile`; if the profile has no hint tile, skip only the
+  `.city-hint-tile` assertion — other three tile types remain required).
 - When: Computed `border-radius` is read on `.favorite-tile`, `.chrome-tile`,
-  `.weather-tile`, and `.city-hint-tile`.
+  `.weather-tile`, and `.city-hint-tile` when present.
 - Then: Each is **13px** ± **0.5px**.
 - Verified by: E2E `.private/e2e/scenarios/dg-42-grid-chrome-metrics.mjs` (plan Task 2)
 
@@ -365,6 +368,9 @@ E2E or extended unit assertions are expected.
   with the sync error text.
 - When: Computed styles on `.desktop-status`.
 - Then: `border-radius` **10px** ± **0.5px**; `font-size` **14px** ± **0.5px**;
+  vertical padding **10px** ± **0.5px** and horizontal padding **14px** ± **0.5px**
+  via `var(--status-chip-padding-y)` / `var(--status-chip-padding-x)`; `bottom`
+  inset **16px** ± **0.5px** via `var(--status-chip-offset-bottom)`;
   `box-shadow` matches the computed value of `var(--shadow-popover)` on a
   reference element (or token string equality in unit test).
 - Verified by: E2E `dg-42-grid-chrome-metrics.mjs` (`failStorageInit` + drag, then
@@ -378,20 +384,26 @@ E2E or extended unit assertions are expected.
 - Verified by: E2E `dg-42-grid-chrome-metrics.mjs` (plan Task 2)
 
 ### AS-DS-15 Body and in-grid status typography tokens
-- Given: New tab loaded.
-- When: `getComputedStyle(document.body).fontFamily` and styles on `.status` inside
-  a dialog/grid context.
-- Then: Body font family matches the `--font-family` stack; body `line-height` is
-  **1.45** via `--line-height-page`; `.status` uses **14px** font size and **1.4**
-  line-height via `--line-height-body` in source.
-- Verified by: `test/designSystem.test.js` extensions (plan Task 1 / Task 4)
+- Given: New tab loaded; a dialog with `.status` visible (e.g. validation error)
+  and `.desktop-status` measurable when shown (AS-DS-13 setup or any visible
+  status chip).
+- When: `getComputedStyle` on `document.body`, `.status`, and `.desktop-status`.
+- Then: Body `font-family` matches the `--font-family` stack; body `line-height` is
+  **1.45** ± **0.02** (computed, from `--line-height-page`). `.status` and
+  `.desktop-status` each have computed `font-size` **14px** ± **0.5px** and
+  `line-height` **1.4** ± **0.02** after Phase 2 (via `--font-size-md` and
+  `--line-height-body` in `newtab.css` source).
+- Verified by: `test/designSystem.test.js` source assertions on `newtab.css`
+  (plan Task 1 / Task 4); optional computed checks in the same file or E2E when
+  status is visible.
 
 ### AS-DS-16 Grid v2 tokens declared
 - Given: Phase 2 token task complete.
 - When: `design-tokens.css` is read.
 - Then: Declares `--radius-tile`, `--radius-drop-highlight`,
-  `--radius-status-chip`, `--shadow-status`, `--line-height-page`, status chip
-  padding tokens, `--tile-remove-size`, `--tile-remove-offset`,
+  `--radius-status-chip`, `--shadow-status`, `--line-height-page`,
+  `--status-chip-padding-y`, `--status-chip-padding-x`,
+  `--status-chip-offset-bottom`, `--tile-remove-size`, `--tile-remove-offset`,
   `--space-grid-8`, `--space-grid-10`, `--space-grid-12`, and the four
   `--font-size-weather-*-cell-*` tokens with values from the table above.
 - Verified by: `test/designSystem.test.js` (plan Task 1)
@@ -403,8 +415,11 @@ E2E or extended unit assertions are expected.
   `var(--radius-status-chip)`, `var(--shadow-tooltip)`, `var(--shadow-status)` or
   `var(--shadow-popover)` as specified; tile/tooltip spacing uses
   `var(--space-grid-8|10|12)` where the shipped value was **8**, **10**, or
-  **12 px**; banned patterns such as `border-radius: 13px` on tile classes and
-  `border-radius: 14px` on `.drop-highlight` are absent.
+  **12 px**; `.desktop-status` uses `var(--status-chip-padding-y)`,
+  `var(--status-chip-padding-x)`, and `var(--status-chip-offset-bottom)` (no
+  literal `padding: 10px 14px` or `bottom: 16px` on that rule); banned patterns
+  such as `border-radius: 13px` on tile classes and `border-radius: 14px` on
+  `.drop-highlight` are absent.
 - Verified by: `test/designSystem.test.js` (plan Task 3)
 
 ### AS-DS-18 Tile focus rules unchanged
@@ -514,9 +529,11 @@ Given/When/Then text, not file presence.
 ### AS-DS-3 Control corner radius
 - Given: Add link dialog open; add menu open on desktop (separate checks).
 - When: Computed styles are read for `.favorite-input`, `.button`, `.segmented`,
-  `.add-menu__item`, and city-modal `.favorite-input` / `.weather-form__suggestion`.
-- Then: `border-radius` is **8px** on those controls (popover shells **12px**;
-  modal card **16px**).
+  `.add-menu__item`, city-modal `.favorite-input` / `.weather-form__suggestion`,
+  `.add-menu` (popover shell), and `.desktop-dialog` / `.city-modal__dialog`
+  (modal cards).
+- Then: `border-radius` is **8px** on those controls; `.add-menu` popover shell
+  **12px** ± **0.5px**; desktop dialog and city modal cards **16px** ± **0.5px**.
 - Verified by: E2E `dg-41-control-metrics.mjs` (plan Task 2)
 
 ### AS-DS-4 Modal title spacing
@@ -540,12 +557,22 @@ Given/When/Then text, not file presence.
 ### AS-DS-7 Narrow dialogs still fit
 - Given: Viewport **320×600** and **500×800** (same matrix as desktop-grid narrow
   dialog E2E `dg-39-dialog-narrow.mjs`).
-- When: Add link (custom icon + manual color visible), Edit link, Edit weather, and
-  delete confirm dialogs are opened; segmented options measured.
+- When: **Add link** (custom icon + manual color visible) at both widths — outer
+  `.segmented` height measured. **Edit link**, **Edit weather**, and **delete
+  confirm** at the widths in `dg-39-dialog-narrow.mjs` `otherDialogs` — controls
+  inside the dialog content box (including `.segmented__option` rows) audited for
+  clip/overflow; segmented uses the same `controls.css` rules as Add link.
 - Then: No control clips outside the dialog card; dialog has no horizontal overflow;
-  each `.segmented__option` height is **40px** ± **0.5px** (or ≤ **40.5px** during
-  transition); option labels stay on one line at **320px** width.
-- Verified by: E2E `dg-39-dialog-narrow.mjs` (plan Task 5 — tighten segmented height to 40px)
+  on Add link at **320×600** and **500×800**, each outer `.segmented` group is
+  **40px** ± **0.5px** tall and each `.segmented__option` inner height is **38px**
+  ± **0.5px** (per Components §
+  `calc(var(--control-height) - 2 * var(--control-border-width))`); option labels
+  stay on one line at **320px** width on Add link. Edit/weather/delete dialogs:
+  same fit rules without a separate outer-height assert (shared segmented CSS).
+- Verified by: E2E `dg-39-dialog-narrow.mjs` (Add link segmented heights + `auditBox`
+  on edit/weather/delete); `test/designSystem.test.js` asserts `.segmented__option`
+  calc height in `controls.css` (inner **38px** at default tokens; plan Task 3
+  extension optional)
 
 ### AS-DS-8 Overlay keyboard and focus (unchanged behavior)
 - Given: Add link or desktop dialog with segmented control open.
