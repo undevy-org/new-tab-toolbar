@@ -13,7 +13,7 @@ Thanks for your interest in improving Quiet Tab.
 1. Clone the repository.
 2. Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**,
    and select the repository directory.
-3. Open a new tab to exercise the favorites toolbar and weather panel. Reload
+3. Open a new tab to exercise the desktop grid and weather tiles. Reload
    the extension after changes.
 
 ## Tests and checks
@@ -33,7 +33,8 @@ Both must pass before opening a pull request.
   `isWeatherCache`. If you add a field, update the matching validator and
   its tests.
 - Follow the existing module boundaries: widgets persistence
-  (`widgetsStore.js`), widgets mutations (`widgetsService.js`), grid layout rules (`widgetsLayout.js`),
+  (`widgetsStore.js`), widgets mutations (`widgetsService.js`), the grid engine
+  (`desktopLayout.js`) and UI state (`desktopUiState.js`),
   weather API client (`weatherApi.js`), weather persistence
   (`weatherStore.js`), weather mutations (`weatherService.js`), UI
   (`newtab.js`).

@@ -49,7 +49,7 @@ locally, just without cross-device propagation.
 ## Background Activity
 
 There is no background polling and no scheduled network activity. A weather
-request happens only when the cache is stale and the panel is rendered, or
+request happens only when the cache is stale and the weather tiles are rendered, or
 when you explicitly change the city.
 
 Removing the extension through the browser's extension manager removes its
