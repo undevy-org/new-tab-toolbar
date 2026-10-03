@@ -18,6 +18,29 @@ describe("design system wiring", () => {
   });
 });
 
+describe("grid / page chrome tokens (AS-DS-16)", () => {
+  it("declares Phase 2 grid and page chrome tokens in design-tokens.css", async () => {
+    const css = await readFile(new URL("../src/design-tokens.css", import.meta.url), "utf8");
+    assert.match(css, /--radius-tile:\s*13px;/);
+    assert.match(css, /--radius-drop-highlight:\s*14px;/);
+    assert.match(css, /--radius-status-chip:\s*10px;/);
+    assert.match(css, /--shadow-status:\s*var\(--shadow-popover\);/);
+    assert.match(css, /--status-chip-padding-y:\s*10px;/);
+    assert.match(css, /--status-chip-padding-x:\s*14px;/);
+    assert.match(css, /--status-chip-offset-bottom:\s*16px;/);
+    assert.match(css, /--tile-remove-size:\s*24px;/);
+    assert.match(css, /--tile-remove-offset:\s*8px;/);
+    assert.match(css, /--font-size-weather-primary-cell-64:\s*16px;/);
+    assert.match(css, /--font-size-weather-secondary-cell-64:\s*10px;/);
+    assert.match(css, /--font-size-weather-primary-cell-56:\s*14px;/);
+    assert.match(css, /--font-size-weather-secondary-cell-56:\s*9px;/);
+    assert.match(css, /--line-height-page:\s*1\.45;/);
+    assert.match(css, /--space-grid-8:\s*8px;/);
+    assert.match(css, /--space-grid-10:\s*10px;/);
+    assert.match(css, /--space-grid-12:\s*12px;/);
+  });
+});
+
 describe("overlay control CSS (AS-DS-10)", () => {
   it("uses control-height tokens and forbids legacy magic heights in controls.css", async () => {
     const css = await readFile(new URL("../src/controls.css", import.meta.url), "utf8");

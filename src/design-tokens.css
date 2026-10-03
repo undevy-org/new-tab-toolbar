@@ -40,6 +40,7 @@
   --font-weight-control: 600;
   --line-height-control: 1.2;
   --line-height-body: 1.4;
+  --line-height-page: 1.45;
 
   /* Layout and spacing */
   --control-height: 40px;
@@ -61,16 +62,43 @@
   --surface-popover-padding: 6px;
   --surface-popover-gap: 6px;
 
+  /* Grid chrome spacing (Phase 2) */
+  --space-grid-8: 8px;
+  --space-grid-10: 10px;
+  --space-grid-12: 12px;
+
   /* Radius */
   --radius-control: 8px;
   --radius-popover: 12px;
   --radius-modal: 16px;
+  --radius-tile: 13px;
+  --radius-drop-highlight: 14px;
+  --radius-status-chip: 10px;
+
+  /* Grid chrome typography (Phase 2) */
+  --font-size-weather-primary-cell-64: 16px;
+  --font-size-weather-secondary-cell-64: 10px;
+  --font-size-weather-primary-cell-56: 14px;
+  --font-size-weather-secondary-cell-56: 9px;
+
+  /* Grid chrome layout (Phase 2) */
+  --status-chip-padding-y: 10px;
+  --status-chip-padding-x: 14px;
+  --status-chip-offset-bottom: 16px;
+  --tile-remove-size: 24px;
+  --tile-remove-offset: 8px;
+
+  /*
+   * Runtime grid metrics (values from newtab.js gridMetrics(), not declared here):
+   * --cell-size, --grid-gap, --grid-pad, --grid-columns, --rows, :root[data-cell]
+   */
 
   /* Elevation */
   --surface-backdrop: rgb(0 0 0 / 50%);
   --shadow-modal: 0 24px 70px rgb(0 0 0 / 32%);
   --shadow-popover: 0 12px 32px rgb(0 0 0 / 18%);
   --shadow-tooltip: 0 18px 50px rgb(0 0 0 / 10%);
+  --shadow-status: var(--shadow-popover);
 }
 
 @media (prefers-color-scheme: dark) {
