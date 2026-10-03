@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- City window: the red error message now disappears as soon as you start editing the
+  city name (or press the clear button), instead of lingering under the suggestions.
+  The window also keeps room for the message, so Save and Cancel no longer jump down
+  when an error appears. E2E: `dg-47-city-error-ux.mjs`.
 - Network failures in the city flow no longer show the browser's raw "Failed to fetch"
   (or developer text such as a status code). The city modal and the weather tiles
   show a calm, fixed message by kind of failure: can't reach the service, the

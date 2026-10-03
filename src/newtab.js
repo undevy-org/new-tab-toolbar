@@ -628,7 +628,11 @@ function createCityForm(mode) {
   save.type = "submit";
   actions.append(dismiss, save);
 
-  form.append(field, errorNode, actions);
+  // Always two lines tall, so the buttons do not move when an error appears or goes (the dialog is centered).
+  const feedback = createNode("div", "city-modal__feedback");
+  feedback.append(errorNode);
+
+  form.append(field, feedback, actions);
 
   // Save needs text; Clear needs text and no running request.
   function refresh() {
@@ -798,8 +802,17 @@ function createCityForm(mode) {
   // replace the list under a focused item.
   suggestionsList.addEventListener("focusin", cancelPendingSuggestionRequest);
 
+  // The error describes the last attempt; once the name changes it no longer describes the field. Only the slot is emptied,
+  // the same node keeps role="alert", so the next failure is a fresh empty -> text change.
+  function clearCityError() {
+    cityModalError = "";
+    errorNode.textContent = "";
+    errorNode.hidden = true;
+  }
+
   input.addEventListener("input", () => {
     chosenCity = null; // editing drops the remembered choice
+    clearCityError();
   });
 
   input.addEventListener("keydown", (event) => {
@@ -829,6 +842,7 @@ function createCityForm(mode) {
   clear.addEventListener("click", () => {
     input.value = "";
     chosenCity = null;
+    clearCityError();
     closeList();
     refresh();
     input.focus();

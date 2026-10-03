@@ -195,6 +195,11 @@ the forecast arrives. A 2-wide tile shows the primary and secondary values, a
   popover over the dialog, so the dialog does not move. When under 96px is free
   below the input (measured as if the list were an overlay) the list is docked in
   the dialog's flow instead and the dialog scrolls.
+- **Error line.** The error text lives in one `role="alert"` node inside a feedback
+  block that always keeps room for two lines, so Save does not move when an error
+  appears or goes (a third line, only in very narrow windows, grows the block). Editing
+  the field (typing, pasting, deleting) or pressing the clear button empties and hides
+  that node; nothing else clears it besides opening the modal and starting a request.
 - **Keyboard.** ArrowDown in the field moves into the list; ArrowDown/ArrowUp move
   between suggestions and ArrowUp from the first returns to the field; Tab also
   reaches the suggestion buttons in DOM order.
