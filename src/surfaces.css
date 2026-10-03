@@ -96,6 +96,11 @@
   overflow-wrap: anywhere;
 }
 
+/* Room for a two-line error, always: Save stays put when an error appears or goes. A third line grows the block. */
+.city-modal__feedback {
+  min-height: calc(2 * var(--line-height-body) * var(--font-size-md));
+}
+
 /* The rule above must not defeat [hidden] on the empty error slot. */
 .city-modal .status--full[hidden] {
   display: none;
