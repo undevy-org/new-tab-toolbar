@@ -2,7 +2,7 @@
 
 ## Status
 
-`draft`, revised after independent review 1 (I-1..I-4, N-1..N-9 applied); awaiting re-review
+`ready for spec gate` (independent review 1 applied; re-review round 2 found no Critical or Important issues)
 
 ## Intake log
 
