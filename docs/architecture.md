@@ -219,9 +219,11 @@ the forecast arrives. A 2-wide tile shows the primary and secondary values, a
   motion), links and weather tiles get a − badge (links: delete confirm; weather:
   hide), a tap on a link or weather tile opens its edit dialog (link: URL, name,
   icon, color, size; weather: city row and size), and any tile can be dragged.
-  A drop highlight shows the target (dashed error outline when the drop is
-  invalid: occupied, past the right edge or more than one row below the lowest
-  tile); an invalid drop returns the tile and writes nothing. Escape, a viewport
+  A drop highlight shows the target cell (dashed error outline when that cell is
+  occupied or outside the page margin left of or above the grid); it is drawn
+  only for a block that lies inside the grid and at most one row below the lowest
+  tile, otherwise there is no highlight. Any invalid drop returns the tile and
+  writes nothing. Escape, a viewport
   change, a pointer cancel or leaving the window cancels a drag. Settings, a
   background click or Escape leaves edit mode.
 - **Add.** In edit mode with at least one hidden metric, Add opens a menu

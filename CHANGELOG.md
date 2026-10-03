@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- While no city is set, the 1×1 "Set a city" hint now shows a map pin, so the
+  grid has one plus icon (Add) instead of two. The wide hint keeps its text.
+- Dragging a tile in edit mode: the drop outline is drawn only at the cell being
+  judged and no longer jumps to a neighbouring free cell. A block that does not
+  fit at the right edge, or lies more than one row below the lowest tile, shows
+  no outline (the drop is still rejected and writes nothing).
+
 ### Changed
 
 - Design system phase 2: grid and page chrome in `newtab.css` use tokens from
