@@ -6,33 +6,31 @@ import {
 } from "./favoriteColor.js";
 import { getFavoriteIconModel, getFavoriteLetter } from "./favoriteIcon.js";
 import { createIconNode } from "./icons.js";
+import { canPlace, cellFromPoint, displayLayout, effectiveColumns, gridMetrics } from "./desktopLayout.js";
 import {
-  cancelForm,
-  closeSettings,
-  createInitialFavoritesUiState,
-  editingId,
-  isAdding,
-  isFormOpen,
-  isSettingsOpen,
-  openSettings,
-  startAdd,
-  startEdit
-} from "./favoritesUiState.js";
+  closeDialog,
+  createDesktopUiState,
+  endDrag,
+  enterEditMode,
+  escapeLayer,
+  exitEditMode,
+  closeMenu,
+  openDialog,
+  openMenu,
+  startDrag,
+  updateDrag
+} from "./desktopUiState.js";
 import { createWidgetsService } from "./widgetsService.js";
 import {
   WIDGETS_META_KEY,
   createWidgetsStore,
-  ensureWeatherMetrics,
+  ensureWidgetsLayout,
   inspectWidgetsMeta,
-  migrateToWidgets
+  migrateToWidgets,
+  migrateWidgetsToV2
 } from "./widgetsStore.js";
-import { gridLayout, moveTargetIndex, panelDock, placeTooltip, tileSpan } from "./widgetsLayout.js";
-import {
-  MAX_GRID_COLUMNS,
-  MIN_GRID_COLUMNS,
-  NEWER_WIDGETS_MESSAGE,
-  weatherMetricKey
-} from "./widgetsShared.js";
+import { placeTooltip } from "./widgetsLayout.js";
+import { NEWER_WIDGETS_MESSAGE, weatherMetricKey } from "./widgetsShared.js";
 import { searchCities } from "./weatherApi.js";
 import { createWeatherService } from "./weatherService.js";
 import { shouldAutoShowCityPrompt } from "./cityPrompt.js";
@@ -49,39 +47,29 @@ import {
   openCityModal as openCityModalState,
   showSuggestions
 } from "./weatherUiState.js";
-
 const favoritesRoot = document.querySelector("#favorites");
-const favoritesPanelRoot = document.querySelector("#favorites-panel");
+const desktopStatus = document.querySelector("#desktop-status");
 
-// The settings panel must never cover the bar it configures. Read-only measurement of the
-// bar: publish which edge the panel docks to and the height that is free on that side.
-const PANEL_MIN_HEIGHT = 200;
-const PANEL_BAR_GAP = 12;
+const ENSURE_FAILED_MESSAGE =
+  "Couldn't add the weather and settings tiles - Chrome Sync may be full or unavailable. Free up sync space, then reload this tab to try again.";
 
-function publishPanelDock() {
-  if (!favoritesRoot || !favoritesPanelRoot) {
-    return;
-  }
+const desktopLive = document.querySelector("#desktop-live");
+const DESKTOP_STATUS_MS = 8000;
+let desktopStatusTimer = 0;
 
-  const inset =
-    Number.parseFloat(getComputedStyle(favoritesPanelRoot).getPropertyValue("--panel-inset")) || 16;
-  const bar = favoritesRoot.getBoundingClientRect();
-  const { dock, maxHeight } = panelDock({
-    position: favoritesRoot.dataset.position ?? "center",
-    barTop: bar.top,
-    barBottom: bar.bottom,
-    viewportHeight: window.innerHeight,
-    inset,
-    gap: PANEL_BAR_GAP,
-    minHeight: PANEL_MIN_HEIGHT
-  });
-  favoritesPanelRoot.dataset.dock = dock;
-  favoritesPanelRoot.style.setProperty("--panel-max-height", `${Math.floor(maxHeight)}px`);
+// Page-level status line (role="alert"), text only. It clears after 8 s or at the next action. `persist` skips the
+// 8 s clear (the ensure failure: a Settings/Add tile may be missing, so its explanation stays until the next action).
+function showDesktopStatus(text, { persist = false } = {}) {
+  if (!desktopStatus) return;
+  clearTimeout(desktopStatusTimer);
+  desktopStatus.textContent = text;
+  desktopStatus.hidden = text === "";
+  if (text !== "" && !persist) desktopStatusTimer = setTimeout(() => showDesktopStatus(""), DESKTOP_STATUS_MS);
 }
 
-if (favoritesRoot && favoritesPanelRoot && typeof ResizeObserver === "function") {
-  new ResizeObserver(publishPanelDock).observe(favoritesRoot);
-  window.addEventListener("resize", publishPanelDock);
+// Polite live region for outcomes that have no visible change at the focused element.
+function announce(text) {
+  if (desktopLive) desktopLive.textContent = text;
 }
 
 function createNode(tagName, className, textContent) {
@@ -121,6 +109,7 @@ function hideTooltipIfVisible() {
 }
 
 function showTooltipFor(trigger) {
+  if (desktopUi.editMode || dragSession) return; // tooltips are for normal mode only
   const text = trigger.querySelector("[data-tooltip-text]")?.textContent;
   if (!text) return;
   tooltipTrigger = trigger;
@@ -229,7 +218,8 @@ let widgetsState = null;
 // gear, no mutations): an editable empty grid would let the user create widgets meta,
 // after which the still-present legacy data would be treated as stale and deleted.
 let widgetsMigrationFailed = false;
-let favoritesUi = createInitialFavoritesUiState();
+// Edit mode / menu / dialog / drag (pure state, desktopUiState.js). Normal mode only until the later tasks wire it.
+let desktopUi = createDesktopUiState();
 let favoritesError = "";
 let favoritesBusy = false;
 let favoritesGeneration = 0;
@@ -244,8 +234,6 @@ let weatherChanging = false;
 let weatherGeneration = 0;
 let widgetsEnsureFailed = false;
 let widgetsNewer = false;
-let metricWritesPending = 0; // metric writes in flight; controls are re-synced only when none is
-let metricErrorText = ""; // write-error slot of the metric controls; module state so a panel rebuild keeps it
 let activeCityForm = null; // { cancelPending, renderSuggestions, refresh, place, focusField, dispose, choose, chosen, recentlyChosen } of the mounted city form
 let weatherUi = createInitialWeatherUiState();
 let weatherBusy = false;
@@ -292,40 +280,34 @@ function createFavoriteIconNode(model, item) {
   return createFavoriteLetterNode(item, "letter");
 }
 
-function createFavoriteTile(item, columns) {
+// Spec § Tile content by size: 1-wide shows the icon only (the label is the accessible name), 2×1 adds a one-line
+// label, 2×2 a 40 px icon, a two-line label and the host name. Text only via text nodes.
+function createFavoriteTile(item, cell) {
   const button = createNode("button", "favorite-tile");
   const iconModel = getFavoriteIconModel(item, { faviconBaseUrl });
+  const editing = desktopUi.editMode;
 
   button.type = "button";
-  button.dataset.favoriteAction = "open";
+  button.dataset.favoriteAction = editing ? "edit" : "open";
   button.dataset.favoriteId = item.id;
   button.dataset.widgetId = item.id;
-  button.dataset.tileSize = tileSpan(item.tileSize, columns) === 2 ? "wide" : "square";
   button.title = item.label;
-  button.setAttribute("aria-label", `Open ${item.label}`);
+  button.setAttribute("aria-label", editing ? `Edit ${item.label}` : `Open ${item.label}`);
   button.style.setProperty(
     "--favorite-accent-rgb",
     hexToRgbChannels(normalizeAccentLightness(item.backgroundColor))
   );
   button.appendChild(createFavoriteIconNode(iconModel, item));
+  if (cell.w === 2) {
+    const text = createNode("span", "favorite-tile__text");
+    text.appendChild(createNode("span", "favorite-tile__label", item.label));
+    if (cell.h === 2) text.appendChild(createNode("span", "favorite-tile__host", item.domain));
+    button.appendChild(text);
+  }
 
-  const tileDisabled = favoritesBusy || isFormOpen(favoritesUi);
-  button.disabled = tileDisabled;
-  button.setAttribute("aria-disabled", String(tileDisabled));
+  button.disabled = favoritesBusy;
+  button.setAttribute("aria-disabled", String(favoritesBusy));
   return button;
-}
-
-function createFavoritesGear() {
-  const gear = createNode("button", "favorite-settings");
-  gear.type = "button";
-  gear.dataset.favoriteAction = "open-settings";
-  gear.setAttribute("aria-label", "Manage widgets");
-  gear.setAttribute("aria-expanded", String(isSettingsOpen(favoritesUi)));
-  gear.setAttribute("aria-controls", "favorites-panel");
-  gear.disabled = favoritesBusy;
-  gear.setAttribute("aria-disabled", String(favoritesBusy));
-  gear.appendChild(createIconNode("settings", { size: 20 }));
-  return gear;
 }
 
 function createSegmentedControl(name, options, selectedValue) {
@@ -379,6 +361,7 @@ function createFavoriteForm(item) {
   const isEdit = item !== null;
   const form = createNode("form", "favorite-form");
   form.dataset.favoriteForm = isEdit ? "edit" : "add";
+  form.noValidate = true; // the service validates and its message lands in the dialog's alert slot
   if (isEdit) {
     form.dataset.favoriteId = item.id;
   }
@@ -429,22 +412,16 @@ function createFavoriteForm(item) {
   const color = createNode("input", "favorite-color-input");
   color.name = "backgroundColor";
   color.type = "color";
+  color.setAttribute("aria-label", "Background color"); // the row label "Color" names the Auto/Manual radiogroup
   color.value = isEdit ? item.backgroundColor : "#24292f";
 
   const colorControls = createNode("div", "favorite-form__color-controls");
   colorControls.append(backgroundColorSource, color);
   const colorRow = createFormRow("Color", colorControls);
 
-  const tileSize = createSegmentedControl(
-    "tileSize",
-    [
-      ["square", "Square"],
-      ["wide", "Wide 2:1"]
-    ],
-    isEdit ? item.tileSize ?? "square" : "square"
-  );
-
   const footer = createNode("div", "favorite-form__footer");
+  const rows = [createFormRow("Link", url), createFormRow("Name", label), createFormRow("Icon", iconMode), customIconRow, colorRow];
+  if (isEdit) rows.push(createFormRow("Size", createSizeControl(displayedSize(item)))); // the add dialog adds 1×1 (spec § Placement rules)
 
   if (isEdit) {
     const remove = createIconButton("button button--danger", "Delete", "trash2");
@@ -470,17 +447,41 @@ function createFavoriteForm(item) {
 
   footer.append(cancel, save);
 
-  form.append(
-    createFormRow("Link", url),
-    createFormRow("Name", label),
-    createFormRow("Icon", iconMode),
-    customIconRow,
-    colorRow,
-    createFormRow("Tile size", tileSize),
-    footer
-  );
+  form.append(...rows, createDialogErrorSlot(), footer); // both branches carry the dialog's role=alert slot above the buttons
 
   return form;
+}
+
+// The dialog's write/validation message slot (spec § Write failures: inside the open modal, above its buttons).
+function createDialogErrorSlot() {
+  const error = createNode("div", "desktop-dialog__error", "");
+  error.setAttribute("role", "alert");
+  error.dataset.dialogError = "";
+  error.hidden = true;
+  return error;
+}
+
+const SIZE_OPTIONS = [
+  ["1x1", "1×1"],
+  ["2x1", "2×1"],
+  ["2x2", "2×2"]
+];
+
+// Size radiogroup (name "size", values 1x1|2x1|2x2) shared by the link and weather edit dialogs.
+function createSizeControl({ w, h }) {
+  return createSegmentedControl("size", SIZE_OPTIONS, `${w}x${h}`);
+}
+
+// The size the tile is shown at: its cell in the displayed layout (an item whose stored grid is missing or malformed
+// is shown unplaced at its fallback size), else 1×1.
+function displayedSize(item) {
+  const cell = widgetsState ? displayLayout(widgetsState.items, currentColumns()).get(item.id) : null;
+  return cell ? { w: cell.w, h: cell.h } : { w: 1, h: 1 };
+}
+
+function readSize(value) {
+  const match = /^([12])x([12])$/.exec(String(value ?? ""));
+  return match ? { w: Number(match[1]), h: Number(match[2]) } : null;
 }
 
 function readFavoriteFormPayload(data) {
@@ -491,8 +492,7 @@ function readFavoriteFormPayload(data) {
     label: data.get("label"),
     iconMode: data.get("iconMode"),
     customIconUrl: data.get("customIconUrl"),
-    backgroundColorSource,
-    tileSize: data.get("tileSize") === "wide" ? "wide" : "square"
+    backgroundColorSource
   };
 
   if (backgroundColorSource === "manual") {
@@ -535,6 +535,7 @@ async function resolveAutoBackgroundColor(item) {
   );
 }
 
+// After an add or an edit with the Auto color: samples the favicon (CORS-safe sources only) and stores its color.
 async function refreshAutoAccent(id) {
   if (!widgetsService || !id) {
     return;
@@ -560,10 +561,11 @@ async function refreshAutoAccent(id) {
       return;
     }
 
-    const nextState = await widgetsService.updateFavorite(id, {
-      backgroundColor: autoColor,
-      backgroundColorSource: "auto"
-    });
+    const nextState = await widgetsService.updateFavorite(
+      id,
+      { backgroundColor: autoColor, backgroundColorSource: "auto" },
+      { columns: currentColumns() }
+    );
 
     widgetsState = nextState;
     renderFavorites();
@@ -573,211 +575,8 @@ async function refreshAutoAccent(id) {
   }
 }
 
-const GRID_POSITION_LABELS = { top: "Top", center: "Center", bottom: "Bottom" };
-
-function createGridSettingsRow(state) {
-  const section = createNode("div", "favorites-panel__grid-settings favorite-form");
-
-  const columns = createNode("input", "favorite-input");
-  columns.type = "number";
-  columns.name = "columns";
-  columns.min = String(MIN_GRID_COLUMNS);
-  columns.max = String(MAX_GRID_COLUMNS);
-  columns.step = "1";
-  columns.value = String(state.columns);
-  columns.dataset.gridSetting = "columns";
-
-  const position = createSegmentedControl(
-    "position",
-    ["top", "center", "bottom"].map((value) => [value, GRID_POSITION_LABELS[value]]),
-    state.position
-  );
-  for (const input of position.querySelectorAll("input")) {
-    input.dataset.gridSetting = "position";
-  }
-
-  const error = createNode("p", "status status--error");
-  error.dataset.gridError = "";
-  error.setAttribute("role", "alert");
-  error.hidden = true;
-
-  section.append(createFormRow("Columns", columns), createFormRow("Position", position), error);
-  return section;
-}
-
-// Puts the controls back in line with the stored state after a change succeeded (the
-// service normalizes input like " 5 ") or was rejected.
-function syncGridSettingInputs() {
-  if (!favoritesPanelRoot || !widgetsState) {
-    return;
-  }
-
-  const columns = favoritesPanelRoot.querySelector('[data-grid-setting="columns"]');
-  if (columns instanceof HTMLInputElement) {
-    columns.value = String(widgetsState.columns);
-  }
-  for (const radio of favoritesPanelRoot.querySelectorAll('[data-grid-setting="position"]')) {
-    if (radio instanceof HTMLInputElement) {
-      radio.checked = radio.value === widgetsState.position;
-    }
-  }
-}
-
-// Single rule for the earlier/later buttons, used at build time and when Show/size changes re-sync in place.
-function moveButtonDisabled(items, item, action) {
-  if (favoritesBusy || isFormOpen(favoritesUi)) return true;
-  return moveTargetIndex(items, items.indexOf(item), action === "move-earlier" ? -1 : 1) === -1;
-}
-
-function createFavoritesPanelRow(item, items) {
-  const row = createNode("div", "favorites-panel__row");
-
-  const info = createNode("div", "favorites-panel__item");
-  info.appendChild(createFavoriteIconNode(getFavoriteIconModel(item, { faviconBaseUrl }), item));
-  const text = createNode("div", "favorites-panel__title");
-  text.appendChild(createNode("strong", null, item.label));
-  text.appendChild(createNode("span", null, item.domain));
-  info.appendChild(text);
-
-  const disabled = favoritesBusy || isFormOpen(favoritesUi);
-
-  const earlier = createNode("button", "icon-button row-up");
-  earlier.type = "button";
-  earlier.dataset.favoriteAction = "move-earlier";
-  earlier.dataset.favoriteId = item.id;
-  earlier.setAttribute("aria-label", `Move ${item.label} earlier`);
-  earlier.disabled = moveButtonDisabled(items, item, "move-earlier");
-  earlier.appendChild(createIconNode("chevronUp"));
-
-  const later = createNode("button", "icon-button row-down");
-  later.type = "button";
-  later.dataset.favoriteAction = "move-later";
-  later.dataset.favoriteId = item.id;
-  later.setAttribute("aria-label", `Move ${item.label} later`);
-  later.disabled = moveButtonDisabled(items, item, "move-later");
-  later.appendChild(createIconNode("chevronDown"));
-
-  const edit = createNode("button", "icon-button row-action");
-  edit.type = "button";
-  edit.dataset.favoriteAction = "edit";
-  edit.dataset.favoriteId = item.id;
-  edit.setAttribute("aria-label", `Edit ${item.label}`);
-  edit.disabled = disabled;
-  edit.appendChild(createIconNode("pencil"));
-
-  row.append(info, earlier, later, edit);
-  return row;
-}
-
 const METRIC_LABELS = { temperature: "Temperature", precipitation: "Precipitation", airQuality: "Air quality", uv: "UV index" };
 const METRIC_GLYPHS = { temperature: "thermometer", precipitation: "droplet", airQuality: "wind", uv: "sun" };
-
-function createMetricMoveButtons(item, items) {
-  const make = (action, label, icon) => {
-    const button = createNode("button", action === "move-earlier" ? "icon-button row-up" : "icon-button row-down");
-    button.type = "button";
-    button.dataset.favoriteAction = action;
-    button.dataset.favoriteId = item.id;
-    button.setAttribute("aria-label", `Move ${label} ${action === "move-earlier" ? "earlier" : "later"}`);
-    button.disabled = moveButtonDisabled(items, item, action);
-    button.appendChild(createIconNode(icon));
-    return button;
-  };
-  const label = METRIC_LABELS[weatherMetricKey(item.id)];
-  return [
-    make("move-earlier", label, "chevronUp"),
-    make("move-later", label, "chevronDown")
-  ];
-}
-
-function createWeatherMetricRow(item, items) {
-  const key = weatherMetricKey(item.id);
-  const label = METRIC_LABELS[key];
-  const row = createNode("div", "favorites-panel__row");
-  row.dataset.metricRow = "";
-  row.dataset.metricId = item.id;
-
-  const info = createNode("div", "favorites-panel__item");
-  const glyph = createNode("span", "metric-glyph");
-  glyph.setAttribute("aria-hidden", "true");
-  glyph.appendChild(createIconNode(METRIC_GLYPHS[key]));
-  const text = createNode("div", "favorites-panel__title");
-  text.appendChild(createNode("strong", null, label));
-  const badge = createNode("span", "badge", "Hidden");
-  badge.dataset.hiddenBadge = "";
-  text.appendChild(badge);
-  info.append(glyph, text);
-
-  const slot = createNode("div", "favorites-panel__slot");
-  const size = createSegmentedControl(
-    `tileSize-${item.id}`,
-    [["square", "Square", "square"], ["wide", "Wide", "wide"]],
-    item.tileSize
-  );
-  size.setAttribute("aria-label", `${label} tile size`);
-  for (const input of size.querySelectorAll("input")) {
-    input.dataset.metricSetting = "tileSize";
-    input.dataset.metricId = item.id;
-  }
-  slot.appendChild(size);
-
-  const toggle = createNode("button", "icon-button row-action metric-toggle");
-  toggle.type = "button";
-  toggle.dataset.metricSetting = "enabled";
-  toggle.dataset.metricId = item.id;
-  toggle.setAttribute("aria-label", `Show ${label}`);
-
-  const [up, down] = createMetricMoveButtons(item, items);
-  row.append(info, slot, up, down, toggle);
-  applyMetricRowState(row, item);
-  return row;
-}
-
-function applyMetricRowState(row, item) {
-  row.dataset.hidden = String(!item.enabled);
-  row.querySelector("[data-hidden-badge]").hidden = item.enabled;
-  const toggle = row.querySelector('[data-metric-setting="enabled"]');
-  toggle.setAttribute("aria-pressed", String(item.enabled));
-  toggle.replaceChildren(createIconNode(item.enabled ? "eye" : "eyeOff", { size: 20 }));
-  for (const radio of row.querySelectorAll('[data-metric-setting="tileSize"]')) radio.checked = radio.value === item.tileSize;
-}
-
-function writeMetric(id, patch) {
-  metricWritesPending += 1;
-  void (async () => {
-    try {
-      widgetsState = await widgetsService.updateWeatherMetric(id, patch);
-      showMetricError("");
-      renderFavoritesToolbar();
-    } catch (error) {
-      showMetricError(error instanceof Error ? error.message : String(error));
-    }
-    // While later writes are in flight the controls keep showing the user's latest intent.
-    metricWritesPending -= 1;
-    if (metricWritesPending === 0) syncMetricRows();
-  })();
-}
-
-// In-place sync so an open add/edit form keeps its contents and focus stays on the used control.
-function syncMetricRows() {
-  const items = widgetsState?.items ?? [];
-  for (const button of favoritesPanelRoot?.querySelectorAll('[data-favorite-action^="move-"]') ?? []) {
-    const item = items.find((entry) => entry.id === button.dataset.favoriteId);
-    if (item) button.disabled = moveButtonDisabled(items, item, button.dataset.favoriteAction);
-  }
-  for (const row of favoritesPanelRoot?.querySelectorAll("[data-metric-row]") ?? []) {
-    const item = widgetsState?.items.find((entry) => entry.id === row.dataset.metricId);
-    if (item) applyMetricRowState(row, item);
-  }
-}
-
-function showMetricError(message) {
-  metricErrorText = message; // module state: survives a panel rebuild, cleared by the next successful metric action
-  const node = favoritesPanelRoot?.querySelector("[data-metric-error]");
-  if (!node) return;
-  node.textContent = message;
-  node.hidden = message === "";
-}
 
 const POPOVER_MAX_HEIGHT = 240;
 const POPOVER_MIN_FREE = 96;
@@ -1081,7 +880,7 @@ function buildCityModal(mode, location) {
     const description = createNode(
       "p",
       "city-modal__description",
-      "Pick a city to see local weather next to your links. Weather is optional: skip this and you can add a city later in Widgets."
+      "Pick a city to see local weather next to your links. Weather is optional: skip this and you can add a city later from a weather tile."
     );
     description.id = "city-modal-description";
     dialog.setAttribute("aria-describedby", description.id);
@@ -1176,7 +975,10 @@ function attachCityModalListeners(root) {
 let cityModalShownThisLoad = false; // the automatic prompt never reopens a modal that was already shown this page load
 
 function showCityModal(mode, openerSelector) {
-  if (cityModalRoot || isCityModalOpen(weatherUi) || !weatherService || !document.body) return false; // one modal at a time
+  // One modal at a time; the only stacking is the change-mode city modal over the weather edit dialog (spec § Weather
+  // edit modal). The first-run modal never opens over a desktop dialog.
+  const overWeatherDialog = mode === "change" && desktopDialogRoot !== null && desktopUi.dialog?.kind === "edit-weather";
+  if (cityModalRoot || (desktopDialogRoot && !overWeatherDialog) || isCityModalOpen(weatherUi) || !weatherService || !document.body) return false;
   cityModalError = "";
   let root = null;
   try {
@@ -1198,8 +1000,12 @@ function showCityModal(mode, openerSelector) {
   cityModalHadFocus = false;
   cityModalOpenedAt = performance.now();
   hideTooltip();
+  closeAddMenu();
   if (favoritesRoot) favoritesRoot.inert = true;
-  if (favoritesPanelRoot) favoritesPanelRoot.inert = true;
+  if (overWeatherDialog) {
+    desktopDialogRoot.inert = true; // the dialog under the city modal is not interactive until the city modal closes
+    cityModalRoot.classList.add("city-modal--stacked");
+  }
   if (mode === "change") cityModalRoot.querySelector(CITY_INPUT_SELECTOR)?.focus(); // first-run never steals focus
   return true;
 }
@@ -1218,14 +1024,17 @@ function hideCityModal({ dismiss = false } = {}) {
   weatherUi = closeCityModalState(weatherUi);
   cityModalError = "";
   cityModalHadFocus = false;
-  if (favoritesRoot) favoritesRoot.inert = false;
-  if (favoritesPanelRoot) favoritesPanelRoot.inert = false;
+  if (desktopDialogRoot) {
+    // Stacked over the weather dialog: the grid stays inert under the dialog, the dialog becomes interactive again.
+    desktopDialogRoot.inert = false;
+    syncWeatherDialogCity();
+  } else if (favoritesRoot) favoritesRoot.inert = false;
   if (dismiss && mode === "first-run") onFirstRunDismissed();
   if (mode === "change") {
-    pendingFocus = [cityModalOpener, OPEN_CITY_MODAL_SELECTOR, GEAR_SELECTOR].filter(Boolean);
+    pendingFocus = [cityModalOpener, SETTINGS_TILE_SELECTOR].filter(Boolean);
     applyPendingFocus();
   } else if (focusWasInside) {
-    pendingFocus = [GEAR_SELECTOR];
+    pendingFocus = [SETTINGS_TILE_SELECTOR];
     applyPendingFocus();
   }
   cityModalOpener = null;
@@ -1239,7 +1048,7 @@ function onFirstRunDismissed() {
 // Evaluated once per page load, after the first grid render, on live state (spec § Storage and the automatic-show rule).
 // First-run open never moves focus (D2): showCityModal only focuses in change mode.
 function maybeAutoShowCityPrompt({ flagRead, dismissed }) {
-  if (cityModalRoot || cityModalShownThisLoad) return; // a modal was opened meanwhile (or already shown and closed): never replace, duplicate or reopen it
+  if (cityModalRoot || desktopDialogRoot || cityModalShownThisLoad) return; // a modal was opened meanwhile (or already shown and closed): never replace, duplicate or reopen it
   const items = widgetsState?.items ?? [];
   const show = shouldAutoShowCityPrompt({
     locationRead: weatherLocationKnown && !weatherLocationError,
@@ -1253,215 +1062,941 @@ function maybeAutoShowCityPrompt({ flagRead, dismissed }) {
   if (show) showCityModal("first-run", null);
 }
 
-function createWeatherMetricTile(item, columns, view) {
-  const effectiveSize = tileSpan(item.tileSize, columns) === 2 ? "wide" : "square";
-  const model = describeWeatherMetric({ metricKey: weatherMetricKey(item.id), result: view, size: effectiveSize });
+// R6: a 2-wide tile uses the `wide` model; a 2-high tile gets larger type (CSS keys off data-h="2") and the city name.
+function createWeatherMetricTile(item, cell, view) {
+  const size = cell.w === 2 ? "wide" : "square";
+  const model = describeWeatherMetric({ metricKey: weatherMetricKey(item.id), result: view, size });
   if (!model) return null;
 
-  const tile = createNode("div", "weather-tile");
+  // Edit mode: the tile becomes a button named "Edit <metric name>"; a tap opens the weather edit dialog.
+  const editing = desktopUi.editMode;
+  const tile = createNode(editing ? "button" : "div", "weather-tile");
   tile.dataset.widgetId = item.id;
-  tile.dataset.tileSize = effectiveSize;
-  tile.tabIndex = 0;
-  tile.setAttribute("role", "group");
-  tile.setAttribute("aria-label", model.label);
+  if (editing) {
+    tile.type = "button";
+    tile.setAttribute("aria-label", `Edit ${METRIC_LABELS[weatherMetricKey(item.id)]}`);
+  } else {
+    tile.tabIndex = 0;
+    tile.setAttribute("role", "group");
+    tile.setAttribute("aria-label", model.label);
+  }
   if (model.tone) tile.dataset.weatherTone = model.tone;
   if (model.stale) tile.dataset.stale = "true";
   if (model.busy) tile.setAttribute("aria-busy", "true");
 
+  // Spec § Tile content by size: every size leads with the metric glyph (decorative; the name is the aria-label).
+  const glyph = createNode("span", "weather-tile__glyph");
+  glyph.setAttribute("aria-hidden", "true");
+  glyph.appendChild(createIconNode(METRIC_GLYPHS[weatherMetricKey(item.id)], { size: 16 }));
+  tile.appendChild(glyph);
+
   const values = createNode("div", "weather-tile__values");
   values.appendChild(createNode("span", "weather-tile__primary", model.primary));
   if (model.secondary) values.appendChild(createNode("span", "weather-tile__secondary", model.secondary));
+  tile.appendChild(values);
+  const cityName = view?.location?.name;
+  if (cell.h === 2 && cityName) tile.appendChild(createNode("span", "weather-tile__city", cityName));
   const description = createNode("span", "sr-only", model.description);
   description.id = `weather-desc-${weatherMetricKey(item.id)}`;
   description.dataset.tooltipText = "";
   tile.setAttribute("aria-describedby", description.id);
   tile.dataset.tooltipTrigger = "";
-  tile.append(values, description);
+  tile.appendChild(description);
   return tile;
 }
 
-function createCityHintTile(columns) {
+// Spec § Weather / city: the hint takes the first enabled metric's cell and size; the plus glyph at 1-wide, text when wider.
+function createCityHintTile(cell, item) {
   const button = createNode("button", "city-hint-tile");
-  const wide = tileSpan("wide", columns) === 2;
   button.type = "button";
-  button.dataset.favoriteAction = "set-city";
+  if (!desktopUi.editMode) button.dataset.favoriteAction = "set-city"; // edit mode: it behaves as its metric (weather dialog)
   button.dataset.widgetId = "weather:hint";
-  button.dataset.tileSize = wide ? "wide" : "square";
+  button.dataset.metricId = item.id;
   button.setAttribute("aria-label", "Set a city");
-  if (wide) button.textContent = "Set a city";
+  if (cell.w === 2) button.textContent = "Set a city";
   else button.appendChild(createIconNode("plus"));
   return button;
 }
 
-function renderFavoritesToolbar() {
-  if (!favoritesRoot) {
-    return;
+function createChromeTile(item, cell) {
+  const settings = item.role === "settings";
+  const button = createNode("button", "chrome-tile");
+  button.type = "button";
+  button.dataset.widgetId = item.id;
+  button.dataset.chromeRole = item.role;
+  button.setAttribute("aria-label", settings ? "Settings" : "Add link");
+  if (settings) button.setAttribute("aria-pressed", String(desktopUi.editMode));
+  else if (desktopUi.editMode && hiddenMetrics().length > 0) {
+    button.setAttribute("aria-haspopup", "menu"); // spec § Add menu: it opens the Add menu instead of the dialog
+    button.setAttribute("aria-expanded", String(addMenuRoot !== null));
   }
+  button.appendChild(createIconNode(settings ? "settings" : "plus", { size: 20 }));
+  return button;
+}
 
-  hideTooltip();
-  // Every bootstrap exit path (normal, newer meta, failed migration, read error) renders through here, so the bar is never left hidden.
-  if (!favoritesRoot.dataset.position) {
-    favoritesRoot.dataset.position = gridLayout(widgetsState).position;
-  }
+function createRemoveBadge(item) {
+  const hidden = item.type === "weather-metric";
+  const label = hidden ? METRIC_LABELS[weatherMetricKey(item.id)] : item.label;
+  const badge = createNode("button", "tile-remove");
+  badge.type = "button";
+  badge.dataset.removeFor = item.id;
+  badge.setAttribute("aria-label", hidden ? `Hide ${label}` : `Remove ${label}`);
+  badge.appendChild(createIconNode("minus", { size: 12 }));
+  return badge;
+}
 
-  const active = document.activeElement instanceof Element ? document.activeElement : null;
-  const focused = active && favoritesRoot.contains(active) ? active.closest("[data-widget-id], .favorite-settings") : null;
-  const focusedId = focused ? focused.dataset.widgetId ?? "gear" : null;
+const ADD_TILE_SELECTOR = '[data-widget-id="chrome:add"]';
+const DIALOG_BACKDROP_GUARD_MS = 300;
+let desktopDialogRoot = null;
+let desktopDialogOpener = null; // { id, badge } of the tile or − badge that opened the dialog, looked up again at close
+let desktopDialogOpenedAt = 0;
 
-  if (widgetsNewer) {
-    favoritesRoot.replaceChildren(
-      createStatus(NEWER_WIDGETS_MESSAGE, { error: true, live: "assertive", full: true })
-    );
-    return;
-  }
+const itemById = (id) => widgetsState?.items.find((item) => item.id === id) ?? null;
+const metricName = (id) => METRIC_LABELS[weatherMetricKey(id)];
+const WEATHER_DIALOG_CITY_SELECTOR = '[data-dialog="edit-weather"] [data-weather-action="open-city-modal"]';
 
-  if (widgetsMigrationFailed) {
-    favoritesRoot.replaceChildren(
-      createStatus(favoritesError, { error: true, live: "assertive", full: true })
-    );
-    return;
-  }
+function createDialogFooter(...buttons) {
+  const footer = createNode("div", "favorite-form__footer");
+  footer.append(...buttons);
+  return footer;
+}
 
-  const layout = gridLayout(widgetsState);
-  favoritesRoot.dataset.position = layout.position;
+function createDialogCancel() {
+  const cancel = createIconButton("button", "Cancel", "x");
+  cancel.type = "button";
+  cancel.dataset.favoriteAction = "cancel"; // openDesktopDialog wires every Cancel the same way
+  return cancel;
+}
 
-  const fragment = document.createDocumentFragment();
-  const items = widgetsState?.items ?? [];
+// One branch per dialog kind (desktopUiState DIALOG_KINDS). Strings only through text nodes.
+function buildDialogContent(root, dialog) {
+  const title = createNode("h2", "desktop-dialog__title");
+  title.id = "desktop-dialog-title";
 
-  const list = createNode("div", "favorites-grid");
-  list.style.setProperty("--columns", String(layout.columns));
-  const view = weatherService ? effectiveWeatherResult() : undefined;
-  let hintPlaced = false;
-  for (const item of items) {
-    if (item.type === "favorite") {
-      list.appendChild(createFavoriteTile(item, layout.columns));
-    } else if (item.enabled && weatherService) {
-      if (view?.status === "no-location") {
-        if (!hintPlaced) {
-          list.appendChild(createCityHintTile(layout.columns));
-          hintPlaced = true;
-        }
-      } else {
-        const tile = createWeatherMetricTile(item, layout.columns, view);
-        if (tile) list.appendChild(tile);
-      }
+  switch (dialog.kind) {
+    case "add-link": {
+      title.textContent = "Add link";
+      const form = createFavoriteForm(null);
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const payload = readFavoriteFormPayload(new FormData(form));
+        const previousIds = new Set((widgetsState?.items ?? []).map((entry) => entry.id));
+        void runDesktopMutation(
+          (columns) => widgetsService.addFavorite(payload, { columns }),
+          { dialogRoot: root }
+        ).then((ok) => {
+          if (ok) {
+            announce("Link added");
+            closeDesktopDialog();
+            // The new link is the id the stored result has and the state before did not (set difference).
+            const added = widgetsState?.items.find((entry) => entry.type === "favorite" && !previousIds.has(entry.id));
+            if (added) void refreshAutoAccent(added.id);
+          }
+        });
+      });
+      root.append(title, form);
+      break;
     }
-  }
-  if (list.childElementCount > 0) {
-    fragment.appendChild(list);
-  }
+    case "edit-link": {
+      const item = itemById(dialog.id);
+      if (item?.type !== "favorite") throw new Error("Favorite not found");
+      title.textContent = "Edit link";
+      const form = createFavoriteForm(item);
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const data = new FormData(form);
+        const payload = { ...readFavoriteFormPayload(data), ...readSize(data.get("size")) };
+        void runDesktopMutation(
+          (columns) => widgetsService.updateFavorite(item.id, payload, { columns }),
+          { dialogRoot: root }
+        ).then((ok) => {
+          if (ok) {
+            announce("Link saved");
+            closeDesktopDialog();
+            if (payload.backgroundColorSource === "auto") void refreshAutoAccent(item.id);
+          }
+        });
+      });
+      // Delete inside the edit dialog swaps it for the delete confirmation (one dialog at a time, same opener).
+      form.querySelector('[data-favorite-action="delete"]')?.addEventListener("click", () => {
+        if (favoritesBusy) return;
+        const opener = desktopDialogOpener;
+        closeDesktopDialog({ restoreFocusTo: null });
+        openDesktopDialog({ kind: "confirm-delete", id: item.id }, { opener });
+      });
+      root.append(title, form);
+      break;
+    }
+    case "confirm-delete": {
+      const item = itemById(dialog.id);
+      if (item?.type !== "favorite") throw new Error("Favorite not found");
+      title.textContent = "Delete link?";
+      const body = createNode("p", "desktop-dialog__body", "This removes the link from your grid.");
+      body.id = "desktop-dialog-body";
+      root.setAttribute("aria-describedby", body.id);
+      const remove = createIconButton("button button--danger", "Delete", "trash2");
+      remove.type = "button";
+      remove.dataset.dialogAction = "delete";
+      remove.addEventListener("click", () => void confirmDeleteFavorite(item.id));
+      root.append(title, body, createDialogErrorSlot(), createDialogFooter(createDialogCancel(), remove));
+      break;
+    }
+    case "edit-weather": {
+      const item = itemById(dialog.id);
+      if (item?.type !== "weather-metric" || item.enabled !== true) throw new Error("Weather tile not found");
+      title.textContent = metricName(item.id);
+      // City row: the city change commits on its own in the city modal, stacked on top of this dialog.
+      const cityRow = createNode("div", "desktop-dialog__city");
+      const cityName = createNode("span", "desktop-dialog__city-name");
+      cityName.dataset.weatherDialogCity = "";
+      const cityButton = createNode("button", "text-button");
+      cityButton.type = "button";
+      cityButton.dataset.weatherAction = "open-city-modal";
+      cityButton.disabled = !weatherService;
+      cityButton.addEventListener("click", () => {
+        if (!weatherBusy && !favoritesBusy) showCityModal("change", WEATHER_DIALOG_CITY_SELECTOR);
+      });
+      cityRow.append(cityName, cityButton);
 
-  fragment.appendChild(createFavoritesGear());
-  favoritesRoot.replaceChildren(fragment);
+      const form = createNode("form", "favorite-form");
+      form.dataset.weatherSizeForm = "";
+      form.noValidate = true;
+      // A lenient read may have dropped a malformed grid: the size shown is the displayed cell's (spec § Reading grid).
+      const size = displayedSize(item);
+      const initial = `${size.w}x${size.h}`;
+      const save = createIconButton("button button--primary", "Save", "check");
+      save.type = "submit";
+      save.disabled = true; // enabled only when the size changed
+      form.addEventListener("change", () => {
+        save.disabled = new FormData(form).get("size") === initial;
+      });
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const size = readSize(new FormData(form).get("size"));
+        if (!size || save.disabled) return;
+        void runDesktopMutation(
+          (columns) => widgetsService.updateWeatherMetric(item.id, size, { columns }),
+          { dialogRoot: root }
+        ).then((ok) => {
+          if (ok) closeDesktopDialog();
+        });
+      });
+      form.append(createFormRow("Size", createSizeControl(size)), createDialogErrorSlot(), createDialogFooter(createDialogCancel(), save));
+      root.append(title, cityRow, form);
+      syncWeatherDialogCity(root);
+      break;
+    }
+    default:
+      throw new Error(`Unknown dialog: ${dialog.kind}`);
+  }
+}
 
-  if (focusedId) {
-    const again =
-      focusedId === "gear"
-        ? favoritesRoot.querySelector(GEAR_SELECTOR)
-        : [...favoritesRoot.querySelectorAll("[data-widget-id]")].find((el) => el.dataset.widgetId === focusedId);
+// The weather dialog's city row follows the stored city (it changes under the dialog through the stacked city modal).
+function syncWeatherDialogCity(root = desktopDialogRoot) {
+  if (root?.dataset.dialog !== "edit-weather") return;
+  const location = weatherLocationError ? null : currentLocation();
+  root.querySelector("[data-weather-dialog-city]").textContent = location?.name ?? "No city set";
+  root.querySelector('[data-weather-action="open-city-modal"]').textContent = location ? "Change city" : "Set a city";
+}
+
+// `opener`: { id, badge } of the control to refocus at close (a tile or its − badge), looked up again at close time.
+function openDesktopDialog(dialog, { opener = focusedWidgetId() } = {}) {
+  if (!favoritesRoot || desktopDialogRoot || cityModalRoot) return false;
+  closeAddMenu();
+  showDesktopStatus("");
+  desktopDialogOpener = opener ?? null;
+  desktopUi = openDialog(desktopUi, dialog);
+  const root = createNode("div", "desktop-dialog");
+  root.setAttribute("role", "dialog");
+  root.setAttribute("aria-modal", "true");
+  root.setAttribute("aria-labelledby", "desktop-dialog-title");
+  root.dataset.dialog = dialog.kind;
+  try {
+    buildDialogContent(root, dialog);
+  } catch (error) {
+    desktopUi = closeDialog(desktopUi);
+    desktopDialogOpener = null;
+    throw error;
+  }
+  const backdrop = createNode("div", "desktop-backdrop");
+  backdrop.addEventListener("click", () => {
+    if (Date.now() - desktopDialogOpenedAt < DIALOG_BACKDROP_GUARD_MS || favoritesBusy) return;
+    closeDesktopDialog();
+  });
+  root.querySelector('[data-favorite-action="cancel"]')?.addEventListener("click", () => {
+    if (!favoritesBusy) closeDesktopDialog();
+  });
+  desktopDialogRoot = root;
+  desktopDialogOpenedAt = Date.now();
+  hideTooltip();
+  favoritesRoot.inert = true;
+  document.body.append(backdrop, root);
+  root.querySelector("input, button")?.focus();
+  return true;
+}
+
+// `restoreFocusTo`: a widget id, an { id, badge } target, a list of those (first present wins), or null for none.
+// A weather dialog falls back to its metric's tile (the hint that opened it is gone once a city is set).
+function closeDesktopDialog({ restoreFocusTo = desktopDialogOpener } = {}) {
+  const fallback = desktopUi.dialog?.id ?? null;
+  document.querySelectorAll(".desktop-dialog, .desktop-backdrop").forEach((node) => node.remove());
+  desktopDialogRoot = null;
+  if (favoritesRoot) favoritesRoot.inert = false;
+  desktopUi = closeDialog(desktopUi);
+  desktopDialogOpener = null;
+  if (restoreFocusTo) focusWidgetTarget([restoreFocusTo, fallback].flat());
+}
+
+// Focuses the first present, enabled target: a widget id string (its tile) or { id, badge } (the tile or its − badge).
+function focusWidgetTarget(targets) {
+  for (const target of [targets].flat()) {
+    if (!target) continue;
+    const { id, badge } = typeof target === "string" ? { id: target, badge: false } : target;
+    const selector = badge ? `[data-remove-for="${CSS.escape(id)}"]` : `.desktop-grid > [data-widget-id="${CSS.escape(id)}"]`;
+    const node = favoritesRoot?.querySelector(selector);
+    if (!(node instanceof HTMLElement) || node.matches(":disabled")) continue;
     suppressTooltipOnFocus = true;
     try {
-      (again ?? favoritesRoot.querySelector(GEAR_SELECTOR))?.focus();
+      node.focus();
     } finally {
       suppressTooltipOnFocus = false;
     }
+    return true;
   }
+  return false;
 }
 
-const GEAR_SELECTOR = '[data-favorite-action="open-settings"]';
-const HEADING_SELECTOR = "[data-panel-heading]";
-const ADD_BUTTON_SELECTOR = '[data-favorite-action="start-add"]';
-
-function formFieldSelector(kind) {
-  return `form[data-favorite-form="${kind}"] input[name="url"]`;
+// Spec § DOM order and focus: after a delete or hide, focus goes to the next tile in DOM order, else the previous,
+// else Settings — read from the displayed (y, x) order before the action.
+function neighborTargets(domId) {
+  const ids = [...(favoritesRoot?.querySelectorAll(".desktop-grid > [data-widget-id]") ?? [])].map((tile) => tile.dataset.widgetId);
+  const index = ids.indexOf(domId);
+  return [...(index === -1 ? [] : [ids[index + 1], ids[index - 1]]), SETTINGS_TILE_ID].filter((id) => id && id !== domId);
 }
 
-function itemActionSelector(action, id) {
-  return `[data-favorite-action="${action}"][data-favorite-id="${String(id).replace(/["\\]/g, "\\$&")}"]`;
+// Delete confirm (spec § Write failures: a failure is reported in the page-level status line; the favorite stays).
+async function confirmDeleteFavorite(id) {
+  if (favoritesBusy) return;
+  const next = neighborTargets(id);
+  const opener = desktopDialogOpener;
+  const ok = await runDesktopMutation((columns) => widgetsService.deleteFavorite(id, { columns }));
+  if (!desktopDialogRoot) return; // closed meanwhile
+  closeDesktopDialog({ restoreFocusTo: ok ? next : opener });
+  if (ok) announce("Link deleted");
 }
 
-function renderFavoritesPanel() {
-  if (!favoritesPanelRoot) {
+// − on a weather tile (or on the hint, which stands for its metric): hide it, no dialog.
+async function hideWeatherMetric(metricId, domId) {
+  const next = neighborTargets(domId);
+  const ok = await runDesktopMutation((columns) => widgetsService.updateWeatherMetric(metricId, { enabled: false }, { columns }));
+  focusWidgetTarget(ok ? next : [{ id: metricId, badge: true }, domId]);
+}
+
+// Add menu → a hidden metric: restored at the first free block for its size, then focused (or the hint standing for it).
+async function restoreWeatherMetric(metricId) {
+  const ok = await runDesktopMutation((columns) => widgetsService.updateWeatherMetric(metricId, { enabled: true }, { columns }));
+  const hint = favoritesRoot?.querySelector('[data-widget-id="weather:hint"]');
+  focusWidgetTarget(ok ? [metricId, hint?.dataset.metricId === metricId ? "weather:hint" : null, "chrome:add"] : "chrome:add");
+}
+
+// Edit-mode taps (spec § Edit mode): − badges, link and weather tiles (the hint stands for its metric). Chrome tiles are
+// handled by the caller (Settings exits, Add opens the add flow) and never open an edit dialog.
+function handleEditModeClick(target) {
+  if (favoritesBusy || !widgetsService || !widgetsState || desktopDialogRoot) return;
+  const badge = target.closest(".tile-remove");
+  if (badge instanceof HTMLElement) {
+    const item = itemById(badge.dataset.removeFor);
+    if (item?.type === "favorite") {
+      openDesktopDialog({ kind: "confirm-delete", id: item.id }, { opener: { id: item.id, badge: true } });
+    } else if (item?.type === "weather-metric" && item.enabled === true) {
+      void hideWeatherMetric(item.id, badge.previousElementSibling?.dataset.widgetId ?? item.id);
+    }
     return;
   }
+  const tile = target.closest(".desktop-grid > [data-widget-id]");
+  if (!(tile instanceof HTMLElement)) return;
+  const item = itemById(tile.dataset.metricId ?? tile.dataset.widgetId);
+  const opener = { id: tile.dataset.widgetId, badge: false };
+  if (item?.type === "favorite") openDesktopDialog({ kind: "edit-link", id: item.id }, { opener });
+  else if (item?.type === "weather-metric" && item.enabled === true) openDesktopDialog({ kind: "edit-weather", id: item.id }, { opener });
+}
 
-  favoritesPanelRoot.dataset.barPosition = gridLayout(widgetsState).position;
-  publishPanelDock();
+// ---- Add tile and Add menu (spec § Add menu (edit mode), AS-30) ----
+let addMenuRoot = null;
+let addMenuDismissPress = null; // the pointerdown that closed the menu: it never also exits edit mode
 
-  const open = isSettingsOpen(favoritesUi);
-  favoritesPanelRoot.hidden = !open;
+const hiddenMetrics = () => (widgetsState?.items ?? []).filter((item) => item.type === "weather-metric" && item.enabled !== true);
 
-  if (!open) {
-    favoritesPanelRoot.replaceChildren();
+// Normal mode, or nothing hidden: the add-link dialog. Edit mode with >= 1 hidden metric: the Add menu. A second
+// activation while the menu is open keeps the one menu (Review focus 3).
+function activateAddTile() {
+  if (favoritesBusy || !widgetsService || !widgetsState || desktopDialogRoot) return;
+  if (!desktopUi.editMode || hiddenMetrics().length === 0) {
+    openDesktopDialog({ kind: "add-link" });
     return;
   }
+  if (addMenuRoot) {
+    focusMenuItem(0);
+    return;
+  }
+  const menu = createNode("div", "add-menu");
+  menu.id = "add-menu";
+  menu.setAttribute("role", "menu");
+  menu.setAttribute("aria-label", "Add");
+  menu.addEventListener("keydown", onAddMenuKeydown);
+  menu.addEventListener("click", onAddMenuClick);
+  addMenuRoot = menu;
+  hideTooltip();
+  document.body.appendChild(menu);
+  syncAddTileExpanded();
+  fillAddMenu("add");
+}
 
-  const previousScrollTop =
-    favoritesPanelRoot.querySelector(".favorites-panel__body")?.scrollTop ?? 0;
-
-  const fragment = document.createDocumentFragment();
-  const items = widgetsState?.items ?? [];
-
-  const top = createNode("div", "favorites-panel__top");
-  const heading = createNode("div");
-  const title = createNode("h2", null, "Widgets");
-  title.tabIndex = -1;
-  title.dataset.panelHeading = "";
-  heading.appendChild(title);
-  heading.appendChild(
-    createNode("p", null, "Add, reorder, and style your links and weather tiles.")
+function fillAddMenu(kind) {
+  const entries =
+    kind === "add"
+      ? [["add-link", "Add link", null], ["add-weather", "Add weather tile…", null]]
+      : hiddenMetrics().map((item) => ["restore", metricName(item.id), item.id]);
+  if (entries.length === 0) {
+    closeAddMenu({ focusAdd: true });
+    return;
+  }
+  desktopUi = openMenu(desktopUi, kind);
+  addMenuRoot.setAttribute("aria-label", kind === "add" ? "Add" : "Add weather tile"); // spec Copy: the sub-flow's title
+  addMenuRoot.replaceChildren(
+    ...entries.map(([action, text, metricId]) => {
+      const entry = createNode("button", "add-menu__item", text);
+      entry.type = "button";
+      entry.tabIndex = -1;
+      entry.setAttribute("role", "menuitem");
+      entry.dataset.menuAction = action;
+      if (metricId) entry.dataset.metricId = metricId;
+      return entry;
+    })
   );
-  const addButton = createIconButton("button button--primary", "Add link", "plus");
-  addButton.type = "button";
-  addButton.dataset.favoriteAction = "start-add";
-  addButton.disabled = favoritesBusy || isFormOpen(favoritesUi);
-  top.append(heading, addButton);
-  fragment.appendChild(top);
+  placeAddMenu();
+  focusMenuItem(0);
+}
 
-  // Everything below the heading scrolls together inside the panel.
-  const body = createNode("div", "favorites-panel__body");
+const menuItems = () => (addMenuRoot ? [...addMenuRoot.querySelectorAll('[role="menuitem"]')] : []);
 
-  if (widgetsState) {
-    body.appendChild(createGridSettingsRow(widgetsState));
+function focusMenuItem(index) {
+  const items = menuItems();
+  if (items.length > 0) items[((index % items.length) + items.length) % items.length].focus();
+}
+
+// Anchored to the Add tile: below it, or above when there is no room below; kept inside the viewport horizontally.
+function placeAddMenu() {
+  const anchor = favoritesRoot?.querySelector(ADD_TILE_SELECTOR);
+  if (!addMenuRoot || !anchor) return;
+  const a = anchor.getBoundingClientRect();
+  const m = addMenuRoot.getBoundingClientRect();
+  const margin = 8;
+  const above = a.top - POPOVER_GAP - m.height;
+  const below = a.bottom + POPOVER_GAP;
+  const top = below + m.height > window.innerHeight - margin && above >= margin ? above : below;
+  const left = Math.max(margin, Math.min(a.left, document.documentElement.clientWidth - m.width - margin));
+  addMenuRoot.style.left = `${left + window.scrollX}px`;
+  addMenuRoot.style.top = `${top + window.scrollY}px`;
+}
+
+// The Add tile announces its menu only while it can open one (edit mode with >= 1 hidden metric).
+function syncAddTileExpanded() {
+  const tile = favoritesRoot?.querySelector(ADD_TILE_SELECTOR);
+  if (tile?.hasAttribute("aria-haspopup")) tile.setAttribute("aria-expanded", String(addMenuRoot !== null));
+}
+
+function closeAddMenu({ focusAdd = false } = {}) {
+  if (!addMenuRoot) return;
+  addMenuRoot.remove();
+  addMenuRoot = null;
+  desktopUi = closeMenu(desktopUi);
+  syncAddTileExpanded();
+  if (focusAdd) focusWidgetTarget("chrome:add");
+}
+
+function onAddMenuKeydown(event) {
+  const index = menuItems().indexOf(document.activeElement);
+  if (event.key === "ArrowDown") focusMenuItem(index + 1);
+  else if (event.key === "ArrowUp") focusMenuItem(index - 1);
+  else if (event.key === "Home") focusMenuItem(0);
+  else if (event.key === "End") focusMenuItem(-1);
+  else if (event.key === "Tab") closeAddMenu({ focusAdd: true });
+  else return;
+  event.preventDefault();
+}
+
+function onAddMenuClick(event) {
+  const entry = event.target instanceof Element ? event.target.closest('[role="menuitem"]') : null;
+  if (!(entry instanceof HTMLElement) || favoritesBusy) return;
+  const action = entry.dataset.menuAction;
+  if (action === "add-weather") {
+    fillAddMenu("restore-weather");
+    return;
+  }
+  closeAddMenu();
+  if (action === "add-link") openDesktopDialog({ kind: "add-link" }, { opener: { id: "chrome:add", badge: false } });
+  else if (action === "restore") void restoreWeatherMetric(entry.dataset.metricId);
+}
+
+// An outside press closes the menu and returns focus to Add (after the press's own focus change). A press on the Add
+// tile itself is a second activation and keeps the menu.
+document.addEventListener(
+  "pointerdown",
+  (event) => {
+    if (!addMenuRoot || !(event.target instanceof Element)) return;
+    if (addMenuRoot.contains(event.target) || event.target.closest(ADD_TILE_SELECTOR)) return;
+    addMenuDismissPress = event;
+    closeAddMenu();
+    setTimeout(() => focusWidgetTarget("chrome:add"), 0);
+  },
+  true
+);
+
+// The first field a service message is about; anything else leaves focus on the submit button.
+function invalidFieldFor(message) {
+  if (/image url/i.test(message)) return 'input[name="customIconUrl"]';
+  if (/url/i.test(message)) return 'input[name="url"]';
+  if (/color/i.test(message)) return 'input[name="backgroundColor"]';
+  return 'button[type="submit"]';
+}
+
+function showDialogError(root, message) {
+  const slot = root.querySelector("[data-dialog-error]");
+  if (!slot) return;
+  slot.textContent = message;
+  slot.hidden = false;
+  const field = root.querySelector(invalidFieldFor(message)) ?? root.querySelector('button[type="submit"]');
+  if (field instanceof HTMLElement && !field.matches(":disabled")) field.focus();
+}
+
+// Every explicit mutation goes through here. On failure nothing is persisted and the UI returns to the stored state.
+// `renderPending: false` skips the busy re-render (a drop keeps its tile on the target while the write runs);
+// `onFailure(message)` then owns the failure UI instead of the immediate re-render.
+async function runDesktopMutation(action, { dialogRoot = null, renderPending = true, onFailure = null } = {}) {
+  if (favoritesBusy) return false;
+  showDesktopStatus("");
+  const slot = dialogRoot?.querySelector("[data-dialog-error]");
+  if (slot) {
+    slot.textContent = "";
+    slot.hidden = true;
+  }
+  const generation = startFavoritesAction({ render: renderPending });
+  try {
+    const next = await action(currentColumns());
+    finishFavoritesAction(generation, () => {
+      widgetsState = next;
+    });
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (onFailure) {
+      setFavoritesBusy(false);
+      if (generation === favoritesGeneration) onFailure(message);
+      return false;
+    }
+    finishFavoritesAction(generation, () => {});
+    if (dialogRoot?.isConnected) showDialogError(dialogRoot, message);
+    else showDesktopStatus(message);
+    return false;
+  }
+}
+
+const SETTINGS_TILE_SELECTOR = '[data-widget-id="chrome:settings"]';
+const SETTINGS_TILE_ID = "chrome:settings";
+
+function viewportWidth() {
+  return document.documentElement.clientWidth;
+}
+
+function currentColumns() {
+  return effectiveColumns(viewportWidth());
+}
+
+// R4: metrics come from JS so the column count and the cell size can never disagree at a breakpoint.
+function applyGridMetrics() {
+  const metrics = gridMetrics(viewportWidth());
+  const style = document.documentElement.style;
+  style.setProperty("--cell-size", `${metrics.cell}px`);
+  style.setProperty("--grid-gap", `${metrics.gap}px`);
+  style.setProperty("--grid-pad", `${metrics.pad}px`);
+  document.documentElement.dataset.cell = String(metrics.cell); // CSS keys the weather type size off the same cell
+  return metrics;
+}
+
+function placeTile(node, cell) {
+  node.style.setProperty("--x", String(cell.x));
+  node.style.setProperty("--y", String(cell.y));
+  node.style.setProperty("--w", String(cell.w));
+  node.style.setProperty("--h", String(cell.h));
+  node.dataset.w = String(cell.w);
+  node.dataset.h = String(cell.h);
+  node.dataset.tileSize = cell.w === 2 ? "wide" : "square";
+}
+
+function focusedWidgetId() {
+  const active = document.activeElement instanceof Element ? document.activeElement : null;
+  const owner = active && favoritesRoot.contains(active) ? active.closest("[data-widget-id], [data-remove-for]") : null;
+  return owner ? { id: owner.dataset.widgetId ?? owner.dataset.removeFor, badge: "removeFor" in owner.dataset } : null;
+}
+
+// A focused − badge disappears when edit mode exits: focus then falls back to the Settings tile, never to <body>.
+function restoreFocus(target) {
+  if (!target || (document.activeElement && document.activeElement !== document.body)) return;
+  const selector = target.badge ? `[data-remove-for="${CSS.escape(target.id)}"]` : `[data-widget-id="${CSS.escape(target.id)}"]`;
+  suppressTooltipOnFocus = true;
+  try {
+    const node = favoritesRoot.querySelector(selector) ?? (target.badge ? favoritesRoot.querySelector(SETTINGS_TILE_SELECTOR) : null);
+    node?.focus();
+  } finally {
+    suppressTooltipOnFocus = false;
+  }
+}
+
+let renderedColumns = 0;
+let renderedCell = 0;
+
+// The only render path: tiles absolutely positioned in the displayed layout (pure function of the stored grids and
+// the current column count; never written by a render), in (y, x) DOM order.
+function renderDesktop() {
+  if (!favoritesRoot) return;
+  hideTooltip();
+  if (widgetsNewer) {
+    favoritesRoot.replaceChildren(createStatus(NEWER_WIDGETS_MESSAGE, { error: true, live: "assertive", full: true }));
+    return;
+  }
+  if (widgetsMigrationFailed) {
+    favoritesRoot.replaceChildren(createStatus(favoritesError, { error: true, live: "assertive", full: true }));
+    return;
+  }
+  if (!widgetsState) {
+    // Unavailable APIs or a failed read: say so instead of an empty, silently broken page.
+    favoritesRoot.replaceChildren(...(favoritesError ? [createStatus(favoritesError, { error: true, live: "assertive", full: true })] : []));
+    return;
   }
 
-  const links = items.filter((item) => item.type === "favorite");
-  const metrics = items.filter((item) => item.type !== "favorite");
+  const focusTarget = focusedWidgetId();
+  const metrics = applyGridMetrics();
+  const columns = currentColumns();
+  renderedColumns = columns;
+  renderedCell = metrics.cell;
+  const items = widgetsState.items;
+  const layout = displayLayout(items, columns);
+  const view = weatherService ? effectiveWeatherResult() : undefined;
 
-  const linksSection = createNode("section", "links-block panel-section");
-  const linksHead = createNode("div", "panel-section__head");
-  linksHead.append(createNode("h3", null, "Links"), createNode("span", "links-block__count", String(links.length)));
-  linksSection.appendChild(linksHead);
+  const entries = [];
+  let hintPlaced = false;
+  for (const item of items) {
+    const cell = layout.get(item.id);
+    if (!cell) continue; // hidden metric: no cell, no tile
+    let tile = null;
+    if (item.type === "favorite") tile = createFavoriteTile(item, cell);
+    else if (item.type === "chrome") tile = createChromeTile(item, cell);
+    else if (weatherService && view?.status === "no-location") {
+      if (!hintPlaced) {
+        tile = createCityHintTile(cell, item); // the other metrics wait for a city; their cells stay reserved
+        hintPlaced = true;
+      }
+    } else if (weatherService) tile = createWeatherMetricTile(item, cell, view);
+    if (!tile) continue;
+    placeTile(tile, cell);
+    const nodes = [tile];
+    if (desktopUi.editMode && item.type !== "chrome") {
+      const badge = createRemoveBadge(item);
+      placeTile(badge, { ...cell, w: 1, h: 1 });
+      nodes.push(badge);
+    }
+    entries.push({ cell, nodes });
+  }
+  entries.sort((a, b) => a.cell.y - b.cell.y || a.cell.x - b.cell.x);
 
-  if (isAdding(favoritesUi)) {
-    linksSection.appendChild(createFavoriteForm(null));
+  const grid = createNode("div", "desktop-grid");
+  grid.style.setProperty("--grid-columns", String(columns));
+  grid.style.setProperty("--rows", String(Math.max(1, ...entries.map(({ cell }) => cell.y + cell.h))));
+  grid.append(...entries.flatMap(({ nodes }) => nodes));
+  favoritesRoot.dataset.edit = String(desktopUi.editMode);
+  favoritesRoot.replaceChildren(grid);
+  restoreFocus(focusTarget);
+  if (pendingDrop) {
+    const tile = grid.querySelector(`:scope > [data-widget-id="${CSS.escape(pendingDrop.domId)}"]`);
+    if (tile) settleTileAt(tile, pendingDrop.id, pendingDrop.cell);
   }
-  const currentEditingId = editingId(favoritesUi);
-  const editingItem = items.find((item) => item.id === currentEditingId);
-  if (editingItem) {
-    linksSection.appendChild(createFavoriteForm(editingItem));
-  }
-  if (favoritesError) {
-    const errorNode = createStatus(favoritesError, { error: true, live: "assertive" });
-    errorNode.dataset.favoritesError = "";
-    linksSection.appendChild(errorNode);
-  }
+  if (dragSession) reattachDrag();
+}
 
-  const listWrap = createNode("div", "panel-card favorites-panel__list");
-  if (links.length === 0) {
-    listWrap.appendChild(createNode("p", "panel-card__empty", "No links yet. Use Add link to create the first one."));
-  }
-  for (const item of links) {
-    listWrap.appendChild(createFavoritesPanelRow(item, items));
-  }
-  linksSection.appendChild(listWrap);
-  body.appendChild(linksSection);
+// A resize only re-renders (when the column count or the cell size changed); it never writes.
+let resizeFrame = 0;
+window.addEventListener("resize", () => {
+  cancelDrag(); // Review focus 1: a viewport change cancels an active drag (tile returns, nothing written)
+  cancelAnimationFrame(resizeFrame);
+  resizeFrame = requestAnimationFrame(() => {
+    if (!widgetsState || widgetsNewer || widgetsMigrationFailed) return;
+    if (currentColumns() !== renderedColumns || gridMetrics(viewportWidth()).cell !== renderedCell) renderFavorites();
+    placeAddMenu(); // after the re-render: the Add tile may have moved
+  });
+});
 
-  body.appendChild(createWeatherBlock(metrics, items));
-  fragment.appendChild(body);
+// ---- Pointer drag (edit mode only). Spec § Drag details, § Placement rules, § DOM order and focus. ----
+const DRAG_THRESHOLD_PX = 6;
+const AUTOSCROLL_EDGE_PX = 48;
+const AUTOSCROLL_STEP_PX = 12;
+const DROP_RETURN_MS = 180;
+// { id (widget to move: the metric id for the hint tile), domId (rendered tile), tile, cell, layout, columns, metrics,
+//   pointerId, startX, startY, lastX, lastY, baseLeft, baseTop, grab, started, frame, rows }
+let dragSession = null;
+let dropReturnTimer = 0;
+// One-shot: the click that trails a started drag (same press) is swallowed, so Settings never toggles after a drag.
+let suppressDragClick = false;
 
-  favoritesPanelRoot.replaceChildren(fragment);
-  body.scrollTop = previousScrollTop;
+const prefersReducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+const dragGridOf = () => favoritesRoot?.querySelector(".desktop-grid") ?? null;
+
+function beginPointerDrag(event, tile) {
+  if (!desktopUi.editMode || event.button !== 0 || !event.isPrimary || dragSession || dropReturnTimer) return;
+  if (favoritesBusy || desktopDialogRoot || cityModalRoot || !widgetsState) return;
+  const grid = dragGridOf();
+  if (!grid || tile.parentElement !== grid) return;
+  hideTooltip();
+  const id = tile.dataset.metricId ?? tile.dataset.widgetId; // the hint tile stands for the first enabled metric
+  const columns = currentColumns();
+  const layout = displayLayout(widgetsState.items, columns);
+  const cell = layout.get(id);
+  if (!cell) return; // hidden metrics have no tile and never reach moveWidget
+  const metrics = gridMetrics(viewportWidth());
+  const origin = grid.getBoundingClientRect();
+  const step = metrics.cell + metrics.gap;
+  const grabCell = cellFromPoint({ x: event.clientX, y: event.clientY }, origin, metrics);
+  const clamp = (v, max) => Math.min(max, Math.max(0, v));
+  dragSession = {
+    id, domId: tile.dataset.widgetId, tile, cell, layout, columns, metrics,
+    pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, lastX: event.clientX, lastY: event.clientY,
+    baseLeft: origin.left + cell.x * step, baseTop: origin.top + cell.y * step,
+    grab: { x: clamp(grabCell.x - cell.x, cell.w - 1), y: clamp(grabCell.y - cell.y, cell.h - 1) },
+    started: false, frame: 0,
+    rows: Math.max(0, ...[...layout.values()].map((g) => g.y + g.h)) + 2 // room for the "one row below" drop and its error row
+  };
+}
+
+const outsideViewport = (event) =>
+  event.clientX < 0 || event.clientY < 0 || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight;
+
+function onDragPointerMove(event) {
+  const s = dragSession;
+  if (!s || event.pointerId !== s.pointerId) return;
+  if (outsideViewport(event)) {
+    cancelDrag(); // the pointer left the window
+    return;
+  }
+  s.lastX = event.clientX;
+  s.lastY = event.clientY;
+  if (!s.started) {
+    if (Math.hypot(event.clientX - s.startX, event.clientY - s.startY) < DRAG_THRESHOLD_PX) return; // still a tap
+    s.started = true;
+    suppressDragClick = true;
+    closeAddMenu();
+    hideTooltip();
+    desktopUi = startDrag(desktopUi, { id: s.id, grab: s.grab, size: { w: s.cell.w, h: s.cell.h }, pointerId: s.pointerId });
+  }
+  applyDragVisuals(s);
+  if (!s.frame && edgeDirection(s.lastY) !== 0) s.frame = requestAnimationFrame(autoscrollFrame);
+}
+
+function edgeDirection(clientY) {
+  if (clientY < AUTOSCROLL_EDGE_PX) return -1;
+  if (clientY > window.innerHeight - AUTOSCROLL_EDGE_PX) return 1;
+  return 0;
+}
+
+// While the pointer stays within 48 px of the top/bottom edge the page scrolls 12 px per frame; the target is
+// recomputed from the last pointer position because the grid moved under it.
+function autoscrollFrame() {
+  const s = dragSession;
+  if (!s) return;
+  s.frame = 0;
+  const direction = edgeDirection(s.lastY);
+  if (direction === 0) return;
+  const before = window.scrollY;
+  window.scrollBy(0, direction * AUTOSCROLL_STEP_PX);
+  if (window.scrollY !== before) updateDragTarget(s);
+  s.frame = requestAnimationFrame(autoscrollFrame);
+}
+
+// The dragged tile is position:fixed under the pointer (it never adds scrollable overflow, so autoscroll ends at
+// the page bottom); the grid keeps two spare rows while dragging and the highlight is clamped inside the grid.
+function applyDragVisuals(s) {
+  const grid = dragGridOf();
+  if (!grid) return;
+  grid.dataset.dragging = "true";
+  grid.style.setProperty("--rows", String(s.rows));
+  s.tile.classList.add("is-dragging");
+  s.tile.style.position = "fixed";
+  s.tile.style.left = `${s.baseLeft + s.lastX - s.startX}px`;
+  s.tile.style.top = `${s.baseTop + s.lastY - s.startY}px`;
+  const badge = grid.querySelector(`[data-remove-for="${CSS.escape(s.id)}"]`);
+  if (badge) badge.hidden = true;
+  updateDragTarget(s);
+}
+
+function updateDragTarget(s) {
+  const grid = dragGridOf();
+  if (!grid) return;
+  const box = grid.getBoundingClientRect();
+  const target = cellFromPoint({ x: s.lastX, y: s.lastY }, box, s.metrics, s.grab);
+  // cellFromPoint clamps negative cells to 0: a pointer in the page margin left/right of the grid or above its top is
+  // outside every cell, so the drop there is invalid (the tile returns, nothing is written).
+  const outside = s.lastX < box.left || s.lastX > box.right || s.lastY < box.top;
+  const valid = !outside && canPlace(s.layout, s.id, { ...target, w: s.cell.w, h: s.cell.h }, s.columns);
+  desktopUi = updateDrag(desktopUi, target, valid);
+  drawDropHighlight(grid, target, s, valid);
+}
+
+function drawDropHighlight(grid, target, s, valid) {
+  let highlight = grid.querySelector(":scope > .drop-highlight");
+  if (!highlight) {
+    highlight = createNode("div", "drop-highlight");
+    highlight.setAttribute("aria-hidden", "true");
+    grid.prepend(highlight);
+  }
+  highlight.dataset.valid = String(valid);
+  highlight.style.setProperty("--x", String(Math.min(target.x, s.columns - s.cell.w)));
+  highlight.style.setProperty("--y", String(Math.min(target.y, s.rows - s.cell.h)));
+  highlight.style.setProperty("--w", String(s.cell.w));
+  highlight.style.setProperty("--h", String(s.cell.h));
+}
+
+function stopDragFrame(s) {
+  if (s?.frame) cancelAnimationFrame(s.frame);
+  if (s) s.frame = 0;
+}
+
+// A re-render while dragging (e.g. weather data arrived) replaced the tiles: pick up the new node and redraw.
+function reattachDrag() {
+  const s = dragSession;
+  const tile = favoritesRoot?.querySelector(`.desktop-grid > [data-widget-id="${CSS.escape(s.domId)}"]`);
+  if (!tile || !desktopUi.editMode) {
+    stopDragFrame(s);
+    dragSession = null;
+    desktopUi = endDrag(desktopUi);
+    return;
+  }
+  s.tile = tile;
+  if (s.started) applyDragVisuals(s);
+}
+
+function focusDragTile(domId) {
+  const tile = favoritesRoot?.querySelector(`.desktop-grid > [data-widget-id="${CSS.escape(domId)}"]`);
+  if (!(tile instanceof HTMLElement)) return;
+  suppressTooltipOnFocus = true;
+  try {
+    tile.focus();
+  } finally {
+    suppressTooltipOnFocus = false;
+  }
+}
+
+async function onDragPointerUp(event) {
+  const s = dragSession;
+  if (!s || event.pointerId !== s.pointerId) return;
+  dragSession = null;
+  stopDragFrame(s);
+  if (!s.started) return; // below the threshold it is a tap: the click handler runs as before
+  const drag = desktopUi.drag;
+  desktopUi = endDrag(desktopUi);
+  const target = drag?.target;
+  if (drag?.valid && target && (target.x !== s.cell.x || target.y !== s.cell.y)) {
+    await commitDrop(s, target);
+    return;
+  }
+  if (drag?.valid) {
+    renderFavorites(); // dropped on its own cell: nothing to write
+    focusDragTile(s.domId);
+    return;
+  }
+  returnDraggedTile(s); // rejected drop: the tile animates back, nothing is written
+}
+
+// The tile stays where it was dropped while the write runs: no busy re-render (it would rebuild the old layout and
+// snap the tile to its origin). Success settles it on the committed cell; any failure animates it back.
+let pendingDrop = null; // { domId, id, cell } — re-applied by renderDesktop while the write is pending
+
+async function commitDrop(s, target) {
+  if (favoritesBusy) {
+    returnDraggedTile(s); // another write is running: nothing is sent, the tile goes back
+    return;
+  }
+  const cell = { x: target.x, y: target.y, w: s.cell.w, h: s.cell.h };
+  pendingDrop = { domId: s.domId, id: s.id, cell };
+  settleTileAt(s.tile, s.id, cell);
+  const ok = await runDesktopMutation(
+    (columns) => widgetsService.moveWidget(s.id, { x: target.x, y: target.y }, { columns }),
+    {
+      renderPending: false,
+      onFailure: (message) => {
+        pendingDrop = null;
+        showDesktopStatus(message); // #desktop-status, role=alert; edit mode stays on
+        returnDraggedTile(s);
+      }
+    }
+  );
+  pendingDrop = null;
+  if (ok) focusDragTile(s.domId);
+  else if (!dropReturnTimer && s.tile.isConnected && s.tile.classList.contains("is-settled")) returnDraggedTile(s);
+}
+
+// Puts the dropped tile (and its badge) on `cell` inside the grid, out of the fixed drag state.
+function settleTileAt(tile, id, cell) {
+  const grid = dragGridOf();
+  grid?.querySelector(":scope > .drop-highlight")?.remove();
+  tile.classList.remove("is-dragging");
+  tile.classList.add("is-settled");
+  tile.style.position = "";
+  tile.style.left = "";
+  tile.style.top = "";
+  placeTile(tile, cell);
+  const badge = grid?.querySelector(`[data-remove-for="${CSS.escape(id)}"]`);
+  if (badge) {
+    placeTile(badge, { ...cell, w: 1, h: 1 });
+    badge.hidden = false;
+  }
+}
+
+function returnDraggedTile(s) {
+  dragGridOf()?.querySelector(":scope > .drop-highlight")?.remove();
+  const finish = () => {
+    dropReturnTimer = 0;
+    renderFavorites();
+    focusDragTile(s.domId);
+  };
+  const grid = dragGridOf();
+  if (prefersReducedMotion() || !grid || !s.tile.isConnected) {
+    finish();
+    return;
+  }
+  // Start from where the tile is now (under the pointer, or settled on the drop cell) and slide to its origin.
+  const from = s.tile.getBoundingClientRect();
+  s.tile.classList.remove("is-settled");
+  s.tile.classList.add("is-returning");
+  s.tile.style.position = "fixed";
+  s.tile.style.left = `${from.left}px`;
+  s.tile.style.top = `${from.top}px`;
+  void s.tile.offsetWidth; // commit the start position so the transition runs
+  const origin = grid.getBoundingClientRect();
+  const step = s.metrics.cell + s.metrics.gap;
+  s.tile.style.left = `${origin.left + s.cell.x * step}px`;
+  s.tile.style.top = `${origin.top + s.cell.y * step}px`;
+  dropReturnTimer = setTimeout(finish, DROP_RETURN_MS);
+}
+
+// Escape, pointercancel, window blur, the pointer leaving the window, a viewport resize, leaving edit mode.
+function cancelDrag() {
+  suppressDragClick = false; // a cancelled press never leaves a click-swallowing flag behind
+  const s = dragSession;
+  if (!s) return;
+  dragSession = null;
+  stopDragFrame(s);
+  if (!s.started) return; // a pending press had changed nothing on screen
+  desktopUi = endDrag(desktopUi);
+  renderFavorites();
 }
 
 function applyPendingFocus() {
@@ -1473,8 +2008,7 @@ function applyPendingFocus() {
   pendingFocus = null;
 
   for (const selector of selectors) {
-    const target =
-      favoritesPanelRoot?.querySelector(selector) ?? favoritesRoot?.querySelector(selector);
+    const target = document.querySelector(selector); // an opener may live in a desktop dialog, outside the grid
     if (target instanceof HTMLElement && !target.matches(":disabled")) {
       target.focus();
       return;
@@ -1482,28 +2016,32 @@ function applyPendingFocus() {
   }
 }
 
-function revealFavoritesError() {
-  const errorNode = favoritesPanelRoot?.querySelector("[data-favorites-error]");
-  if (errorNode instanceof HTMLElement && typeof errorNode.scrollIntoView === "function") {
-    errorNode.scrollIntoView({ block: "nearest" });
+function setEditMode(on) {
+  if (!on) {
+    cancelDrag();
+    closeAddMenu();
   }
+  hideTooltip();
+  const before = desktopUi.editMode;
+  desktopUi = on ? enterEditMode(desktopUi) : exitEditMode(desktopUi);
+  if (desktopUi.editMode === before) return;
+  showDesktopStatus("");
+  announce(desktopUi.editMode ? "Editing layout. Activate Settings to finish." : "Layout editing off");
+  renderFavorites();
 }
 
 function renderFavorites() {
-  renderFavoritesToolbar();
-  renderFavoritesPanel();
+  renderDesktop();
   applyPendingFocus();
-  revealFavoritesError();
 }
-
 function setFavoritesBusy(nextBusy) {
   favoritesBusy = nextBusy;
 }
 
-function startFavoritesAction() {
+function startFavoritesAction({ render = true } = {}) {
   favoritesGeneration += 1;
   setFavoritesBusy(true);
-  renderFavorites();
+  if (render) renderFavorites();
   return favoritesGeneration;
 }
 
@@ -1526,6 +2064,8 @@ if (favoritesRoot) {
       return;
     }
 
+    // R7 bootstrap order: legacy → widgets v1, v1 → v2, then ensure, then the first read. No read or mutation runs
+    // before the v2 migration has succeeded; any failure locks the grid and leaves the stored data untouched.
     try {
       const rawMeta = hasStorageArea(syncStorageArea)
         ? await syncStorageArea.get(WIDGETS_META_KEY)
@@ -1536,9 +2076,20 @@ if (favoritesRoot) {
         return;
       }
 
+      // The legacy chain reads the old local blob too; the v1 → v2 step needs only the sync area.
       if (hasStorageArea(localStorageArea) && hasStorageArea(syncStorageArea)) {
         const migration = await migrateToWidgets(localStorageArea, syncStorageArea);
         if (migration?.newer) {
+          widgetsNewer = true;
+          renderFavorites();
+          return;
+        }
+      }
+      if (hasStorageArea(syncStorageArea)) {
+        // A meta that turned newer meanwhile (another device) locks like the check above; an invalid meta is left
+        // as it is (no message decided yet, backlog L1-02).
+        const v2 = await migrateWidgetsToV2(syncStorageArea);
+        if (v2?.meta === "newer") {
           widgetsNewer = true;
           renderFavorites();
           return;
@@ -1554,7 +2105,7 @@ if (favoritesRoot) {
 
     if (hasStorageArea(syncStorageArea)) {
       try {
-        await ensureWeatherMetrics(syncStorageArea);
+        await ensureWidgetsLayout(syncStorageArea);
       } catch {
         widgetsEnsureFailed = true;
       }
@@ -1578,6 +2129,7 @@ if (favoritesRoot) {
     }
 
     renderFavorites();
+    if (widgetsEnsureFailed) showDesktopStatus(ENSURE_FAILED_MESSAGE, { persist: true });
     void startWeather();
 
     // The flag is read after the first render so it never delays the grid.
@@ -1598,8 +2150,26 @@ if (favoritesRoot) {
     }
   })();
 
+  // Normal mode: a link tile opens its URL, the hint tile opens the city modal. A click on the background does
+  // nothing. The chrome tiles (Settings, Add) render but are wired by the edit-mode and add-link tasks.
   function handleFavoritesClick(event) {
     if (!(event.target instanceof Element)) {
+      return;
+    }
+
+    if (event.target.closest('[data-chrome-role="settings"]')) {
+      if (widgetsState && !widgetsNewer && !widgetsMigrationFailed) setEditMode(!desktopUi.editMode);
+      return;
+    }
+
+    // Add: the add-link dialog, or in edit mode with a hidden metric the Add menu.
+    if (event.target.closest(ADD_TILE_SELECTOR)) {
+      activateAddTile();
+      return;
+    }
+
+    if (desktopUi.editMode) {
+      handleEditModeClick(event.target);
       return;
     }
 
@@ -1612,100 +2182,7 @@ if (favoritesRoot) {
     const action = target.dataset.favoriteAction;
 
     if (action === "set-city") {
-      showCityModal("change", HINT_TILE_SELECTOR);
-    } else if (action === "open-settings") {
-      favoritesUi = openSettings(favoritesUi);
-      favoritesError = "";
-      pendingFocus = [HEADING_SELECTOR];
-      renderFavorites();
-    } else if (action === "start-add") {
-      favoritesUi = startAdd(favoritesUi);
-      favoritesError = "";
-      pendingFocus = [formFieldSelector("add")];
-      renderFavorites();
-    } else if (action === "cancel") {
-      const cancelledId = editingId(favoritesUi);
-      favoritesUi = cancelForm(favoritesUi);
-      favoritesError = "";
-      pendingFocus = cancelledId
-        ? [itemActionSelector("edit", cancelledId), ADD_BUTTON_SELECTOR]
-        : [ADD_BUTTON_SELECTOR];
-      renderFavorites();
-    } else if (action === "edit") {
-      const id = target.dataset.favoriteId;
-      if (id) {
-        favoritesUi = startEdit(favoritesUi, id);
-        favoritesError = "";
-        pendingFocus = [formFieldSelector("edit")];
-        renderFavorites();
-      }
-    } else if (action === "delete") {
-      pendingFocus = [ADD_BUTTON_SELECTOR];
-      const generation = startFavoritesAction();
-
-      void (async () => {
-        if (!widgetsService) {
-          finishFavoritesAction(generation, () => {
-            favoritesError = "Chrome APIs for favorites are unavailable.";
-          });
-          return;
-        }
-
-        try {
-          const nextState = await widgetsService.deleteFavorite(
-            target.dataset.favoriteId
-          );
-          finishFavoritesAction(generation, () => {
-            widgetsState = nextState;
-            favoritesUi = cancelForm(favoritesUi);
-            favoritesError = "";
-          });
-        } catch (error) {
-          finishFavoritesAction(generation, () => {
-            favoritesError = error instanceof Error ? error.message : String(error);
-          });
-        }
-      })();
-    } else if (action === "move-earlier" || action === "move-later") {
-      const movedId = target.dataset.favoriteId;
-      const otherMove = action === "move-earlier" ? "move-later" : "move-earlier";
-      pendingFocus = [
-        itemActionSelector(action, movedId),
-        itemActionSelector(otherMove, movedId),
-        itemActionSelector("edit", movedId),
-        ADD_BUTTON_SELECTOR
-      ];
-      const generation = startFavoritesAction();
-
-      void (async () => {
-        if (!widgetsService) {
-          finishFavoritesAction(generation, () => {
-            favoritesError = "Chrome APIs for favorites are unavailable.";
-          });
-          return;
-        }
-
-        try {
-          const nextState = await widgetsService.moveWidget(
-            target.dataset.favoriteId,
-            action === "move-earlier" ? -1 : 1
-          );
-          finishFavoritesAction(generation, () => {
-            widgetsState = nextState;
-            favoritesError = "";
-            metricErrorText = "";
-          });
-        } catch (error) {
-          finishFavoritesAction(generation, () => {
-            const message = error instanceof Error ? error.message : String(error);
-            if (String(movedId).startsWith("weather:")) {
-              metricErrorText = message;
-            } else {
-              favoritesError = message;
-            }
-          });
-        }
-      })();
+      if (!weatherBusy) showCityModal("change", HINT_TILE_SELECTOR);
     } else if (action === "open") {
       const favorite = widgetsState?.items.find(
         (item) => item.id === target.dataset.favoriteId
@@ -1717,107 +2194,114 @@ if (favoritesRoot) {
     }
   }
 
-  favoritesPanelRoot?.addEventListener("change", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLInputElement) || !widgetsService) {
-      return;
-    }
-
-    if (target.dataset.metricSetting === "tileSize") {
-      writeMetric(target.dataset.metricId, { tileSize: target.value });
-      return;
-    }
-
-    const setting = target.dataset.gridSetting;
-    if (!setting) {
-      return;
-    }
-
-    const value = target.value;
-
-    void (async () => {
-      try {
-        widgetsState =
-          setting === "columns"
-            ? await widgetsService.setColumns(value)
-            : await widgetsService.setPosition(value);
-
-        const errorNode = favoritesPanelRoot.querySelector("[data-grid-error]");
-        if (errorNode) {
-          errorNode.textContent = "";
-          errorNode.hidden = true;
-        }
-        renderFavoritesToolbar();
-        favoritesPanelRoot.dataset.barPosition = gridLayout(widgetsState).position;
-        publishPanelDock();
-      } catch (error) {
-        const errorNode = favoritesPanelRoot.querySelector("[data-grid-error]");
-        if (errorNode) {
-          errorNode.textContent = error instanceof Error ? error.message : String(error);
-          errorNode.hidden = false;
-        }
-      }
-
-      syncGridSettingInputs();
-    })();
-  });
-
-  // The eye button: the new value comes from the DOM and is shown at once (as the checkbox did), so two quick presses
-  // never write the same value; syncMetricRows() restores the stored state once no write is pending.
-  favoritesPanelRoot?.addEventListener("click", (event) => {
-    const toggle = event.target instanceof Element ? event.target.closest(".metric-toggle") : null;
-    if (!(toggle instanceof HTMLElement) || !widgetsService) return;
-    const next = toggle.getAttribute("aria-pressed") !== "true";
-    const row = toggle.closest("[data-metric-row]");
-    toggle.setAttribute("aria-pressed", String(next));
-    toggle.replaceChildren(createIconNode(next ? "eye" : "eyeOff", { size: 20 }));
-    row.dataset.hidden = String(!next);
-    row.querySelector("[data-hidden-badge]").hidden = next;
-    writeMetric(toggle.dataset.metricId, { enabled: next });
-  });
-
   favoritesRoot.addEventListener("click", handleFavoritesClick);
-  favoritesPanelRoot?.addEventListener("click", handleFavoritesClick);
 
+  // Background = the grid element or the root itself (gaps between tiles are background). A click needs pointerdown
+  // AND pointerup on the background, so releasing a drag over it never exits.
+  // Only a primary-button press of the primary pointer counts (a right click on the background never exits).
+  const isBackground = (target) => target === favoritesRoot || (target instanceof Element && target.classList.contains("desktop-grid"));
+  const isPrimaryPress = (event) => event.button === 0 && event.isPrimary;
+  let backgroundPressed = false;
+  favoritesRoot.addEventListener("pointerdown", (event) => {
+    backgroundPressed = desktopUi.editMode && event !== addMenuDismissPress && isPrimaryPress(event) && isBackground(event.target);
+  });
+  favoritesRoot.addEventListener("pointerup", (event) => {
+    if (backgroundPressed && isPrimaryPress(event) && isBackground(event.target) && !desktopUi.drag) setEditMode(false);
+    backgroundPressed = false;
+  });
+  favoritesRoot.addEventListener("pointercancel", () => {
+    backgroundPressed = false;
+  });
+
+  // Drag: a press on a tile (never on a − badge, which is a sibling of its tile) may become a drag.
+  favoritesRoot.addEventListener("pointerdown", (event) => {
+    const tile = event.target instanceof Element ? event.target.closest("[data-widget-id]") : null;
+    if (tile instanceof HTMLElement && !event.target.closest(".tile-remove")) beginPointerDrag(event, tile);
+  });
+  // Native image drag would steal the pointer (pointercancel) in edit mode.
+  favoritesRoot.addEventListener("dragstart", (event) => {
+    if (desktopUi.editMode) event.preventDefault();
+  });
+  window.addEventListener("pointermove", onDragPointerMove);
+  window.addEventListener("pointerup", (event) => {
+    void onDragPointerUp(event);
+    // The trailing click of this press (if any) is dispatched before this timeout runs; clear the flag after it.
+    if (suppressDragClick) setTimeout(() => { suppressDragClick = false; }, 0);
+  });
+  window.addEventListener("pointercancel", (event) => {
+    if (dragSession && event.pointerId === dragSession.pointerId) cancelDrag();
+    if (suppressDragClick) setTimeout(() => { suppressDragClick = false; }, 0);
+  });
+  // The pointer left the window (relatedTarget null and the point is outside the viewport).
+  document.addEventListener("pointerout", (event) => {
+    if (dragSession && event.relatedTarget === null && outsideViewport(event)) cancelDrag();
+  });
+  window.addEventListener("blur", () => {
+    backgroundPressed = false;
+    cancelDrag();
+    suppressDragClick = false;
+  });
+  // Every new press starts clean, so a flag stranded by a lost release can never swallow the next click.
+  window.addEventListener(
+    "pointerdown",
+    () => {
+      suppressDragClick = false;
+    },
+    true
+  );
+  window.addEventListener(
+    "click",
+    (event) => {
+      // Only a pointer click (detail > 0) is the trailing click of a drag; keyboard activation is never swallowed.
+      if (!suppressDragClick || event.detail === 0) return;
+      suppressDragClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    true
+  );
+
+  // One Escape handler, topmost layer first: tooltip, city suggestions, city modal.
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") {
       return;
     }
 
-    if (hideTooltipIfVisible()) {
+    // One layer per press, topmost first (desktopUiState.escapeLayer); the DOM-owned flags come from here.
+    const layer = escapeLayer(desktopUi, {
+      tooltip: !tooltipLayer.hidden,
+      citySuggestions: isSuggestionsOpen(weatherUi),
+      cityModal: Boolean(cityModalRoot)
+    });
+    if (layer === "drag") {
+      event.preventDefault();
+      cancelDrag();
       return;
     }
-
-    if (isSuggestionsOpen(weatherUi)) {
+    if (layer === "tooltip") {
+      hideTooltipIfVisible();
+    } else if (layer === "citySuggestions") {
       activeCityForm?.cancelPending();
       weatherUi = hideSuggestions(weatherUi);
       activeCityForm?.renderSuggestions();
       activeCityForm?.focusField();
-      return;
-    }
-
-    // The modal is the layer above the panel; while a city request runs Escape does nothing at all (I1).
-    if (cityModalRoot) {
+    } else if (layer === "cityModal") {
+      // While a city request runs Escape does nothing at all (I1).
       if (!weatherBusy) hideCityModal({ dismiss: true });
-      return;
-    }
-
-    if (favoritesBusy) {
-      return;
-    }
-
-    if (isSettingsOpen(favoritesUi)) {
-      favoritesUi = closeSettings(favoritesUi);
-      favoritesError = "";
-      pendingFocus = [GEAR_SELECTOR];
-      renderFavorites();
+    } else if (layer === "dialog") {
+      if (!favoritesBusy) closeDesktopDialog();
+    } else if (layer === "menu") {
+      closeAddMenu({ focusAdd: true });
+    } else if (layer === "exitEdit") {
+      setEditMode(false);
     }
   });
 
   // Tab inside the open modal wraps; from body or outside it enters the modal (I3).
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Tab" || !cityModalRoot) return;
-    const controls = [...cityModalRoot.querySelectorAll("input, button")].filter((el) => !el.disabled && !el.hidden);
+    const trapRoot = cityModalRoot ?? desktopDialogRoot;
+    if (event.key !== "Tab" || !trapRoot) return;
+    const controls = [...trapRoot.querySelectorAll("input, button")].filter((el) => !el.disabled && !el.hidden);
     if (controls.length === 0) {
       event.preventDefault(); // busy: nothing to enter, focus stays on body and never leaves the page
       return;
@@ -1825,7 +2309,7 @@ if (favoritesRoot) {
     const first = controls[0];
     const last = controls[controls.length - 1];
     const active = document.activeElement;
-    if (!(active instanceof Element) || !cityModalRoot.contains(active)) {
+    if (!(active instanceof Element) || !trapRoot.contains(active)) {
       event.preventDefault();
       (event.shiftKey ? last : first).focus();
     } else if (event.shiftKey && active === first) {
@@ -1836,189 +2320,10 @@ if (favoritesRoot) {
       first.focus();
     }
   });
-
-  document.addEventListener("pointerdown", (event) => {
-    if (cityModalRoot) return; // an outside click never closes the panel while the modal is open
-    if (!isSettingsOpen(favoritesUi) || favoritesBusy) {
-      return;
-    }
-
-    if (!(event.target instanceof Node)) {
-      return;
-    }
-
-    if (
-      favoritesPanelRoot?.contains(event.target) ||
-      favoritesRoot?.contains(event.target)
-    ) {
-      return;
-    }
-
-    favoritesUi = closeSettings(favoritesUi);
-    favoritesError = "";
-    pendingFocus = [GEAR_SELECTOR];
-    renderFavorites();
-  });
-
-  favoritesPanelRoot?.addEventListener("submit", (event) => {
-    const form = event.target;
-
-    if (
-      !(form instanceof HTMLFormElement) ||
-      !["add", "edit"].includes(form.dataset.favoriteForm ?? "")
-    ) {
-      return;
-    }
-
-    event.preventDefault();
-
-    if (favoritesBusy) {
-      return;
-    }
-
-    const generation = startFavoritesAction();
-
-    void (async () => {
-      if (!widgetsService) {
-        finishFavoritesAction(generation, () => {
-          favoritesError = "Chrome APIs for favorites are unavailable.";
-        });
-        return;
-      }
-
-      const data = new FormData(form);
-
-      try {
-        if (form.dataset.favoriteForm === "edit") {
-          const payload = readFavoriteFormPayload(data);
-          widgetsState = await widgetsService.updateFavorite(
-            form.dataset.favoriteId,
-            payload
-          );
-
-          finishFavoritesAction(generation, () => {
-            pendingFocus = [itemActionSelector("edit", form.dataset.favoriteId), ADD_BUTTON_SELECTOR];
-            favoritesUi = cancelForm(favoritesUi);
-            favoritesError = "";
-          });
-
-          if (payload.backgroundColorSource === "auto") {
-            void refreshAutoAccent(form.dataset.favoriteId);
-          }
-          return;
-        }
-
-        const payload = readFavoriteFormPayload(data);
-        const previousIds = new Set(widgetsState.items.map((item) => item.id));
-        widgetsState = await widgetsService.addFavorite(payload);
-        const added = widgetsState.items.find((item) => !previousIds.has(item.id));
-
-        finishFavoritesAction(generation, () => {
-          pendingFocus = [ADD_BUTTON_SELECTOR];
-          favoritesUi = cancelForm(favoritesUi);
-          favoritesError = "";
-        });
-
-        if (added) {
-          void refreshAutoAccent(added.id);
-        }
-      } catch (error) {
-        finishFavoritesAction(generation, () => {
-          pendingFocus = [formFieldSelector(form.dataset.favoriteForm)];
-          favoritesError = error instanceof Error ? error.message : String(error);
-        });
-      }
-    })();
-  });
 }
 
 const CITY_INPUT_SELECTOR = 'input[name="city"]';
-const OPEN_CITY_MODAL_SELECTOR = '[data-weather-action="open-city-modal"]';
 const HINT_TILE_SELECTOR = '[data-widget-id="weather:hint"]';
-
-function weatherStatusModel() {
-  if (!weatherService) return { text: "Chrome APIs for weather are unavailable.", role: "alert" };
-  if (widgetsEnsureFailed) {
-    return {
-      text: "Couldn't add the weather tiles - Chrome Sync may be full or unavailable. Free up sync space, then reload this tab to try again.",
-      role: "alert"
-    };
-  }
-  const view = weatherResult ?? (weatherLocationError ? { status: "error", error: weatherLocationError } : null);
-  if (view?.status === "error") return { text: `Weather unavailable: ${view.error}`, role: "alert" };
-  if (view?.status === "stale") return { text: "Couldn't refresh weather - showing saved data", role: "status" };
-  return null;
-}
-
-function createWeatherBlock(metrics, items) {
-  const block = createNode("section", "weather-block panel-section");
-  block.appendChild(createNode("h3", null, "Weather"));
-  const card = createNode("div", "panel-card");
-
-  const cityRow = createNode("div", "favorites-panel__row favorites-panel__row--city");
-  const cityTitle = createNode("div", "favorites-panel__item");
-  const cityLabel = createNode("span", "weather-block__label", "City");
-  cityLabel.dataset.weatherCityLabel = "";
-  const city = createNode("strong", "weather-block__city");
-  city.dataset.weatherCity = "";
-  cityTitle.append(cityLabel, city);
-  cityRow.append(cityTitle, createNode("div", "weather-block__action"));
-  card.appendChild(cityRow);
-
-  const status = createNode("p", "status status--full panel-card__status");
-  status.dataset.weatherStatus = "";
-  card.appendChild(status);
-  const metricError = createNode("p", "status status--error status--full panel-card__status");
-  metricError.dataset.metricError = "";
-  metricError.setAttribute("role", "alert");
-  metricError.textContent = metricErrorText;
-  metricError.hidden = metricErrorText === "";
-  card.appendChild(metricError);
-
-  for (const item of metrics) {
-    card.appendChild(createWeatherMetricRow(item, items));
-  }
-  block.appendChild(card);
-  mountWeatherBlockContent(block);
-  return block;
-}
-
-// Updates the city line, the status slot and the city button in place (the button node is reused so focus survives).
-function syncWeatherBlock() {
-  const block = favoritesPanelRoot?.querySelector(".weather-block");
-  if (block) mountWeatherBlockContent(block);
-}
-
-function mountWeatherBlockContent(block) {
-  const location = weatherLocationError ? null : currentLocation(); // I2: a read error counts as no location
-  const cityLine = block.querySelector("[data-weather-city]");
-  const cityLabel = block.querySelector("[data-weather-city-label]");
-  cityLine.textContent = location ? location.name : weatherLocationError ? "" : "No city set";
-  cityLabel.hidden = !location; // "No city set" stands alone
-  cityLine.hidden = cityLine.textContent === ""; // the read error is shown by the status line instead
-  const status = block.querySelector("[data-weather-status]");
-  const model = weatherStatusModel();
-  status.textContent = model?.text ?? "";
-  status.hidden = !model;
-  if (model) {
-    status.setAttribute("role", model.role);
-    status.classList.toggle("status--error", model.role === "alert");
-  }
-
-  const actionHost = block.querySelector(".weather-block__action");
-  if (!weatherService) {
-    actionHost.replaceChildren();
-    return;
-  }
-  let button = actionHost.querySelector(OPEN_CITY_MODAL_SELECTOR);
-  if (!button) {
-    button = createNode("button", "button");
-    button.type = "button";
-    button.dataset.weatherAction = "open-city-modal";
-    actionHost.replaceChildren(button);
-  }
-  button.replaceChildren(createIconNode("mapPin"), document.createTextNode(location ? "Change city" : "Set a city"));
-}
 
 async function startWeather() {
   if (!weatherService) {
@@ -2044,8 +2349,7 @@ async function startWeather() {
   }
 
   weatherResult = result;
-  renderFavoritesToolbar();
-  syncWeatherBlock();
+  renderFavorites();
 }
 
 // D15: a city request that has not finished after CITY_REQUEST_TIMEOUT_MS is treated as failed; a later result is ignored.
@@ -2077,7 +2381,7 @@ function changeCity(run) {
   activeCityForm?.renderSuggestions();
   cityModalError = "";
   syncCityModal();
-  renderFavoritesToolbar();
+  renderFavorites();
   void (async () => {
     let ok = false;
     try {
@@ -2093,8 +2397,7 @@ function changeCity(run) {
     } finally {
       weatherBusy = false;
       weatherChanging = false;
-      renderFavoritesToolbar();
-      syncWeatherBlock();
+      renderFavorites();
       if (ok) {
         hideCityModal(); // selection never writes the flag
       } else {
@@ -2104,11 +2407,3 @@ function changeCity(run) {
     }
   })();
 }
-
-favoritesPanelRoot?.addEventListener("click", (event) => {
-  const target = event.target instanceof Element ? event.target.closest("[data-weather-action]") : null;
-  if (!(target instanceof HTMLElement) || weatherBusy) return;
-  if (target.dataset.weatherAction === "open-city-modal") {
-    showCityModal("change", OPEN_CITY_MODAL_SELECTOR);
-  }
-});

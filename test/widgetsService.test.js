@@ -1,15 +1,27 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createWidgetsStore, createInitialWidgetsState, ensureWeatherMetrics, isWidgetsState } from "../src/widgetsStore.js";
-import { MAX_FAVORITE_WIDGETS, NEWER_WIDGETS_MESSAGE, WEATHER_METRIC_IDS } from "../src/widgetsShared.js";
+import { createWidgetsStore, createInitialWidgetsState, isWidgetsState } from "../src/widgetsStore.js";
+import { MAX_FAVORITE_WIDGETS, NEWER_WIDGETS_MESSAGE } from "../src/widgetsShared.js";
 import { createMemoryStorageArea } from "./memoryStorageArea.js";
 import {
+  PlacementError,
   createWidgetsService,
   normalizeFavoriteUrl,
   normalizeNullableImageUrl
 } from "../src/widgetsService.js";
 
 const NOW = "2026-07-07T10:00:00.000Z";
+const COLS = { columns: 12 };
+const g = (x, y, w = 1, h = 1) => ({ x, y, w, h });
+const metric = (id, extra = {}) => ({ id, type: "weather-metric", enabled: true, ...extra });
+
+// v2 seed with a validity guard, so a malformed fixture fails loudly instead of testing nothing.
+async function seed(store, items) {
+  const state = { version: 2, items, createdAt: NOW, updatedAt: NOW };
+  assert.equal(isWidgetsState(state), true, "seed state must be a valid v2 state");
+  await store.setState(state);
+}
+const gridsOf = (state) => Object.fromEntries(state.items.map((item) => [item.id, item.grid]));
 
 async function createHarness() {
   let id = 0;
@@ -137,7 +149,7 @@ describe("widgetsService", () => {
   it("adds a favorite with normalized defaults and persists it", async () => {
     const { service, store } = await createHarness();
 
-    const state = await service.addFavorite({ url: "example.com/path" });
+    const state = await service.addFavorite({ url: "example.com/path" }, COLS);
 
     assert.deepEqual(state.items, [
       {
@@ -150,7 +162,7 @@ describe("widgetsService", () => {
         customIconUrl: null,
         backgroundColor: "#24292f",
         backgroundColorSource: "auto",
-        tileSize: "square",
+        grid: g(0, 0),
         createdAt: NOW,
         updatedAt: NOW
       }
@@ -164,7 +176,7 @@ describe("widgetsService", () => {
     const state = await service.addFavorite({
       url: "example.com",
       backgroundColor: "#112233"
-    });
+    }, COLS);
 
     assert.equal(state.items[0].backgroundColor, "#112233");
     assert.equal(state.items[0].backgroundColorSource, "manual");
@@ -172,7 +184,7 @@ describe("widgetsService", () => {
 
   it("updates favorite fields", async () => {
     const { service, store } = await createHarness();
-    await service.addFavorite({ url: "example.com" });
+    await service.addFavorite({ url: "example.com" }, COLS);
 
     const state = await service.updateFavorite("fav-1", {
       url: "news.ycombinator.com/item",
@@ -181,7 +193,7 @@ describe("widgetsService", () => {
       customIconUrl: "cdn.example.com/icon.png",
       backgroundColor: "#ABCDEF",
       backgroundColorSource: "manual"
-    });
+    }, COLS);
 
     assert.deepEqual(state.items[0], {
       id: "fav-1",
@@ -193,7 +205,7 @@ describe("widgetsService", () => {
       customIconUrl: "https://cdn.example.com/icon.png",
       backgroundColor: "#abcdef",
       backgroundColorSource: "manual",
-      tileSize: "square",
+      grid: g(0, 0),
       createdAt: NOW,
       updatedAt: NOW
     });
@@ -202,11 +214,11 @@ describe("widgetsService", () => {
 
   it("derives manual background color source when updating only color", async () => {
     const { service } = await createHarness();
-    await service.addFavorite({ url: "example.com" });
+    await service.addFavorite({ url: "example.com" }, COLS);
 
     const state = await service.updateFavorite("fav-1", {
       backgroundColor: "#445566"
-    });
+    }, COLS);
 
     assert.equal(state.items[0].backgroundColor, "#445566");
     assert.equal(state.items[0].backgroundColorSource, "manual");
@@ -218,131 +230,105 @@ describe("widgetsService", () => {
       url: "example.com",
       backgroundColor: "#ffcc00",
       backgroundColorSource: "manual"
-    });
+    }, COLS);
 
-    const state = await service.updateFavorite("fav-1", { label: "Example" });
+    const state = await service.updateFavorite("fav-1", { label: "Example" }, COLS);
 
     assert.equal(state.items[0].backgroundColor, "#ffcc00");
     assert.equal(state.items[0].backgroundColorSource, "manual");
   });
 
-  it("defaults tileSize to square when adding, and allows choosing wide", async () => {
+  it("defaults the size to 1x1 when adding, and allows choosing a 2x1 span", async () => {
     const { service } = await createHarness();
 
-    const defaulted = await service.addFavorite({ url: "example.com" });
-    assert.equal(defaulted.items[0].tileSize, "square");
+    const defaulted = await service.addFavorite({ url: "example.com" }, COLS);
+    assert.deepEqual(defaulted.items[0].grid, g(0, 0));
 
     const wide = await service.addFavorite({
       url: "wide.example.com",
-      tileSize: "wide"
-    });
-    assert.equal(wide.items[1].tileSize, "wide");
+      w: 2
+    }, COLS);
+    assert.deepEqual(wide.items[1].grid, g(1, 0, 2, 1));
   });
 
-  it("updates tileSize", async () => {
+  it("updates the size", async () => {
     const { service } = await createHarness();
-    await service.addFavorite({ url: "example.com" });
+    await service.addFavorite({ url: "example.com" }, COLS);
 
-    const state = await service.updateFavorite("fav-1", { tileSize: "wide" });
-    assert.equal(state.items[0].tileSize, "wide");
+    const state = await service.updateFavorite("fav-1", { w: 2 }, COLS);
+    assert.deepEqual(state.items[0].grid, g(0, 0, 2, 1));
+    assert.equal("tileSize" in state.items[0], false);
   });
 
-  it("rejects an unsupported tileSize", async () => {
+  it("drops a stored legacy tileSize from a favorite on any edit, size or not", async () => {
+    const { service, store } = await createHarness();
+    await seed(store, [favorite({ tileSize: "wide", grid: g(0, 0, 2, 1) }), favorite({ id: "fav-2", tileSize: "square", grid: g(2, 0) })]);
+    assert.equal((await store.getState()).items[0].tileSize, "wide", "the seed keeps the legacy field");
+
+    const labelOnly = await service.updateFavorite("fav-1", { label: "Renamed" }, COLS);
+    assert.equal("tileSize" in labelOnly.items[0], false);
+    assert.deepEqual(labelOnly.items[0].grid, g(0, 0, 2, 1));
+    const resized = await service.updateFavorite("fav-2", { w: 2, h: 2 }, COLS);
+    assert.equal("tileSize" in resized.items[1], false);
+    assert.equal(resized.items[1].label, "Example");
+    const stored = await store.getState();
+    assert.equal(stored.items.some((item) => "tileSize" in item), false);
+  });
+
+  it("rejects an unsupported span", async () => {
     const { service } = await createHarness();
 
     await assert.rejects(
-      () => service.addFavorite({ url: "example.com", tileSize: "huge" }),
-      /Choose a supported tile size/
+      () => service.addFavorite({ url: "example.com", w: 3 }, COLS),
+      /Choose a supported tile width/
+    );
+    await assert.rejects(
+      () => service.addFavorite({ url: "example.com", h: "tall" }, COLS),
+      /Choose a supported tile height/
     );
   });
 
-  it("rejects an unsupported tileSize on update", async () => {
+  it("rejects an unsupported span on update", async () => {
     const { service } = await createHarness();
-    await service.addFavorite({ url: "example.com" });
+    await service.addFavorite({ url: "example.com" }, COLS);
 
     await assert.rejects(
-      () => service.updateFavorite("fav-1", { tileSize: "huge" }),
-      /Choose a supported tile size/
+      () => service.updateFavorite("fav-1", { w: 3 }, COLS),
+      /Choose a supported tile width/
     );
   });
 
   it("deletes favorites", async () => {
     const { service, store } = await createHarness();
-    await service.addFavorite({ url: "one.example.com" });
-    await service.addFavorite({ url: "two.example.com" });
+    await service.addFavorite({ url: "one.example.com" }, COLS);
+    await service.addFavorite({ url: "two.example.com" }, COLS);
 
-    const state = await service.deleteFavorite("fav-1");
+    const state = await service.deleteFavorite("fav-1", COLS);
 
     assert.deepEqual(
       state.items.map((item) => item.id),
       ["fav-2"]
     );
+    assert.deepEqual(gridsOf(state), { "fav-2": g(1, 0) });
     assert.deepEqual(await store.getState(), state);
-  });
-
-  it("moves favorites by direction and clamps at boundaries", async () => {
-    const { service, store } = await createHarness();
-    await service.addFavorite({ url: "one.example.com" });
-    await service.addFavorite({ url: "two.example.com" });
-    await service.addFavorite({ url: "three.example.com" });
-
-    let state = await service.moveWidget("fav-2", -1);
-    assert.deepEqual(
-      state.items.map((item) => item.id),
-      ["fav-2", "fav-1", "fav-3"]
-    );
-
-    state = await service.moveWidget("fav-2", -1);
-    assert.deepEqual(
-      state.items.map((item) => item.id),
-      ["fav-2", "fav-1", "fav-3"]
-    );
-
-    state = await service.moveWidget("fav-2", 1);
-    assert.deepEqual(
-      state.items.map((item) => item.id),
-      ["fav-1", "fav-2", "fav-3"]
-    );
-
-    state = await service.moveWidget("fav-3", 1);
-    assert.deepEqual(
-      state.items.map((item) => item.id),
-      ["fav-1", "fav-2", "fav-3"]
-    );
-    assert.deepEqual(await store.getState(), state);
-  });
-
-  it("rejects invalid move directions", async () => {
-    const { service } = await createHarness();
-    await service.addFavorite({ url: "one.example.com" });
-    await service.addFavorite({ url: "two.example.com" });
-
-    await assert.rejects(
-      () => service.moveWidget("fav-1"),
-      /Move direction must be a finite number/
-    );
-    await assert.rejects(
-      () => service.moveWidget("fav-1", "left"),
-      /Move direction must be a finite number/
-    );
   });
 
   it("rejects updates, deletes, and moves for unknown favorites", async () => {
     const { service } = await createHarness();
 
     await assert.rejects(
-      () => service.updateFavorite("missing", { label: "Missing" }),
+      () => service.updateFavorite("missing", { label: "Missing" }, COLS),
       /Favorite not found/
     );
-    await assert.rejects(() => service.deleteFavorite("missing"), /Favorite not found/);
-    await assert.rejects(() => service.moveWidget("missing", 1), /Widget not found/);
+    await assert.rejects(() => service.deleteFavorite("missing", COLS), /Favorite not found/);
+    await assert.rejects(() => service.moveWidget("missing", { x: 0, y: 0 }, COLS), /Widget not found/);
   });
 
   it("rejects invalid favorite background colors", async () => {
     const { service } = await createHarness();
 
     await assert.rejects(
-      () => service.addFavorite({ url: "example.com", backgroundColor: "red" }),
+      () => service.addFavorite({ url: "example.com", backgroundColor: "red" }, COLS),
       /Use a hex color/
     );
   });
@@ -353,18 +339,14 @@ describe("widgetsService", () => {
       favorite({
         id: `fav-seed-${index}`,
         url: `https://example-${index}.com/`,
-        domain: `example-${index}.com`
+        domain: `example-${index}.com`,
+        grid: g(index % 12, Math.floor(index / 12))
       })
     );
-    await store.setState({
-      version: 1, columns: 6, position: "top",
-      items,
-      createdAt: NOW,
-      updatedAt: NOW
-    });
+    await seed(store, items);
 
     await assert.rejects(
-      () => service.addFavorite({ url: "https://new.example.com" }),
+      () => service.addFavorite({ url: "https://new.example.com" }, COLS),
       new RegExp(`up to ${MAX_FAVORITE_WIDGETS} favorites`)
     );
     assert.equal((await store.getState()).items.length, MAX_FAVORITE_WIDGETS);
@@ -372,16 +354,11 @@ describe("widgetsService", () => {
 
   it("serializes simultaneous mutations from services sharing one store", async () => {
     const store = createWidgetsStore(createMemoryStorageArea(), { now: () => NOW });
-    await store.setState({
-      version: 1, columns: 6, position: "top",
-      items: [
-        favorite({ id: "fav-a", url: "https://a.example.com/", domain: "a.example.com" }),
-        favorite({ id: "fav-b", url: "https://b.example.com/", domain: "b.example.com" }),
-        favorite({ id: "fav-c", url: "https://c.example.com/", domain: "c.example.com" })
-      ],
-      createdAt: NOW,
-      updatedAt: NOW
-    });
+    await seed(store, [
+      favorite({ id: "fav-a", url: "https://a.example.com/", domain: "a.example.com", grid: g(0, 0) }),
+      favorite({ id: "fav-b", url: "https://b.example.com/", domain: "b.example.com", grid: g(1, 0) }),
+      favorite({ id: "fav-c", url: "https://c.example.com/", domain: "c.example.com", grid: g(2, 0) })
+    ]);
 
     const serviceA = createWidgetsService({
       store,
@@ -394,105 +371,39 @@ describe("widgetsService", () => {
       defaultBackgroundColor: () => "#24292f"
     });
 
+    // The move targets the cell the delete frees: it only succeeds if the two run one after the other.
     await Promise.all([
-      serviceA.deleteFavorite("fav-a"),
-      serviceB.moveWidget("fav-c", -1)
+      serviceA.deleteFavorite("fav-a", COLS),
+      serviceB.moveWidget("fav-c", { x: 0, y: 0 }, COLS)
     ]);
 
     const stored = await store.getState();
-    assert.deepEqual(
-      stored.items.map((item) => item.id),
-      ["fav-c", "fav-b"]
-    );
+    assert.deepEqual(gridsOf(stored), { "fav-b": g(1, 0), "fav-c": g(0, 0) });
   });
 
   it("keeps the favorites lock available after a rejected mutation", async () => {
     const { service } = await createHarness();
-    await service.addFavorite({ url: "example.com" });
+    await service.addFavorite({ url: "example.com" }, COLS);
 
     await assert.rejects(
-      () => service.moveWidget("missing", 1),
+      () => service.moveWidget("missing", { x: 0, y: 0 }, COLS),
       /Widget not found/
     );
 
-    const state = await service.moveWidget("fav-1", 1);
-    assert.deepEqual(
-      state.items.map((item) => item.id),
-      ["fav-1"]
-    );
+    const state = await service.moveWidget("fav-1", { x: 3, y: 0 }, COLS);
+    assert.deepEqual(gridsOf(state), { "fav-1": g(3, 0) });
   });
 
   it("tags added favorites with type: 'favorite'", async () => {
     const { service } = await createHarness();
-    const state = await service.addFavorite({ url: "example.com" });
+    const state = await service.addFavorite({ url: "example.com" }, COLS);
     assert.equal(state.items[0].type, "favorite");
   });
 
-  it("moveWidget reorders by a signed direction and is a no-op at the bounds", async () => {
-    const { service } = await createHarness();
-    await service.addFavorite({ url: "https://a.com" });
-    const afterB = await service.addFavorite({ url: "https://b.com" });
-    const [idA, idB] = afterB.items.map((item) => item.id);
-
-    const moved = await service.moveWidget(idB, -1);
-    assert.deepEqual(moved.items.map((item) => item.id), [idB, idA]);
-    const clamped = await service.moveWidget(idB, -1);
-    assert.deepEqual(clamped.items.map((item) => item.id), [idB, idA]);
-  });
-
-  it("setColumns accepts an in-range integer, coercing a numeric string from a form input", async () => {
-    const { service } = await createHarness();
-    assert.equal((await service.setColumns(4)).columns, 4);
-    assert.equal((await service.setColumns("8")).columns, 8);
-    assert.equal((await service.setColumns(" 5 ")).columns, 5);
-  });
-
-  it("setColumns rejects zero, decimals, out-of-range and non-numeric values (Review Focus #2)", async () => {
+  it("rejects a move onto an occupied cell with a PlacementError", async () => {
     const { service, store } = await createHarness();
-    const before = await store.getState();
-
-    for (const bad of [0, -1, 13, 3.5, "", "abc", "1e1x", null, undefined, NaN, [], {}]) {
-      await assert.rejects(
-        () => service.setColumns(bad),
-        /Choose a number of columns between 1 and 12/,
-        String(bad)
-      );
-    }
-    assert.equal((await store.getState()).columns, before.columns, "state untouched");
-  });
-
-  it("setPosition accepts the three positions and rejects anything else", async () => {
-    const { service } = await createHarness();
-    for (const position of ["top", "bottom", "center"]) {
-      assert.equal((await service.setPosition(position)).position, position);
-    }
-    await assert.rejects(() => service.setPosition("middle"), /Choose a supported grid position/);
-    await assert.rejects(() => service.setPosition(undefined), /Choose a supported grid position/);
-  });
-
-  it("setColumns and setPosition keep the items and bump updatedAt", async () => {
-    let tick = 0;
-    const store = createWidgetsStore(createMemoryStorageArea(), { now: () => NOW });
-    const service = createWidgetsService({
-      store,
-      now: () => `2026-07-07T10:00:0${++tick}.000Z`,
-      createId: () => "fav-1",
-      defaultBackgroundColor: () => "#24292f"
-    });
-    const added = await service.addFavorite({ url: "example.com" });
-    const next = await service.setColumns(3);
-    assert.equal(next.items.length, 1);
-    assert.notEqual(next.updatedAt, added.updatedAt);
-  });
-
-  it("serializes setColumns with other mutations through the shared lock", async () => {
-    const { service } = await createHarness();
-    await service.addFavorite({ url: "https://a.com" });
-    await Promise.all([service.setColumns(3), service.setPosition("center"), service.addFavorite({ url: "https://b.com" })]);
-    const state = await service.getState();
-    assert.equal(state.columns, 3);
-    assert.equal(state.position, "center");
-    assert.equal(state.items.length, 2);
+    await seed(store, [favorite({ id: "a", grid: g(0, 0) }), favorite({ id: "b", grid: g(1, 0) })]);
+    await assert.rejects(() => service.moveWidget("a", { x: 1, y: 0 }, COLS), PlacementError);
   });
 });
 
@@ -513,6 +424,7 @@ describe("stored backgroundColorSource enum survives the label rename", () => {
             customIconUrl: null,
             backgroundColor: "#24292f",
             backgroundColorSource: source,
+            grid: g(0, 0),
             createdAt: base.createdAt,
             updatedAt: base.updatedAt
           }
@@ -524,7 +436,7 @@ describe("stored backgroundColorSource enum survives the label rename", () => {
 
   it("rejects a renamed/localized backgroundColorSource value", () => {
     const base = createInitialWidgetsState("2026-07-11T00:00:00.000Z");
-    const state = {
+    const valid = {
       ...base,
       items: [
         {
@@ -536,108 +448,75 @@ describe("stored backgroundColorSource enum survives the label rename", () => {
           iconMode: "favicon",
           customIconUrl: null,
           backgroundColor: "#24292f",
-          backgroundColorSource: "auto-detect",
+          backgroundColorSource: "auto",
+          grid: g(0, 0),
           createdAt: base.createdAt,
           updatedAt: base.updatedAt
         }
       ]
     };
+    assert.equal(isWidgetsState(valid), true, "the fixture is otherwise valid");
+    const state = { ...valid, items: [{ ...valid.items[0], backgroundColorSource: "auto-detect" }] };
     assert.equal(isWidgetsState(state), false);
   });
 });
 
-async function serviceWithMetrics(favIds = ["f0", "f1"]) {
+// Two favorites and the four weather tiles on a 12-column grid.
+async function serviceWithMetrics() {
   const area = createMemoryStorageArea();
   const store = createWidgetsStore(area);
   let n = 0;
   const service = createWidgetsService({ store, createId: () => `new${n++}` });
-  for (const id of favIds) await service.addFavorite({ url: `https://${id}.example.com` });
-  // force ids to be the wanted ones: rebuild state directly
-  const state = await store.getState();
-  await store.setState({ ...state, items: state.items.map((it, i) => ({ ...it, id: favIds[i] })) });
-  await ensureWeatherMetrics(area);
+  await seed(store, [
+    favorite({ id: "f0", url: "https://f0.example.com/", domain: "f0.example.com", grid: g(0, 0) }),
+    favorite({ id: "f1", url: "https://f1.example.com/", domain: "f1.example.com", grid: g(1, 0) }),
+    metric("weather:temperature", { grid: g(2, 0) }),
+    metric("weather:precipitation", { grid: g(3, 0, 2, 1) }),
+    metric("weather:airQuality", { grid: g(5, 0, 2, 1) }),
+    metric("weather:uv", { grid: g(7, 0) })
+  ]);
   return { area, store, service };
 }
-const orderOf = (state) => state.items.map((i) => i.id);
 
 describe("widgetsService with weather metrics", () => {
-  it("inserts a new favorite after the last favorite, before the weather block", async () => {
+  it("places a new favorite in the first free cell, leaving the weather tiles where they are", async () => {
     const { service } = await serviceWithMetrics();
-    const state = await service.addFavorite({ url: "https://new.example.com" });
-    // the helper's id counter is already at 2, so match the new id by prefix
-    assert.deepEqual(orderOf(state).map((id) => (id.startsWith("new") ? "NEW" : id)), ["f0", "f1", "NEW", ...WEATHER_METRIC_IDS]);
-  });
-
-  it("inserts at index 0 when there are no favorites", async () => {
-    const { service } = await serviceWithMetrics([]);
-    const state = await service.addFavorite({ url: "https://new.example.com" });
-    assert.ok(orderOf(state)[0].startsWith("new"));
-    assert.deepEqual(orderOf(state).slice(1), WEATHER_METRIC_IDS);
+    const state = await service.addFavorite({ url: "https://new.example.com" }, COLS);
+    const grids = gridsOf(state);
+    assert.deepEqual(grids.new0, g(8, 0));
+    assert.deepEqual(grids["weather:temperature"], g(2, 0));
+    assert.deepEqual(grids["weather:uv"], g(7, 0));
   });
 
   it("updates a metric's size and enabled, rejects bad input and unknown ids", async () => {
     const { service } = await serviceWithMetrics();
-    let state = await service.updateWeatherMetric("weather:temperature", { tileSize: "wide", enabled: false });
+    const state = await service.updateWeatherMetric("weather:temperature", { w: 2, enabled: false }, COLS);
     const t = state.items.find((i) => i.id === "weather:temperature");
-    assert.deepEqual([t.tileSize, t.enabled], ["wide", false]);
-    await assert.rejects(service.updateWeatherMetric("weather:nope", { enabled: true }), /Weather tile not found/);
-    await assert.rejects(service.updateWeatherMetric("weather:uv", { tileSize: "huge" }), /tile size/);
-    await assert.rejects(service.updateWeatherMetric("weather:uv", { enabled: "yes" }), /whether the weather tile is shown/);
-    await assert.rejects(service.updateWeatherMetric("f0", { enabled: true }), /Weather tile not found/);
+    assert.deepEqual([t.grid.w, t.enabled], [2, false]);
+    await assert.rejects(service.updateWeatherMetric("weather:nope", { enabled: true }, COLS), /Weather tile not found/);
+    await assert.rejects(service.updateWeatherMetric("weather:uv", { w: 3 }, COLS), /tile width/);
+    await assert.rejects(service.updateWeatherMetric("weather:uv", { enabled: "yes" }, COLS), /whether the weather tile is shown/);
+    await assert.rejects(service.updateWeatherMetric("f0", { enabled: true }, COLS), /Weather tile not found/);
   });
 
   it("does not let favorite operations touch a metric", async () => {
     const { service } = await serviceWithMetrics();
-    await assert.rejects(service.deleteFavorite("weather:uv"), /Favorite not found/);
-    await assert.rejects(service.updateFavorite("weather:uv", { label: "x" }), /Favorite not found/);
-  });
-
-  it("moves past rendered widgets, skipping disabled metrics (AS-13 sequence)", async () => {
-    const { service } = await serviceWithMetrics();
-    await service.updateWeatherMetric("weather:precipitation", { enabled: false });
-    const steps = [
-      ["weather:temperature", 1, ["f0", "f1", "weather:precipitation", "weather:airQuality", "weather:temperature", "weather:uv"]],
-      ["weather:temperature", -1, ["f0", "f1", "weather:precipitation", "weather:temperature", "weather:airQuality", "weather:uv"]],
-      ["weather:temperature", -1, ["f0", "f1", "weather:precipitation", "weather:temperature", "weather:airQuality", "weather:uv"]],
-      ["weather:precipitation", 1, ["f0", "f1", "weather:temperature", "weather:precipitation", "weather:airQuality", "weather:uv"]]
-    ];
-    for (const [id, dir, expected] of steps) {
-      assert.deepEqual(orderOf(await service.moveWidget(id, dir)), expected);
-    }
-  });
-
-  it("moves are computed on the grouped order and written grouped", async () => {
-    const { area, service } = await serviceWithMetrics();
-    const meta = (await area.get("quietTabWidgetsMeta")).quietTabWidgetsMeta;
-    // interleave in storage: f0, temperature, f1, precipitation, airQuality, uv
-    await area.set({ quietTabWidgetsMeta: { ...meta, order: ["f0", "weather:temperature", "f1", "weather:precipitation", "weather:airQuality", "weather:uv"] } });
-    const after = await service.moveWidget("f0", 1);
-    assert.deepEqual(orderOf(after), ["f1", "f0", "weather:temperature", "weather:precipitation", "weather:airQuality", "weather:uv"]);
-    assert.deepEqual((await area.get("quietTabWidgetsMeta")).quietTabWidgetsMeta.order, orderOf(after));
-    assert.deepEqual(orderOf(await service.moveWidget("f0", 1)), orderOf(after), "last favorite cannot cross into the metrics");
-  });
-
-  it("returns state unchanged at the ends and reports 'Widget not found'", async () => {
-    const { service } = await serviceWithMetrics();
-    const before = orderOf(await service.getState());
-    assert.deepEqual(orderOf(await service.moveWidget("f0", -1)), before);
-    await assert.rejects(service.moveWidget("nope", 1), /Widget not found/);
+    await assert.rejects(service.deleteFavorite("weather:uv", COLS), /Favorite not found/);
+    await assert.rejects(service.updateFavorite("weather:uv", { label: "x" }, COLS), /Favorite not found/);
   });
 
   it("every mutation reports the newer-version message (not 'not found') when the meta became newer", async () => {
     const { area, service } = await serviceWithMetrics();
     const before = await area.get(null);
-    const newer = { ...before.quietTabWidgetsMeta, version: 2 };
+    const newer = { ...before.quietTabWidgetsMeta, version: 3 };
     await area.set({ quietTabWidgetsMeta: newer });
     const snapshot = await area.get(null);
     const message = { message: NEWER_WIDGETS_MESSAGE };
-    await assert.rejects(service.updateWeatherMetric("weather:uv", { enabled: false }), message);
-    await assert.rejects(service.moveWidget("weather:uv", -1), message);
-    await assert.rejects(service.deleteFavorite("f0"), message);
-    await assert.rejects(service.updateFavorite("f0", { label: "x" }), message);
-    await assert.rejects(service.addFavorite({ url: "https://n.example.com" }), message);
-    await assert.rejects(service.setColumns(3), message);
-    await assert.rejects(service.setPosition("bottom"), message);
+    await assert.rejects(service.updateWeatherMetric("weather:uv", { enabled: false }, COLS), message);
+    await assert.rejects(service.moveWidget("weather:uv", { x: 0, y: 1 }, COLS), message);
+    await assert.rejects(service.deleteFavorite("f0", COLS), message);
+    await assert.rejects(service.updateFavorite("f0", { label: "x" }, COLS), message);
+    await assert.rejects(service.addFavorite({ url: "https://n.example.com" }, COLS), message);
     assert.deepEqual(await area.get(null), snapshot);
   });
 });

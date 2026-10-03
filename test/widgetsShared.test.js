@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   DEFAULT_GRID_COLUMNS,
-  DEFAULT_WEATHER_METRIC_SIZES,
   GRID_POSITIONS,
+  MAX_CHROME_WIDGETS,
   MAX_FAVORITE_WIDGETS,
   MAX_GRID_COLUMNS,
   MAX_WEATHER_METRIC_WIDGETS,
@@ -17,20 +17,17 @@ import {
 } from "../src/widgetsShared.js";
 
 describe("widgetsShared", () => {
-  it("allows favorite and weather-metric widget types", () => {
+  it("allows favorite, weather-metric and chrome widget types", () => {
     assert.equal(WIDGET_TYPES.has("favorite"), true);
     assert.equal(WIDGET_TYPES.has("weather-metric"), true);
-    assert.equal(WIDGET_TYPES.size, 2);
+    assert.equal(WIDGET_TYPES.has("chrome"), true);
+    assert.equal(WIDGET_TYPES.size, 3);
   });
 
-  it("fixes the four weather metric ids, defaults and key helper", () => {
+  it("fixes the four weather metric ids and the key helper", () => {
     assert.deepEqual(WEATHER_METRIC_IDS, [
       "weather:temperature", "weather:precipitation", "weather:airQuality", "weather:uv"
     ]);
-    assert.deepEqual(
-      WEATHER_METRIC_IDS.map((id) => DEFAULT_WEATHER_METRIC_SIZES[id]),
-      ["square", "wide", "wide", "square"]
-    );
     assert.equal(weatherMetricKey("weather:airQuality"), "airQuality");
     assert.match(NEWER_WIDGETS_MESSAGE, /newer version of Quiet Tab/);
   });
@@ -45,10 +42,11 @@ describe("widgetsShared", () => {
     assert.equal(DEFAULT_GRID_COLUMNS, 6);
   });
 
-  it("caps favorites at 200 and leaves room for the 4 weather metrics in the total", () => {
+  it("caps favorites at 200 and leaves room for the 4 weather metrics and 2 chrome tiles in the total", () => {
     assert.equal(MAX_FAVORITE_WIDGETS, 200);
     assert.equal(MAX_WEATHER_METRIC_WIDGETS, 4);
-    assert.equal(MAX_WIDGETS, MAX_FAVORITE_WIDGETS + MAX_WEATHER_METRIC_WIDGETS);
+    assert.equal(MAX_CHROME_WIDGETS, 2);
+    assert.equal(MAX_WIDGETS, 200 + 4 + 2);
   });
 
   it("names the extension-wide mutation lock", () => {

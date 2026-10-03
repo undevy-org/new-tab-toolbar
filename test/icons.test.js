@@ -50,4 +50,9 @@ describe("icons", () => {
       assert.ok(typeof ICON_PATHS[name] === "string" && ICON_PATHS[name].includes("<"), name);
     }
   });
+
+  it("has the minus glyph for the remove badge, drawn like plus without the vertical stroke", () => {
+    assert.equal(ICON_PATHS.minus, '<path d="M5 12h14"/>');
+    assert.ok(ICON_PATHS.plus.startsWith(ICON_PATHS.minus));
+  });
 });
