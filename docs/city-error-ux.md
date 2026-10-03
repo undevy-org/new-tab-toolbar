@@ -2,7 +2,7 @@
 
 ## Status
 
-`draft, awaiting re-review` (independent review 1 applied; see `city-error-ux-spec-review.md`, author section)
+`ready for spec gate` (independent review 1 applied and re-review passed; see `city-error-ux-spec-review.md`)
 
 ## Intake log
 
