@@ -8,7 +8,8 @@ import {
   searchCities,
   summarizeHourlyForecast,
   usAqiCategory,
-  uvIndexLevel
+  uvIndexLevel,
+  weatherErrorMessage
 } from "../src/weatherApi.js";
 
 function response(body, init = {}) {
@@ -677,5 +678,82 @@ describe("usAqiCategory", () => {
     assert.equal(usAqiCategory(201), "Very Unhealthy");
     assert.equal(usAqiCategory(300), "Very Unhealthy");
     assert.equal(usAqiCategory(301), "Hazardous");
+  });
+});
+
+describe("network failures and user-facing error text", () => {
+  const rejecting = async () => {
+    throw new TypeError("Failed to fetch");
+  };
+  const calls = {
+    fetchWeather: (fetchImpl) => fetchWeather({ latitude: 41.7, longitude: 44.8, fetchImpl }),
+    fetchAirQuality: (fetchImpl) => fetchAirQuality({ latitude: 41.7, longitude: 44.8, fetchImpl }),
+    geocodeCity: (fetchImpl) => geocodeCity("Tbilisi", { fetchImpl }),
+    searchCities: (fetchImpl) => searchCities("Tbi", { fetchImpl })
+  };
+
+  for (const [name, call] of Object.entries(calls)) {
+    it(`${name} wraps a rejected fetch into a network WeatherApiError`, async () => {
+      await assert.rejects(
+        () => call(rejecting),
+        (error) => error instanceof WeatherApiError && error.details.kind === "network"
+      );
+    });
+
+    it(`${name} rethrows an AbortError unchanged`, async () => {
+      const abort = new DOMException("aborted", "AbortError");
+      await assert.rejects(
+        () => call(async () => { throw abort; }),
+        (error) => error === abort
+      );
+    });
+  }
+
+  it("marks non-2xx responses as http and a missing city as notFound", async () => {
+    await assert.rejects(
+      () => geocodeCity("Tbilisi", { fetchImpl: async () => response({}, { ok: false, status: 503 }) }),
+      (error) => error.details.kind === "http" && error.message.includes("503")
+    );
+    await assert.rejects(
+      () => geocodeCity("Atlantis", { fetchImpl: async () => response({ results: [] }) }),
+      (error) => error.details.kind === "notFound" && error.details.name === "Atlantis"
+    );
+  });
+
+  it("maps every kind to its fixed text and everything else to the unknown text", () => {
+    const unknown = "Couldn't load weather. Try again in a moment.";
+    assert.equal(
+      weatherErrorMessage(new WeatherApiError("x", { kind: "network" })),
+      "Can't reach the weather service. Check your connection and try again."
+    );
+    assert.equal(
+      weatherErrorMessage(new WeatherApiError("x", { kind: "timeout" })),
+      "The request took too long. Check your connection and try again."
+    );
+    assert.equal(
+      weatherErrorMessage(new WeatherApiError("x", { kind: "http" })),
+      "The weather service isn't responding right now. Try again in a moment."
+    );
+    assert.equal(weatherErrorMessage(new WeatherApiError("x", { kind: "notFound", name: " Atlantis " })), 'City "Atlantis" was not found');
+    for (const input of [
+      new WeatherApiError("Open-Meteo response is missing current.time"),
+      new WeatherApiError("x", { kind: "x" }),
+      new Error("boom"),
+      new TypeError("Failed to fetch"),
+      null,
+      undefined,
+      "Failed to fetch"
+    ]) {
+      assert.equal(weatherErrorMessage(input), unknown);
+    }
+  });
+
+  it("never echoes the input message, except the deliberate notFound name, which stays literal", () => {
+    const echoed = weatherErrorMessage(new WeatherApiError("secret developer text", { kind: "http" }));
+    assert.doesNotMatch(echoed, /secret|developer/);
+    assert.equal(
+      weatherErrorMessage(new WeatherApiError("x", { kind: "notFound", name: "<b>x</b>" })),
+      'City "<b>x</b>" was not found'
+    );
   });
 });

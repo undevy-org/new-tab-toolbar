@@ -1,14 +1,11 @@
 import {
   fetchAirQuality as defaultFetchAirQuality,
   fetchWeather as defaultFetchWeather,
-  geocodeCity as defaultGeocodeCity
+  geocodeCity as defaultGeocodeCity,
+  weatherErrorMessage
 } from "./weatherApi.js";
 
 const WEATHER_CACHE_TTL_MS = 30 * 60 * 1000;
-
-function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function isCacheFresh(cache, location, now) {
   return (
@@ -55,7 +52,7 @@ export function createWeatherService({
       const data = await fetchAndCache(location);
       return { status: "ready", location, data, error: null };
     } catch (error) {
-      return { status: "error", location, data: null, error: errorMessage(error) };
+      return { status: "error", location, data: null, error: weatherErrorMessage(error) };
     }
   }
 
@@ -66,7 +63,7 @@ export function createWeatherService({
       try {
         location = await locationStore.getLocation();
       } catch (error) {
-        return { status: "error", location: null, data: null, error: errorMessage(error) };
+        return { status: "error", location: null, data: null, error: weatherErrorMessage(error) };
       }
 
       if (!location) {
@@ -78,7 +75,7 @@ export function createWeatherService({
       try {
         cached = await cacheStore.getCache();
       } catch (error) {
-        return { status: "error", location, data: null, error: errorMessage(error) };
+        return { status: "error", location, data: null, error: weatherErrorMessage(error) };
       }
 
       if (isCacheFresh(cached, location, now())) {
@@ -90,9 +87,9 @@ export function createWeatherService({
         return { status: "ready", location, data, error: null };
       } catch (error) {
         if (cached && cached.locationName === location.name) {
-          return { status: "stale", location, data: cached, error: errorMessage(error) };
+          return { status: "stale", location, data: cached, error: weatherErrorMessage(error) };
         }
-        return { status: "error", location, data: null, error: errorMessage(error) };
+        return { status: "error", location, data: null, error: weatherErrorMessage(error) };
       }
     },
 

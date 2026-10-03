@@ -6,6 +6,38 @@ export class WeatherApiError extends Error {
   }
 }
 
+// User-facing text is chosen by failure kind, never by error.message (browsers word the same failure differently).
+const ERROR_MESSAGES = {
+  network: "Can't reach the weather service. Check your connection and try again.",
+  timeout: "The request took too long. Check your connection and try again.",
+  http: "The weather service isn't responding right now. Try again in a moment.",
+  unknown: "Couldn't load weather. Try again in a moment."
+};
+
+export function weatherErrorMessage(error) {
+  if (!(error instanceof WeatherApiError)) {
+    return ERROR_MESSAGES.unknown;
+  }
+  const kind = error.details?.kind;
+  if (kind === "notFound") {
+    const name = typeof error.details.name === "string" ? error.details.name.trim() : "";
+    return name === "" ? ERROR_MESSAGES.unknown : `City "${name}" was not found`;
+  }
+  return Object.hasOwn(ERROR_MESSAGES, kind) ? ERROR_MESSAGES[kind] : ERROR_MESSAGES.unknown;
+}
+
+// A rejected fetch is a network failure; our own cancellation (AbortError) passes through untouched.
+async function request(url, fetchImpl) {
+  try {
+    return await fetchImpl(url);
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw error;
+    }
+    throw new WeatherApiError("Weather request could not reach the network", { kind: "network", url });
+  }
+}
+
 const FORECAST_ENDPOINT = "https://api.open-meteo.com/v1/forecast";
 const AIR_QUALITY_ENDPOINT = "https://air-quality-api.open-meteo.com/v1/air-quality";
 const GEOCODING_ENDPOINT = "https://geocoding-api.open-meteo.com/v1/search";
@@ -172,12 +204,12 @@ export async function fetchWeather({ latitude, longitude, fetchImpl = globalThis
   url.searchParams.set("forecast_days", "1");
   url.searchParams.set("timezone", "auto");
 
-  const response = await fetchImpl(url.toString());
+  const response = await request(url.toString(), fetchImpl);
 
   if (!response.ok) {
     throw new WeatherApiError(
       `Open-Meteo forecast request failed with status ${response.status}`,
-      { status: response.status, url: url.toString() }
+      { kind: "http", status: response.status, url: url.toString() }
     );
   }
 
@@ -256,12 +288,12 @@ export async function fetchAirQuality({ latitude, longitude, fetchImpl = globalT
   url.searchParams.set("longitude", String(longitude));
   url.searchParams.set("current", "us_aqi,pm2_5");
 
-  const response = await fetchImpl(url.toString());
+  const response = await request(url.toString(), fetchImpl);
 
   if (!response.ok) {
     throw new WeatherApiError(
       `Open-Meteo air quality request failed with status ${response.status}`,
-      { status: response.status, url: url.toString() }
+      { kind: "http", status: response.status, url: url.toString() }
     );
   }
 
@@ -285,12 +317,12 @@ export async function geocodeCity(name, { fetchImpl = globalThis.fetch } = {}) {
   url.searchParams.set("count", "1");
   url.searchParams.set("language", "en");
 
-  const response = await fetchImpl(url.toString());
+  const response = await request(url.toString(), fetchImpl);
 
   if (!response.ok) {
     throw new WeatherApiError(
       `Open-Meteo geocoding request failed with status ${response.status}`,
-      { status: response.status, url: url.toString() }
+      { kind: "http", status: response.status, url: url.toString() }
     );
   }
 
@@ -306,7 +338,7 @@ export async function geocodeCity(name, { fetchImpl = globalThis.fetch } = {}) {
     typeof result.longitude !== "number" ||
     !Number.isFinite(result.longitude)
   ) {
-    throw new WeatherApiError(`City "${name}" was not found`, { name });
+    throw new WeatherApiError(`City "${name}" was not found`, { kind: "notFound", name });
   }
 
   return {
@@ -327,12 +359,12 @@ export async function searchCities(query, { count = 6, fetchImpl = globalThis.fe
   url.searchParams.set("count", String(count));
   url.searchParams.set("language", "en");
 
-  const response = await fetchImpl(url.toString());
+  const response = await request(url.toString(), fetchImpl);
 
   if (!response.ok) {
     throw new WeatherApiError(
       `Open-Meteo geocoding request failed with status ${response.status}`,
-      { status: response.status, url: url.toString() }
+      { kind: "http", status: response.status, url: url.toString() }
     );
   }
 
