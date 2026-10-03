@@ -2,7 +2,7 @@
 
 ## Status
 
-`draft, review 1 applied, awaiting re-review` (see `low-window-spec-review.md`)
+`ready for spec gate` (independent review 1 applied, re-review passed; see `low-window-spec-review.md`)
 
 ## Intake log
 
