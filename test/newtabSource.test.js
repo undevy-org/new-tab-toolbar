@@ -11,6 +11,7 @@ async function source() {
 describe("newtab favorites source", () => {
   it("styles the drop highlight: invalid = --danger dashed outline with >= 3:1 against --bg in both themes", async () => {
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    const tokens = await readFile(new URL("../src/design-tokens.css", import.meta.url), "utf8");
     assert.match(css, /\.drop-highlight\[data-valid="false"\] \{\s*outline: 2px dashed var\(--danger\);/);
     assert.match(css, /\.drop-highlight\[data-valid="true"\] \{\s*outline: 2px solid var\(--primary\);/);
     assert.match(css, /:is\(\.is-dragging, \.is-returning\) \{[^}]*pointer-events: none;[^}]*animation: none;/);
@@ -19,11 +20,11 @@ describe("newtab favorites source", () => {
       return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
     };
     const ratio = (a, b) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
-    const light = css.slice(0, css.indexOf("@media (prefers-color-scheme: dark)"));
-    const dark = css.slice(css.indexOf("@media (prefers-color-scheme: dark)"));
+    const light = tokens.slice(0, tokens.indexOf("@media (prefers-color-scheme: dark)"));
+    const dark = tokens.slice(tokens.indexOf("@media (prefers-color-scheme: dark)"));
     for (const block of [light, dark]) {
-      const bg = block.match(/--bg: (#[0-9a-f]{6});/)[1];
-      const danger = block.match(/--danger: (#[0-9a-f]{6});/)[1];
+      const bg = block.match(/--color-bg: (#[0-9a-f]{6});/)[1];
+      const danger = block.match(/--color-danger: (#[0-9a-f]{6});/)[1];
       assert.ok(ratio(danger, bg) >= 3, `${danger} on ${bg}: ${ratio(danger, bg).toFixed(2)}`);
     }
   });
@@ -174,11 +175,14 @@ describe("newtab favorites source", () => {
   });
 
   it("uses a black/white accent instead of blue, with a theme-aware button contrast color", async () => {
+    const tokens = await readFile(new URL("../src/design-tokens.css", import.meta.url), "utf8");
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
-    assert.match(css, /--primary: #111318;/);
-    assert.match(css, /--primary-contrast: #ffffff;/);
-    assert.doesNotMatch(css, /--primary: #1473e6/);
-    assert.doesNotMatch(css, /--primary: #4d9aff/);
+    assert.match(tokens, /--color-primary: #111318;/);
+    assert.match(tokens, /--color-on-primary: #ffffff;/);
+    assert.match(tokens, /--primary: var\(--color-primary\);/);
+    assert.match(tokens, /--primary-contrast: var\(--color-on-primary\);/);
+    assert.doesNotMatch(tokens, /--color-primary: #1473e6/);
+    assert.doesNotMatch(tokens, /--color-primary: #4d9aff/);
     assert.match(css, /\.button--primary\s*\{[^}]*color: var\(--primary-contrast\);/s);
   });
 
