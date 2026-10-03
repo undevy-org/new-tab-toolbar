@@ -17,8 +17,9 @@ weather tiles — nothing else.
 - Edit mode (turned on by the Settings tile; Settings again, Escape or a click
   on the background turns it off): tiles jiggle, a − badge deletes a link or
   hides a weather tile, and any tile can be dragged to a free cell.
-- Add, edit and delete links (address, name, icon, color, size) through small
-  dialogs; the Add tile also restores hidden weather tiles.
+- Add, edit and delete links (address, name, icon, color) through small dialogs;
+  new links start at 1×1 and can be resized when editing. In edit mode the Add
+  tile also restores hidden weather tiles.
 - Opens saved favorites in the current tab.
 - Uses site favicons with letter and custom-image fallbacks.
 - Shows current weather for a city you choose as tiles in the same grid:
