@@ -2,7 +2,7 @@
 
 ## Status
 
-`draft` (move to `ready for spec gate` after the second review pass is applied and checked)
+`ready for spec gate`
 
 ## Intake log
 
