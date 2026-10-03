@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A personal favorites toolbar and local weather on the new tab page — nothing else.",
+  "description": "A quiet new-tab desktop of your favorite links and local weather — nothing else.",
   "license": "MIT",
   "engines": {
     "node": ">=20"

@@ -35,6 +35,7 @@ The extension stores the following in `chrome.storage.sync`:
 - domains;
 - icon mode and optional custom image URLs;
 - tile background colors and tile size;
+- each tile's position and size on the grid, and whether a weather tile is shown or hidden;
 - creation and update timestamps.
 
 `chrome.storage.sync` is Chrome's own built-in sync feature, not a
@@ -49,7 +50,7 @@ locally, just without cross-device propagation.
 ## Background Activity
 
 There is no background polling and no scheduled network activity. A weather
-request happens only when the cache is stale and the panel is rendered, or
+request happens only when a new tab opens with a stale cache and a chosen city, or
 when you explicitly change the city.
 
 Removing the extension through the browser's extension manager removes its
