@@ -3,11 +3,14 @@ import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+const controlsCss = await readFile(new URL("../src/controls.css", import.meta.url), "utf8");
+const overlayCss = await readFile(new URL("../src/surfaces.css", import.meta.url), "utf8") + controlsCss + css;
+const tokenCss = await readFile(new URL("../src/design-tokens.css", import.meta.url), "utf8");
 
-function block(selectorStart) {
-  const start = css.indexOf(selectorStart);
+function block(source, selectorStart) {
+  const start = source.indexOf(selectorStart);
   assert.ok(start >= 0, selectorStart);
-  return css.slice(start, css.indexOf("}", start));
+  return source.slice(start, source.indexOf("}", start));
 }
 function token(scope, name) {
   const m = scope.match(new RegExp(`${name}:\\s*([^;]+);`));
@@ -26,15 +29,15 @@ const over = ([r, g, b, a], [br, bg, bb]) => [r * a + br * (1 - a), g * a + bg *
 const ratio = (x, y) => { const [hi, lo] = [lum(x), lum(y)].sort((p, q) => q - p); return (hi + 0.05) / (lo + 0.05); };
 
 describe("focus color tokens", () => {
-  const light = block(":root {");
-  const dark = css.slice(css.indexOf("@media (prefers-color-scheme: dark)"), css.indexOf("* {"));
+  const light = block(tokenCss, ":root {");
+  const dark = tokenCss.slice(tokenCss.indexOf("@media (prefers-color-scheme: dark)"));
   for (const [label, scope] of [["light", light], ["dark", dark]]) {
-    const panel = rgba(token(scope, "--panel")).slice(0, 3);
+    const panel = rgba(token(scope, "--color-surface")).slice(0, 3);
     it(`${label}: the soft ring reaches 3:1 against the panel`, () => {
       assert.ok(ratio(over(rgba(token(scope, "--soft-ring")), panel), panel) >= 3);
     });
     it(`${label}: the tile focus ring token reaches 3:1 against the page and the panel (WCAG 1.4.11)`, () => {
-      const bg = rgba(token(scope, "--bg")).slice(0, 3);
+      const bg = rgba(token(scope, "--color-bg")).slice(0, 3);
       const ring = rgba(token(scope, "--focus-ring"));
       assert.ok(ratio(over(ring, bg), bg) >= 3, `page ${ratio(over(ring, bg), bg).toFixed(2)}`);
       assert.ok(ratio(over(ring, panel), panel) >= 3, `panel ${ratio(over(ring, panel), panel).toFixed(2)}`);
@@ -67,7 +70,7 @@ describe("every tile type uses the tile focus ring token", () => {
 });
 
 describe("no focus rule hides the outline without a visible replacement (fix wave 3, L3-R2-01)", () => {
-  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selector: m[1].replace(/\/\*[\s\S]*?\*\//g, "").trim(), body: m[2] }));
+  const rules = [...overlayCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selector: m[1].replace(/\/\*[\s\S]*?\*\//g, "").trim(), body: m[2] }));
   const ruleFor = (selector) => rules.find((r) => r.selector === selector);
   // Shared base rules: a transparent outline for forced colors; each control type they cover has its own ring rule.
   const replacements = {
@@ -97,7 +100,7 @@ describe("no focus rule hides the outline without a visible replacement (fix wav
       it(`${base.split(" ")[0]}: ${selector.split("\n")[0]} draws a 2px --soft-ring ring`, () => {
         const rule = ruleFor(selector);
         assert.ok(rule, selector);
-        assert.match(rule.body, /box-shadow: 0 0 0 2px var\(--soft-ring\);/);
+        assert.match(rule.body, /box-shadow: 0 0 0 2px var\(--(?:soft-ring|focus-overlay-ring)\);/);
       });
     }
   }

@@ -1,0 +1,94 @@
+:root {
+  color-scheme: light dark;
+
+  /* Semantic color tokens */
+  --color-bg: #f3f5f7;
+  --color-surface: #ffffff;
+  --color-text: #111318;
+  --color-text-muted: #5c6672;
+  --color-border: #d8dee6;
+  --color-primary: #111318;
+  --color-primary-hover: #2a2d33;
+  --color-on-primary: #ffffff;
+  --color-danger: #b42318;
+  --color-fill-soft: #eef1f5;
+  --color-fill-soft-strong: #e1e6ed;
+
+  /* Legacy aliases (grid and existing rules) */
+  --bg: var(--color-bg);
+  --panel: var(--color-surface);
+  --text: var(--color-text);
+  --muted: var(--color-text-muted);
+  --border: var(--color-border);
+  --primary: var(--color-primary);
+  --primary-hover: var(--color-primary-hover);
+  --primary-contrast: var(--color-on-primary);
+  --danger: var(--color-danger);
+  --soft-fill: var(--color-fill-soft);
+  --soft-fill-strong: var(--color-fill-soft-strong);
+
+  --focus-ring: #111318; /* tile keyboard focus ring: solid, >= 3:1 on the page and the panel (WCAG 1.4.11) */
+  --focus: rgb(0 0 0 / 24%);
+  --soft-ring: rgb(17 19 24 / 55%);
+  --focus-overlay-ring: var(--soft-ring);
+
+  /* Typography */
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --font-size-title: 18px;
+  --font-weight-control: 600;
+  --line-height-control: 1.2;
+  --line-height-body: 1.4;
+
+  /* Layout and spacing */
+  --control-height: 40px;
+  --control-border-width: 1px;
+  --control-padding-x: 12px;
+  --control-padding-x-button: 14px;
+  --control-gap-icon: 6px;
+  --list-row-padding-y: 8px;
+  --control-disabled-opacity: 0.62;
+  --form-label-width: 100px;
+  --form-row-gap: 12px;
+  --form-row-padding-y: 12px;
+  --form-footer-gap: 8px;
+  --form-footer-padding-y: 14px;
+  --title-margin-bottom: 12px;
+  --surface-modal-padding: 20px;
+  --surface-modal-max-width: 420px;
+  --viewport-margin: 16px;
+  --surface-popover-padding: 6px;
+  --surface-popover-gap: 6px;
+
+  /* Radius */
+  --radius-control: 8px;
+  --radius-popover: 12px;
+  --radius-modal: 16px;
+
+  /* Elevation */
+  --surface-backdrop: rgb(0 0 0 / 50%);
+  --shadow-modal: 0 24px 70px rgb(0 0 0 / 32%);
+  --shadow-popover: 0 12px 32px rgb(0 0 0 / 18%);
+  --shadow-tooltip: 0 18px 50px rgb(0 0 0 / 10%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #14171c;
+    --color-surface: #1d2229;
+    --color-text: #f4f6f8;
+    --color-text-muted: #a8b0ba;
+    --color-border: #343b45;
+    --color-primary: #f4f6f8;
+    --color-primary-hover: #d9dce0;
+    --color-on-primary: #14171c;
+    --color-danger: #ff8a80;
+    --color-fill-soft: #2a313b;
+    --color-fill-soft-strong: #343c48;
+
+    --focus-ring: #f4f6f8;
+    --focus: rgb(255 255 255 / 28%);
+    --soft-ring: rgb(244 246 248 / 60%);
+  }
+}

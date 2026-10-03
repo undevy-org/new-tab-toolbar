@@ -1,15 +1,12 @@
 # Quiet Tab design system
 
 This document is the public source of truth for UI tokens, components, and layout
-rules on the new tab page. **Target implementation (Phase 1)** splits overlay
-styles into `src/design-tokens.css`, `src/controls.css`, and `src/surfaces.css`;
-grid and tile styling stays in `src/newtab.css` until Phase 2. Until Phase 1
-lands in the repo, the live page may still use a single `newtab.css` link in
-`newtab.html` — that is expected pre-migration.
+rules on the new tab page. Phase 1 splits overlay styles into
+`src/design-tokens.css`, `src/controls.css`, and `src/surfaces.css`; grid and
+tile styling stays in `src/newtab.css` until Phase 2.
 
-**Status:** Target spec adopted 2026-10-03 (controls + surfaces v1). **Phase 1
-code migration is pending** until the implementation plan completes. Grid/tile
-tokens remain planned (v2).
+**Status:** Spec adopted 2026-10-03 (controls + surfaces v1). **Phase 1 is
+implemented.** Grid/tile tokens remain planned (v2).
 
 ## Principles
 
@@ -25,13 +22,13 @@ tokens remain planned (v2).
 4. **No build step** — Stylesheets are linked from `newtab.html` in dependency
    order; no preprocessor.
 
-## Stylesheet map (target after Phase 1)
+## Stylesheet map (Phase 1)
 
 | File | Contents |
 |------|----------|
 | `design-tokens.css` | Color, type, spacing, radius, shadow, focus tokens; light/dark |
 | `controls.css` | Buttons, inputs, segmented, icon-button, text-button, color input, list/menu rows |
-| `surfaces.css` | Modal shells, backdrops, popovers (add menu, suggestions) |
+| `surfaces.css` | Modal shells, backdrops, popovers (add menu, suggestions), focus rings scoped to `.desktop-dialog` / `.city-modal` |
 | `newtab.css` | Desktop grid, tiles, weather presentation, tooltip, page chrome |
 
 Load order in `newtab.html`: tokens → controls → surfaces → newtab.
@@ -59,7 +56,7 @@ new names where applicable.
 | `--color-fill-soft-strong` | Focused button background |
 | `--focus-ring` | Solid focus outline on grid tiles (≥ 3:1, WCAG 1.4.11) |
 | `--focus-overlay-ring` | 2px focus ring in overlays (`--soft-ring` alias) |
-| `--focus-halo` | Legacy inner focus for segmented on grid (`--focus` alias) |
+| `--focus` | 3px focus outline on buttons, inputs and segmented options outside overlays (legacy name, no semantic token yet) |
 
 Dark theme overrides mirror the existing `:root` / `prefers-color-scheme: dark`
 values.
@@ -68,14 +65,14 @@ values.
 
 | Token | Value | Use |
 |-------|-------|-----|
-| `--font-family` | system UI stack | `body` |
+| `--font-family` | system UI stack | `body` (declared in Phase 1; `newtab.css` adopts it in Phase 2) |
 | `--font-size-body` | inherit (~16px UA) | Body text size (line-height on `body` is **1.45**, not `--line-height-body`) |
 | `--font-size-sm` | **13px** | Form row labels, segmented labels, tooltip |
 | `--font-size-md` | **14px** | Status, dialog body, page status line |
 | `--font-size-title` | **18px** | Modal titles |
 | `--font-weight-control` | **600** | Buttons, checked segmented, text-button |
 | `--line-height-control` | **1.2** | Buttons |
-| `--line-height-body` | **1.4** | Status / error text |
+| `--line-height-body` | **1.4** | Status / error text (declared in Phase 1; `newtab.css` adopts it in Phase 2) |
 
 ## Layout and spacing
 
@@ -86,6 +83,7 @@ values.
 | `--control-padding-x` | **12px** | Text inputs |
 | `--control-padding-x-button` | **14px** | Buttons |
 | `--control-gap-icon` | **6px** | Icon + label in `.button` |
+| `--list-row-padding-y` | **8px** | Vertical padding of suggestion rows (keeps wrapped names off the row edges) |
 | `--control-disabled-opacity` | **0.62** | `:disabled` on buttons (including primary) |
 | `--form-label-width` | **100px** | Left column in form rows |
 | `--form-row-gap` | **12px** | Gap between label and control |
@@ -121,7 +119,7 @@ chip ~**10px** — to be tokenized later in `newtab.css`.
 | `--surface-backdrop` | `rgb(0 0 0 / 50%)` | Modal backdrops |
 | `--shadow-modal` | `0 24px 70px rgb(0 0 0 / 32%)` | Dialog cards |
 | `--shadow-popover` | `0 12px 32px rgb(0 0 0 / 18%)` | Menus, suggestions, page status (v2) |
-| `--shadow-tooltip` | `0 18px 50px rgb(0 0 0 / 10%)` | Hover tooltip |
+| `--shadow-tooltip` | `0 18px 50px rgb(0 0 0 / 10%)` | Hover tooltip (declared in Phase 1; `newtab.css` adopts it in Phase 2) |
 
 Docked suggestion lists use no shadow (in-flow scroll).
 
@@ -192,7 +190,10 @@ All heights are **border-box** (`box-sizing: border-box` globally).
 ### `.weather-form__suggestion` / `.add-menu__item`
 
 - `min-height: var(--control-height)` (**40px**)
-- Padding **`0 12px`** (vertical centering via flex on parent column)
+- Suggestion rows: padding **`8px 12px`** (`--list-row-padding-y`); a one-line row
+  stays at the **40px** `min-height`, a long name that wraps keeps 8px above and below
+- Add menu rows: padding **`0 12px`** (single-line labels)
+- Content centered vertically (`display: flex; align-items: center`)
 - Radius **8px**; hover `--color-fill-soft`
 
 ### Form chrome (classes unchanged)
@@ -269,7 +270,7 @@ without changing grid behavior.
 | `.icon-button` clear in city field | **36×36px** inside **40px** input | Keeps a square hit target without stretching the glyph button to full row height. |
 | `.favorite-color-input` | **48px** wide, **40px** tall | Native color input needs a wider swatch than text fields. |
 | Disabled buttons | `opacity: 0.62` | Existing affordance; primary does not get a separate muted fill. |
-| `.city-modal__title` margin-bottom | **8px** in pre-Phase-1 code | Legacy; Phase 1 surfaces migration unifies to **12px** (`--title-margin-bottom`). |
+| `.city-modal__title` margin-bottom | was **8px** before Phase 1 | Unified to **12px** (`--title-margin-bottom`) in Phase 1. |
 
 ## User-visible copy (regression guard, unchanged in phase 1)
 

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Design system phase 1: overlay styles split into `design-tokens.css`,
+  `controls.css`, and `surfaces.css` (loaded before `newtab.css`). Dialogs, the
+  city modal, and the Add menu use a unified 40px control height and 8px control
+  radius; city modal title spacing matches desktop dialogs (12px below the title).
+  City suggestion rows keep 8px of vertical padding, so a long name that wraps
+  does not touch the row edges. The Add menu shadow uses the shared popover
+  shadow (18% instead of 20% opacity).
+
+### Fixed
+
+- Delete buttons (Edit link, Delete link?) show their red border and text again;
+  the base `.button` rule had been overriding the `.button--danger` modifier.
+
 ### Added
 
 - A full-window, macOS-style desktop grid replaces the favorites toolbar: links,
