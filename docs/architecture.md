@@ -263,12 +263,12 @@ The new tab page loads CSS in dependency order from `src/newtab.html`:
 
 | File | Role |
 | --- | --- |
-| `design-tokens.css` | Color, typography, spacing, radius, shadow, and focus tokens (light/dark). |
+| `design-tokens.css` | Color, typography, spacing, radius, shadow, and focus tokens (light/dark), including Phase 2 grid/page chrome tokens (`--radius-tile`, `--space-grid-*`, status chip, weather cell type). |
 | `controls.css` | Overlay controls: buttons, inputs, segmented groups, add-menu rows, city field, and each control's own base focus style. |
 | `surfaces.css` | Dialog and modal shells, backdrops, popovers, and the focus rings scoped to `.desktop-dialog` / `.city-modal`. |
-| `newtab.css` | Desktop grid, tiles, weather presentation, tooltip, page chrome. |
+| `newtab.css` | Desktop grid, tiles, weather presentation, tooltip, page chrome (Phase 2: grid radii, shadows, spacing, and typography via tokens). |
 
-Public spec: [`docs/design-system.md`](design-system.md) (phase 1: controls + surfaces; grid tokens are phase 2).
+Public spec: [`docs/design-system.md`](design-system.md) (phase 1: controls + surfaces; phase 2: grid/tile/page chrome in `design-tokens.css` + `newtab.css`).
 
 ## Security Boundaries
 

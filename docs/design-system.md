@@ -6,8 +6,8 @@ rules on the new tab page. Phase 1 splits overlay styles into
 tile styling stays in `src/newtab.css` until Phase 2.
 
 **Status:** Phase 1 (controls + surfaces v1) **implemented** (merge `ea00c29`).
-**Phase 2** (grid / tiles / page chrome) — **spec adopted 2026-10-03**;
-implementation pending. See [Phase 2](#phase-2-grid--tiles--page-chrome) and
+**Phase 2** (grid / tiles / page chrome) — **implemented** (branch `feat/design-system-phase-2`).
+See [Phase 2](#phase-2-grid--tiles--page-chrome) and
 `docs/plans/2026-10-03-design-system-phase-2.md`.
 
 ## Principles

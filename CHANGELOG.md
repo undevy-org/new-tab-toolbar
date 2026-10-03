@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Design system phase 2: grid and page chrome in `newtab.css` use tokens from
+  `design-tokens.css` (tile and drop-highlight radii, status chip padding and
+  shadow, tooltip shadow, grid spacing `--space-grid-*`, weather cell font sizes,
+  body/status typography). Grid engine, tile focus rules, and overlay CSS are
+  unchanged. E2E metrics: `dg-42-grid-chrome-metrics.mjs`.
+
 - Design system phase 1: overlay styles split into `design-tokens.css`,
   `controls.css`, and `surfaces.css` (loaded before `newtab.css`). Dialogs, the
   city modal, and the Add menu use a unified 40px control height and 8px control
