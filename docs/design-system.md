@@ -41,7 +41,7 @@ Load order in `newtab.html`: tokens → controls → surfaces → newtab.
 Semantic names are canonical. During migration, legacy aliases (`--bg`, `--panel`,
 `--text`, `--muted`, `--border`, `--primary`, `--primary-hover`,
 `--primary-contrast`, `--danger`, `--soft-fill`, `--soft-fill-strong`,
-`--soft-ring`, `--focus`) remain defined in `design-tokens.css` and map to the
+`--soft-ring`, `--focus`, `--border-control`) remain defined in `design-tokens.css` and map to the
 new names where applicable.
 
 | Token | Role |
@@ -50,7 +50,8 @@ new names where applicable.
 | `--color-surface` | Panels, modals, inputs |
 | `--color-text` | Primary text |
 | `--color-text-muted` | Labels, secondary copy |
-| `--color-border` | Control and surface borders |
+| `--color-border` | Decorative separators and surface borders |
+| `--color-border-control` | Boundary of a control (text field, segmented, color field, chrome and hint tile); alias `--border-control` |
 | `--color-primary` | Primary fill, active segmented segment |
 | `--color-primary-hover` | Primary hover |
 | `--color-on-primary` | Text on primary |
@@ -63,6 +64,15 @@ new names where applicable.
 
 Dark theme overrides mirror the existing `:root` / `prefers-color-scheme: dark`
 values.
+
+**Two border roles.** `--color-border` is the quiet decorative line: card and
+popover edges, row dividers, the dividers between segmented options. WCAG 1.4.11
+does not require it to reach 3:1. `--color-border-control` marks the boundary of
+a control that has no fill or label of its own to identify it (text fields, the
+color field, the segmented outer edge, chrome tiles and the first-run hint tile),
+and clears 3:1 against the panel and the page in both themes (`#838e9a` light,
+`#68727f` dark). A new control boundary uses `--color-border-control`; a
+separator uses `--color-border`.
 
 ## Typography
 
@@ -176,6 +186,7 @@ All heights are **border-box** (`box-sizing: border-box` globally).
 - Text fields in link forms and city search
 - `min-height: var(--control-height)` (**40px**) in all contexts (no taller city field)
 - Padding `0 var(--control-padding-x)`; radius **8px**
+- Border `var(--control-border-width)` solid `var(--color-border-control)`
 
 ### `.icon-button`
 
@@ -185,14 +196,14 @@ All heights are **border-box** (`box-sizing: border-box` globally).
 ### `.segmented` / `.segmented__option`
 
 - Radiogroup pattern (Icon, Color, Size) — not a toggle switch
-- Container: 1px border, radius **8px**; **outer height 40px**
+- Container: 1px `var(--color-border-control)` border (dividers between options keep the decorative `--border`), radius **8px**; **outer height 40px**
 - Option: `height: calc(var(--control-height) - 2 * var(--control-border-width))` → **38px**
 - Option padding `0 8px` (narrow dialog: `0 6px`)
 - Font **13px**; checked segment: primary fill, weight **600**
 
 ### `.favorite-color-input`
 
-- **40×48px**, padding **2px**, radius **8px**
+- **40×48px**, padding **2px**, radius **8px**, border `var(--color-border-control)`
 - Dimmed when Color = Auto; pointer-events restored for Manual
 
 ### `.text-button`

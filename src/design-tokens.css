@@ -7,6 +7,7 @@
   --color-text: #111318;
   --color-text-muted: #5c6672;
   --color-border: #d8dee6;
+  --color-border-control: #838e9a; /* boundary of a control (field, tile); >= 3:1 on the panel and the page (WCAG 1.4.11) */
   --color-primary: #111318;
   --color-primary-hover: #2a2d33;
   --color-on-primary: #ffffff;
@@ -20,6 +21,7 @@
   --text: var(--color-text);
   --muted: var(--color-text-muted);
   --border: var(--color-border);
+  --border-control: var(--color-border-control);
   --primary: var(--color-primary);
   --primary-hover: var(--color-primary-hover);
   --primary-contrast: var(--color-on-primary);
@@ -108,6 +110,7 @@
     --color-text: #f4f6f8;
     --color-text-muted: #a8b0ba;
     --color-border: #343b45;
+    --color-border-control: #68727f;
     --color-primary: #f4f6f8;
     --color-primary-hover: #d9dce0;
     --color-on-primary: #14171c;
