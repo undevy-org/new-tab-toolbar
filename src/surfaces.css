@@ -101,6 +101,11 @@
   min-height: calc(2 * var(--line-height-body) * var(--font-size-md));
 }
 
+/* Set by placePopover when the dialog does not fit the viewport with the room above: the room is given up so the buttons stay in view. */
+.city-modal__dialog--compact .city-modal__feedback {
+  min-height: 0;
+}
+
 /* The rule above must not defeat [hidden] on the empty error slot. */
 .city-modal .status--full[hidden] {
   display: none;
