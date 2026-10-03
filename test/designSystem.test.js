@@ -18,11 +18,74 @@ describe("design system wiring", () => {
   });
 });
 
+describe("grid / page chrome tokens (AS-DS-16)", () => {
+  it("declares Phase 2 grid and page chrome tokens in design-tokens.css", async () => {
+    const css = await readFile(new URL("../src/design-tokens.css", import.meta.url), "utf8");
+    assert.match(css, /--radius-tile:\s*13px;/);
+    assert.match(css, /--radius-drop-highlight:\s*14px;/);
+    assert.match(css, /--radius-status-chip:\s*10px;/);
+    assert.match(css, /--shadow-status:\s*var\(--shadow-popover\);/);
+    assert.match(css, /--status-chip-padding-y:\s*10px;/);
+    assert.match(css, /--status-chip-padding-x:\s*14px;/);
+    assert.match(css, /--status-chip-offset-bottom:\s*16px;/);
+    assert.match(css, /--tile-remove-size:\s*24px;/);
+    assert.match(css, /--tile-remove-offset:\s*8px;/);
+    assert.match(css, /--font-size-weather-primary-cell-64:\s*16px;/);
+    assert.match(css, /--font-size-weather-secondary-cell-64:\s*10px;/);
+    assert.match(css, /--font-size-weather-primary-cell-56:\s*14px;/);
+    assert.match(css, /--font-size-weather-secondary-cell-56:\s*9px;/);
+    assert.match(css, /--line-height-page:\s*1\.45;/);
+    assert.match(css, /--space-grid-8:\s*8px;/);
+    assert.match(css, /--space-grid-10:\s*10px;/);
+    assert.match(css, /--space-grid-12:\s*12px;/);
+  });
+});
+
+describe("newtab.css typography tokens (AS-DS-15)", () => {
+  it("uses design tokens on body, status, and tooltip", async () => {
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /body \{[^}]*font-family:\s*var\(--font-family\)/s);
+    assert.match(css, /body \{[^}]*line-height:\s*var\(--line-height-page\)/s);
+    assert.match(css, /\.status \{[^}]*font-size:\s*var\(--font-size-md\)/s);
+    assert.match(css, /\.status \{[^}]*line-height:\s*var\(--line-height-body\)/s);
+    assert.match(css, /\.desktop-status \{[^}]*font-size:\s*var\(--font-size-md\)/s);
+    assert.match(css, /\.desktop-status \{[^}]*line-height:\s*var\(--line-height-body\)/s);
+    assert.match(css, /\.tooltip \{[^}]*font-size:\s*var\(--font-size-sm\)/s);
+  });
+});
+
+describe("newtab.css grid chrome tokens (AS-DS-17)", () => {
+  it("uses Phase 2 tokens for radii, shadows, status chip, spacing, and remove badge", async () => {
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /\.favorite-tile \{[^}]*border-radius:\s*var\(--radius-tile\)/s);
+    assert.match(css, /\.chrome-tile \{[^}]*border-radius:\s*var\(--radius-tile\)/s);
+    assert.match(css, /\.weather-tile \{[^}]*border-radius:\s*var\(--radius-tile\)/s);
+    assert.match(css, /\.city-hint-tile \{[^}]*border-radius:\s*var\(--radius-tile\)/s);
+    assert.match(css, /\.desktop-grid > \.drop-highlight \{[^}]*border-radius:\s*var\(--radius-drop-highlight\)/s);
+    assert.match(css, /\.desktop-status \{[^}]*border-radius:\s*var\(--radius-status-chip\)/s);
+    assert.match(css, /\.desktop-status \{[^}]*box-shadow:\s*var\(--shadow-status\)/s);
+    assert.match(css, /\.desktop-status \{[^}]*padding:\s*var\(--status-chip-padding-y\) var\(--status-chip-padding-x\)/s);
+    assert.match(css, /\.desktop-status \{[^}]*bottom:\s*var\(--status-chip-offset-bottom\)/s);
+    assert.match(css, /\.tooltip \{[^}]*border-radius:\s*var\(--radius-control\)/s);
+    assert.match(css, /\.tooltip \{[^}]*box-shadow:\s*var\(--shadow-tooltip\)/s);
+    assert.match(css, /\.desktop-grid > \.tile-remove \{[^}]*width:\s*var\(--tile-remove-size\)/s);
+    assert.match(css, /\.desktop-grid > \.tile-remove \{[^}]*height:\s*var\(--tile-remove-size\)/s);
+    assert.match(css, /\.desktop-grid > \.tile-remove \{[^}]*- var\(--tile-remove-offset\)/s);
+    assert.doesNotMatch(css, /border-radius:\s*13px/);
+    assert.doesNotMatch(css, /border-radius:\s*14px/);
+    assert.doesNotMatch(css, /\.desktop-status \{[^}]*padding:\s*10px 14px/s);
+    assert.doesNotMatch(css, /\.desktop-status \{[^}]*bottom:\s*16px/s);
+    assert.doesNotMatch(css, /\.desktop-status \{[^}]*box-shadow:\s*0 12px 32px/s);
+    assert.doesNotMatch(css, /\.tooltip \{[^}]*box-shadow:\s*0 18px 50px/s);
+  });
+});
+
 describe("overlay control CSS (AS-DS-10)", () => {
   it("uses control-height tokens and forbids legacy magic heights in controls.css", async () => {
     const css = await readFile(new URL("../src/controls.css", import.meta.url), "utf8");
     assert.match(css, /min-height:\s*var\(--control-height\)/);
     assert.match(css, /height:\s*calc\(var\(--control-height\) - 2 \* var\(--control-border-width\)\)/);
+    assert.match(css, /\.segmented__option \{[^}]*height:\s*calc\(var\(--control-height\) - 2 \* var\(--control-border-width\)\)/s);
     assert.doesNotMatch(css, /height:\s*34px/);
     assert.doesNotMatch(css, /min-height:\s*44px/);
     assert.doesNotMatch(css, /\.add-menu__item[^}]*min-height:\s*36px/);

@@ -12,8 +12,8 @@ body {
 body {
   margin: 0;
   min-height: 100vh;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  line-height: 1.45;
+  font-family: var(--font-family);
+  line-height: var(--line-height-page);
   background: var(--bg);
   color: var(--text);
 }
@@ -50,13 +50,13 @@ html {
 .desktop-grid > .tile-remove {
   position: absolute;
   z-index: 2;
-  left: calc(var(--x) * (var(--cell-size) + var(--grid-gap)) - 8px);
-  top: calc(var(--y) * (var(--cell-size) + var(--grid-gap)) - 8px);
+  left: calc(var(--x) * (var(--cell-size) + var(--grid-gap)) - var(--tile-remove-offset));
+  top: calc(var(--y) * (var(--cell-size) + var(--grid-gap)) - var(--tile-remove-offset));
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: var(--tile-remove-size);
+  height: var(--tile-remove-size);
   padding: 0;
   border: 2px solid var(--panel);
   border-radius: 50%;
@@ -127,7 +127,7 @@ html {
   top: calc(var(--y) * (var(--cell-size) + var(--grid-gap)));
   width: calc(var(--w) * var(--cell-size) + (var(--w) - 1) * var(--grid-gap));
   height: calc(var(--h) * var(--cell-size) + (var(--h) - 1) * var(--grid-gap));
-  border-radius: 14px;
+  border-radius: var(--radius-drop-highlight);
   pointer-events: none;
 }
 
@@ -162,17 +162,18 @@ button.weather-tile {
   position: fixed;
   z-index: 50;
   left: 50%;
-  bottom: 16px;
+  bottom: var(--status-chip-offset-bottom);
   transform: translateX(-50%);
   width: max-content; /* a centred fixed box without a width would shrink to the half viewport right of left:50% */
   max-width: min(560px, calc(100vw - 32px));
-  padding: 10px 14px;
+  padding: var(--status-chip-padding-y) var(--status-chip-padding-x);
   border: 1px solid var(--danger);
-  border-radius: 10px;
+  border-radius: var(--radius-status-chip);
   background: var(--panel);
   color: var(--danger);
-  font-size: 14px;
-  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-body);
+  box-shadow: var(--shadow-status);
 }
 
 .desktop-status[hidden] {
@@ -185,7 +186,7 @@ button.weather-tile {
   justify-content: center;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 13px;
+  border-radius: var(--radius-tile);
   background: var(--panel);
   color: var(--text);
   font: inherit;
@@ -212,12 +213,12 @@ button.weather-tile {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-grid-8);
   min-width: 0;
   padding: 0;
   overflow: hidden;
   border: 1px solid rgba(var(--favorite-accent-rgb), 0.78);
-  border-radius: 13px;
+  border-radius: var(--radius-tile);
   background: linear-gradient(
     135deg,
     rgba(var(--favorite-accent-rgb), 0.18),
@@ -235,7 +236,7 @@ button.weather-tile {
 
 .favorite-tile[data-w="2"] {
   justify-content: flex-start;
-  padding: 0 12px;
+  padding: 0 var(--space-grid-12);
 }
 
 .favorite-tile[data-w="2"][data-h="2"] {
@@ -243,7 +244,7 @@ button.weather-tile {
   align-items: flex-start;
   justify-content: center;
   gap: 6px;
-  padding: 10px 12px;
+  padding: var(--space-grid-10) var(--space-grid-12);
 }
 
 .favorite-tile__text {
@@ -348,8 +349,8 @@ button.weather-tile {
 
 .status {
   margin: 0;
-  font-size: 14px;
-  line-height: 1.4;
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-body);
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -392,13 +393,13 @@ button.weather-tile {
   left: 0;
   width: max-content;
   max-width: min(260px, calc(100vw - 16px));
-  padding: 8px 10px;
+  padding: var(--space-grid-8) var(--space-grid-10);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: var(--panel);
-  box-shadow: 0 18px 50px rgb(0 0 0 / 10%);
+  box-shadow: var(--shadow-tooltip);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   line-height: 1.35;
   text-align: center;
   pointer-events: none;
@@ -418,7 +419,7 @@ button.weather-tile {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 13px;
+  border-radius: var(--radius-tile);
   background: var(--panel);
 }
 
@@ -436,8 +437,8 @@ button.weather-tile {
 
 .weather-tile[data-w="2"]:not([data-h="2"]) {
   flex-direction: row;
-  gap: 8px;
-  padding: 0 10px;
+  gap: var(--space-grid-8);
+  padding: 0 var(--space-grid-10);
 }
 
 .weather-tile[data-w="2"]:not([data-h="2"]) .weather-tile__glyph svg {
@@ -461,7 +462,7 @@ button.weather-tile {
 
 .weather-tile__city {
   max-width: 100%;
-  padding: 0 10px;
+  padding: 0 var(--space-grid-10);
   overflow: hidden;
   font-size: 12px;
   color: var(--muted);
@@ -489,7 +490,7 @@ button.weather-tile {
   justify-content: center;
   padding: 0;
   border: 1px dashed var(--border);
-  border-radius: 13px;
+  border-radius: var(--radius-tile);
   background: var(--panel);
   color: var(--text);
   font: inherit;
@@ -544,10 +545,10 @@ button.weather-tile {
 /* Weather type follows the cell size that newtab.js sets from gridMetrics (R4: :root[data-cell] next to --cell-size),
    never a viewport query, so it always agrees with the cell box (a classic scrollbar cannot split them). :where keeps
    the specificity of a single class, so the 2-high sizes above still win. */
-:where(:root[data-cell="64"]) .weather-tile__primary { font-size: 16px; }
-:where(:root[data-cell="64"]) .weather-tile__secondary { font-size: 10px; }
-:where(:root[data-cell="56"]) .weather-tile__primary { font-size: 14px; }
-:where(:root[data-cell="56"]) .weather-tile__secondary { font-size: 9px; }
+:where(:root[data-cell="64"]) .weather-tile__primary { font-size: var(--font-size-weather-primary-cell-64); }
+:where(:root[data-cell="64"]) .weather-tile__secondary { font-size: var(--font-size-weather-secondary-cell-64); }
+:where(:root[data-cell="56"]) .weather-tile__primary { font-size: var(--font-size-weather-primary-cell-56); }
+:where(:root[data-cell="56"]) .weather-tile__secondary { font-size: var(--font-size-weather-secondary-cell-56); }
 
 /* The − badge of a tile being dragged is hidden (the hidden attribute must win over display:inline-flex). */
 .desktop-grid > .tile-remove[hidden] { display: none; }

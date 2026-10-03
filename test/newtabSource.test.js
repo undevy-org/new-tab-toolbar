@@ -692,7 +692,7 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
     assert.match(styles, /\.desktop \{[^}]*min-height: 100vh;[^}]*padding: var\(--grid-pad, 16px\);/s);
     assert.match(styles, /\.desktop-grid \{[^}]*position: relative;[^}]*margin: 0 auto;/s);
     assert.match(styles, /\.desktop-grid > \[data-widget-id\] \{[^}]*position: absolute;[^}]*left: calc\(var\(--x\) \* \(var\(--cell-size\) \+ var\(--grid-gap\)\)\);/s);
-    assert.match(styles, /\.desktop-grid > \.tile-remove \{[^}]*width: 24px;[^}]*height: 24px;/s);
+    assert.match(styles, /\.desktop-grid > \.tile-remove \{[^}]*width: var\(--tile-remove-size\);[^}]*height: var\(--tile-remove-size\);/s);
     assert.match(styles, /\.favorite-tile__label,\s*\.favorite-tile__host \{[^}]*text-overflow: ellipsis;/s);
     assert.doesNotMatch(styles, /grid-column: span 2/);
   });
@@ -837,9 +837,22 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
     const styles = await appStyles();
     assert.match(fn(code, "applyGridMetrics"), /document\.documentElement\.dataset\.cell = String\(metrics\.cell\);/);
-    for (const [cell, primary, secondary] of [["64", 16, 10], ["56", 14, 9]]) {
-      assert.match(css, new RegExp(`:where\\(:root\\[data-cell="${cell}"\\]\\) \\.weather-tile__primary \\{ font-size: ${primary}px; \\}`));
-      assert.match(css, new RegExp(`:where\\(:root\\[data-cell="${cell}"\\]\\) \\.weather-tile__secondary \\{ font-size: ${secondary}px; \\}`));
+    for (const [cell, primaryToken, secondaryToken] of [
+      ["64", "--font-size-weather-primary-cell-64", "--font-size-weather-secondary-cell-64"],
+      ["56", "--font-size-weather-primary-cell-56", "--font-size-weather-secondary-cell-56"]
+    ]) {
+      assert.match(
+        css,
+        new RegExp(
+          `:where\\(:root\\[data-cell="${cell}"\\]\\) \\.weather-tile__primary \\{ font-size: var\\(${primaryToken}\\); \\}`
+        )
+      );
+      assert.match(
+        css,
+        new RegExp(
+          `:where\\(:root\\[data-cell="${cell}"\\]\\) \\.weather-tile__secondary \\{ font-size: var\\(${secondaryToken}\\); \\}`
+        )
+      );
     }
     for (const block of css.matchAll(/@media \(max-width: \d+px\) \{[\s\S]*?\n\}/g)) assert.doesNotMatch(block[0], /weather-tile/);
     assert.match(css, /\.desktop-status \{[^}]*width: max-content;[^}]*max-width: min\(560px, calc\(100vw - 32px\)\);/s);

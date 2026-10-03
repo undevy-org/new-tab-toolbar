@@ -3,11 +3,12 @@
 This document is the public source of truth for UI tokens, components, and layout
 rules on the new tab page. Phase 1 splits overlay styles into
 `src/design-tokens.css`, `src/controls.css`, and `src/surfaces.css`; grid and
-tile styling stays in `src/newtab.css` until Phase 2.
+tile presentation rules live in `src/newtab.css` and use Phase 2 tokens from
+`design-tokens.css`.
 
 **Status:** Phase 1 (controls + surfaces v1) **implemented** (merge `ea00c29`).
-**Phase 2** (grid / tiles / page chrome) — **spec adopted 2026-10-03**;
-implementation pending. See [Phase 2](#phase-2-grid--tiles--page-chrome) and
+**Phase 2** (grid / tiles / page chrome) — **implemented** (PR #2).
+See [Phase 2](#phase-2-grid--tiles--page-chrome) and
 `docs/plans/2026-10-03-design-system-phase-2.md`.
 
 ## Principles
@@ -274,8 +275,10 @@ styles in `controls.css` / `surfaces.css`.
   `--focus-tile-width` / `--focus-tile-offset` custom properties (documented
   names only) so `test/focusTokens.test.js` selectors stay stable.
 - `body` uses **`--line-height-page` (1.45)** for page rhythm; **`--line-height-body`
-  (1.4)** applies to `.status` and `.desktop-status` only — no visual change vs
-  pre-Phase-2 (do not set `body` to `var(--line-height-body)`).
+  (1.4)** applies to `.status` and `.desktop-status` only (do not set `body` to
+  `var(--line-height-body)`). `.status` is unchanged; `.desktop-status` previously
+  inherited **1.45** from `body` and now matches `.status` at **1.4** — the one
+  intentional visual change in Phase 2.
 - Tooltip `line-height` stays **1.35** (accepted exception; no token).
 - No new stylesheet file; grid/tile rules remain in `newtab.css`.
 
@@ -294,7 +297,7 @@ styles in `controls.css` / `surfaces.css`.
 | `--status-chip-padding-x` | **14px** | `.desktop-status` horizontal padding |
 | `--status-chip-offset-bottom` | **16px** | `.desktop-status` `bottom` inset |
 | `--tile-remove-size` | **24px** | `.desktop-grid > .tile-remove` width/height |
-| `--tile-remove-offset` | **8px** (`var(--space-grid-8)`) | Negative inset from tile corner for − badge |
+| `--tile-remove-offset` | **8px** (same value as `--space-grid-8`) | Negative inset from tile corner for − badge |
 | `--space-grid-8` | **8px** | `.favorite-tile` / weather row `gap`; `.tooltip` padding-block; remove offset |
 | `--space-grid-10` | **10px** | 2×2 favorite padding-block; weather / city line horizontal padding; `.tooltip` padding-inline |
 | `--space-grid-12` | **12px** | 2-wide favorite horizontal padding; 2×2 favorite padding-inline |
@@ -388,14 +391,14 @@ E2E or extended unit assertions are expected.
   and `.desktop-status` measurable when shown (AS-DS-13 setup or any visible
   status chip).
 - When: `getComputedStyle` on `document.body`, `.status`, and `.desktop-status`.
-- Then: Body `font-family` matches the `--font-family` stack; body `line-height` is
-  **1.45** ± **0.02** (computed, from `--line-height-page`). `.status` and
-  `.desktop-status` each have computed `font-size` **14px** ± **0.5px** and
-  `line-height` **1.4** ± **0.02** after Phase 2 (via `--font-size-md` and
-  `--line-height-body` in `newtab.css` source).
+- Then: Body and `.status` use the token names in `newtab.css` source (`--font-family`,
+  `--line-height-page`, `--font-size-md`, `--line-height-body`). When
+  `#desktop-status` is visible, computed `font-size` is **14px** ± **0.5px**
+  (E2E); computed body line-height and dialog `.status` metrics follow the token
+  values above (source-verified; optional future computed probes).
 - Verified by: `test/designSystem.test.js` source assertions on `newtab.css`
-  (plan Task 1 / Task 4); optional computed checks in the same file or E2E when
-  status is visible.
+  (Tasks 1–4); E2E `dg-42-grid-chrome-metrics.mjs` for computed
+  `#desktop-status` `font-size` when the sync-failure chip is shown.
 
 ### AS-DS-16 Grid v2 tokens declared
 - Given: Phase 2 token task complete.
@@ -457,7 +460,7 @@ E2E or extended unit assertions are expected.
 
 ### Review focus (Phase 2)
 
-- **Visual:** Tile **13px** vs drop highlight **14px** — highlight should still read slightly rounder than tiles; status chip **10px** and popover shadow; tooltip shadow vs modal/popover hierarchy; light/dark parity after token swap.
+- **Visual:** Tile **13px** vs drop highlight **14px** — highlight should still read slightly rounder than tiles; status chip **10px** and popover shadow; tooltip shadow vs modal/popover hierarchy; light/dark parity after token swap (checkpoint/final design review visual lens + `design-tokens.css` dark `@media`, not a separate AS metric).
 - **Scenarios:** Drag valid/invalid highlight; status line with long error text; tooltip above/below placement at viewport edges (`placeTooltip`); edit-mode jiggle + remove badge offset (**8px**) unchanged.
 - **Accessibility:** No regression on tile keyboard focus rings; status `role="alert"` unchanged; tooltip still `pointer-events: none` and hidden in edit/drag.
 
