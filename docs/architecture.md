@@ -264,8 +264,8 @@ The new tab page loads CSS in dependency order from `src/newtab.html`:
 | File | Role |
 | --- | --- |
 | `design-tokens.css` | Color, typography, spacing, radius, shadow, and focus tokens (light/dark). |
-| `controls.css` | Overlay controls: buttons, inputs, segmented groups, add-menu rows, city field. |
-| `surfaces.css` | Dialog and modal shells, backdrops, popovers, overlay focus rings. |
+| `controls.css` | Overlay controls: buttons, inputs, segmented groups, add-menu rows, city field, and each control's own base focus style. |
+| `surfaces.css` | Dialog and modal shells, backdrops, popovers, and the focus rings scoped to `.desktop-dialog` / `.city-modal`. |
 | `newtab.css` | Desktop grid, tiles, weather presentation, tooltip, page chrome. |
 
 Public spec: [`docs/design-system.md`](design-system.md) (phase 1: controls + surfaces; grid tokens are phase 2).

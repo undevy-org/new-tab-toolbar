@@ -28,6 +28,14 @@ describe("overlay control CSS (AS-DS-10)", () => {
     assert.doesNotMatch(css, /\.add-menu__item[^}]*min-height:\s*36px/);
   });
 
+  it("declares .button--danger after .button so the modifier wins the equal-specificity cascade", async () => {
+    const css = await readFile(new URL("../src/controls.css", import.meta.url), "utf8");
+    const base = css.search(/^\.button \{/m);
+    const danger = css.search(/^\.button--danger \{/m);
+    assert.ok(base > -1 && danger > base, `.button at ${base}, .button--danger at ${danger}`);
+    assert.match(css.slice(danger, css.indexOf("}", danger)), /border-color: var\(--danger\);\s*color: var\(--danger\);/);
+  });
+
   it("keeps vertical padding on suggestion rows so a wrapped city name does not touch the row edges", async () => {
     const tokens = await readFile(new URL("../src/design-tokens.css", import.meta.url), "utf8");
     const css = await readFile(new URL("../src/controls.css", import.meta.url), "utf8");

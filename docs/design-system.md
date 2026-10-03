@@ -28,7 +28,7 @@ implemented.** Grid/tile tokens remain planned (v2).
 |------|----------|
 | `design-tokens.css` | Color, type, spacing, radius, shadow, focus tokens; light/dark |
 | `controls.css` | Buttons, inputs, segmented, icon-button, text-button, color input, list/menu rows |
-| `surfaces.css` | Modal shells, backdrops, popovers (add menu, suggestions) |
+| `surfaces.css` | Modal shells, backdrops, popovers (add menu, suggestions), focus rings scoped to `.desktop-dialog` / `.city-modal` |
 | `newtab.css` | Desktop grid, tiles, weather presentation, tooltip, page chrome |
 
 Load order in `newtab.html`: tokens → controls → surfaces → newtab.

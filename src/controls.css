@@ -177,11 +177,6 @@
   background: var(--panel);
 }
 
-.button--danger {
-  border-color: var(--danger);
-  color: var(--danger);
-}
-
 .button {
   display: inline-flex;
   align-items: center;
@@ -224,6 +219,12 @@
   background: var(--primary-hover);
 }
 
+/* After .button: same specificity, so the .button border and color shorthands would otherwise win. */
+.button--danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 .text-button {
   flex: none;
   min-height: var(--control-height);
@@ -242,10 +243,6 @@
 .text-button:disabled {
   color: var(--muted);
   cursor: default;
-}
-
-.desktop-dialog .text-button:focus-visible {
-  box-shadow: 0 0 0 2px var(--soft-ring);
 }
 
 .weather-form {

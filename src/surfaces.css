@@ -247,6 +247,10 @@
   background: var(--primary);
 }
 
+.desktop-dialog .text-button:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus-overlay-ring);
+}
+
 /* The color input: the shared transparent outline above (forced colors) plus the same soft ring as the other fields.
    While Auto is selected it is dimmed; at full opacity while focused so the ring keeps its contrast. */
 .desktop-dialog .favorite-color-input:focus-visible {
