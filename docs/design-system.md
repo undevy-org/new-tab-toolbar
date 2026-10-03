@@ -445,6 +445,7 @@ E2E or extended unit assertions are expected.
 - When: Jiggle toggle, drag/drop, repack, and **320×600** / **500×800** layouts run after Phase 2.
 - Then: Same pass/fail as pre-Phase-2 baseline; no new horizontal scroll or overlap.
 - Verified by: E2E `dg-03-jiggle-toggle.mjs`, `dg-05-drag-widget.mjs`, `dg-10-viewport-320-600.mjs` (plan Task 6)
+- Amended by AS-FU-03 (`docs/design-system-followup.md`): no highlight is drawn for a block that does not fit or lies beyond the allowed row; invalid-because-occupied keeps the dashed outline.
 
 ### AS-DS-21 Tooltip modes (unchanged behavior)
 - Given: Weather tiles with forecast data.
