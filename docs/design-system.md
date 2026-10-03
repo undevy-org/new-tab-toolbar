@@ -7,7 +7,7 @@ tile presentation rules live in `src/newtab.css` and use Phase 2 tokens from
 `design-tokens.css`.
 
 **Status:** Phase 1 (controls + surfaces v1) **implemented** (merge `ea00c29`).
-**Phase 2** (grid / tiles / page chrome) — **implemented** (branch `feat/design-system-phase-2`).
+**Phase 2** (grid / tiles / page chrome) — **implemented** (PR #2).
 See [Phase 2](#phase-2-grid--tiles--page-chrome) and
 `docs/plans/2026-10-03-design-system-phase-2.md`.
 
@@ -275,8 +275,10 @@ styles in `controls.css` / `surfaces.css`.
   `--focus-tile-width` / `--focus-tile-offset` custom properties (documented
   names only) so `test/focusTokens.test.js` selectors stay stable.
 - `body` uses **`--line-height-page` (1.45)** for page rhythm; **`--line-height-body`
-  (1.4)** applies to `.status` and `.desktop-status` only — no visual change vs
-  pre-Phase-2 (do not set `body` to `var(--line-height-body)`).
+  (1.4)** applies to `.status` and `.desktop-status` only (do not set `body` to
+  `var(--line-height-body)`). `.status` is unchanged; `.desktop-status` previously
+  inherited **1.45** from `body` and now matches `.status` at **1.4** — the one
+  intentional visual change in Phase 2.
 - Tooltip `line-height` stays **1.35** (accepted exception; no token).
 - No new stylesheet file; grid/tile rules remain in `newtab.css`.
 
