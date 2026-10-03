@@ -48,7 +48,7 @@ describe("newtab weather source", () => {
     const code = await source();
     assert.match(code, /form\.dataset\.weatherForm !== "city"/);
     assert.match(code, /changeCity\(\(\) => weatherService\.setCity\(cityName\)\)/);
-    assert.match(code, /cityModalError = error instanceof Error/);
+    assert.match(code, /cityModalError = weatherErrorMessage\(error\);/);
     assert.doesNotMatch(code, /weatherFormError/);
   });
 

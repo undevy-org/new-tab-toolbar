@@ -25,7 +25,7 @@ forecast cache and a per-device "city prompt dismissed" flag persist to
 | `src/favoritesShared.js` | Shared favorites constants (icon modes, color sources, tile sizes) and helpers. |
 | `src/favoriteIcon.js` | Chooses a favicon, custom image, or letter icon for a tile. |
 | `src/favoriteColor.js` | Derives a tile's accent color from its domain or a sampled icon. |
-| `src/weatherApi.js` | Calls Open-Meteo's forecast, air-quality, and geocoding endpoints, normalizes responses, and maps UV index and US AQI values to scale labels. |
+| `src/weatherApi.js` | Calls Open-Meteo's forecast, air-quality, and geocoding endpoints, normalizes responses, maps UV index and US AQI values to scale labels, and classifies failures (`details.kind`) into fixed user-facing texts via `weatherErrorMessage`. |
 | `src/weatherStore.js` | Validates, reads, and writes the chosen location and the forecast cache, and reads/writes the per-device city-prompt-dismissed flag. |
 | `src/cityPrompt.js` | Pure rule for whether the first-run city modal opens by itself on this page load. |
 | `src/weatherService.js` | Serves a fresh cached forecast or fetches and caches a new one; resolves a typed city name to a location. |
@@ -157,7 +157,12 @@ the forecast arrives. A 2-wide tile shows the primary and secondary values, a
 3. Otherwise the service fetches the forecast and air quality in parallel and
    caches the result. If that fails but an older cache for the same location
    exists, the tiles show it marked as stale (dashed border). With no cache the
-   tiles show an unavailable state and their descriptions carry the error.
+   tiles show an unavailable state and their descriptions carry the user-safe error text.
+   Failures are classified, never echoed: `weatherApi.js` tags each `WeatherApiError`
+   with `details.kind` (`network`, `timeout`, `http`, `notFound`, otherwise unknown) and
+   wraps a rejected `fetch` as `network`; `weatherErrorMessage(error)` turns the kind
+   into a fixed calm text, so `result.error` and the city modal's error slot never
+   hold a browser or developer message.
 4. Setting a city, from the city modal, geocodes the typed name (Open-Meteo returns English place
    names), stores the resolved location, and fetches a fresh forecast. Choosing a
    suggestion only fills the field; Save then stores that city without a geocoding

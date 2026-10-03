@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Network failures in the city flow no longer show the browser's raw "Failed to fetch"
+  (or developer text such as a status code). The city modal and the weather tiles
+  show a calm, fixed message by kind of failure: can't reach the service, the
+  service isn't responding, request took too long, or a generic fallback. Save is
+  still the retry; the typed city is kept. E2E: `dg-45-city-network-error.mjs`.
 - While no city is set, the 1×1 "Set a city" hint now shows a map pin, so the
   grid has one plus icon (Add) instead of two. The wide hint keeps its text.
 - Dragging a tile in edit mode: the drop outline is drawn only at the cell being

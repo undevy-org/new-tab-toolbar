@@ -489,7 +489,23 @@ describe("newtab city modal source", () => {
     assert.match(change, /weatherLocationError = "";/);
     assert.match(change, /cityModalError = "";\s*syncCityModal\(\);\s*renderFavorites\(\);/);
     assert.match(code, /const CITY_REQUEST_TIMEOUT_MS = 15000;/);
-    assert.match(code, /The request took too long\. Check your connection and try again\./);
+    assert.match(code, /new WeatherApiError\("Request timed out", \{ kind: "timeout" \}\)/);
+    assert.doesNotMatch(code, /The request took too long/);
+    const api = await readFile(new URL("../src/weatherApi.js", import.meta.url), "utf8");
+    assert.match(api, /The request took too long\. Check your connection and try again\./);
+  });
+  it("shows only classified error text: no raw error message reaches the city modal, boot error or start result", async () => {
+    const code = await source();
+    assert.doesNotMatch(code, /cityModalError = error/);
+    assert.match(code, /cityModalError = weatherErrorMessage\(error\);/);
+    assert.match(code, /weatherLocationError = weatherErrorMessage\(error\);/);
+    assert.doesNotMatch(code, /weatherLocationError = error/);
+    const start = code.indexOf("async function startWeather()");
+    const startBody = code.slice(start, code.indexOf("\n}\n", start));
+    assert.match(startBody, /error: weatherErrorMessage\(error\)/);
+    assert.doesNotMatch(startBody, /error\.message|String\(error\)/);
+    const modal = between(code, "function createCityForm(mode)", "function createWeatherMetricTile(");
+    assert.doesNotMatch(modal, /innerHTML/);
   });
   it("builds the modal with text-only buttons, a novalidate form and the approved strings, never innerHTML", async () => {
     const code = await source();

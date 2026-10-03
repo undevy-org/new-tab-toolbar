@@ -31,7 +31,7 @@ import {
 } from "./widgetsStore.js";
 import { placeTooltip } from "./widgetsLayout.js";
 import { NEWER_WIDGETS_MESSAGE, weatherMetricKey } from "./widgetsShared.js";
-import { searchCities } from "./weatherApi.js";
+import { searchCities, WeatherApiError, weatherErrorMessage } from "./weatherApi.js";
 import { createWeatherService } from "./weatherService.js";
 import { shouldAutoShowCityPrompt } from "./cityPrompt.js";
 import { createWeatherCacheStore, createWeatherLocationStore, createWeatherPromptStore } from "./weatherStore.js";
@@ -2132,7 +2132,7 @@ if (favoritesRoot) {
       try {
         weatherLocation = await weatherLocationStore.getLocation();
       } catch (error) {
-        weatherLocationError = error instanceof Error ? error.message : String(error);
+        weatherLocationError = weatherErrorMessage(error);
       }
       weatherLocationKnown = true;
     }
@@ -2348,7 +2348,7 @@ async function startWeather() {
       status: "error",
       location: null,
       data: null,
-      error: error instanceof Error ? error.message : String(error)
+      error: weatherErrorMessage(error)
     };
   }
 
@@ -2365,7 +2365,7 @@ async function startWeather() {
 function withTimeout(promise) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
-      () => reject(new Error("The request took too long. Check your connection and try again.")),
+      () => reject(new WeatherApiError("Request timed out", { kind: "timeout" })),
       CITY_REQUEST_TIMEOUT_MS
     );
     promise.then(
@@ -2402,7 +2402,7 @@ function changeCity(run) {
       weatherLocationError = ""; // a successful selection clears an earlier read error
       ok = true;
     } catch (error) {
-      cityModalError = error instanceof Error ? error.message : String(error);
+      cityModalError = weatherErrorMessage(error);
     } finally {
       weatherBusy = false;
       weatherChanging = false;

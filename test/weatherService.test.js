@@ -134,8 +134,22 @@ describe("createWeatherService", () => {
     const result = await service.selectLocation(TBILISI);
 
     assert.equal(result.status, "error");
-    assert.equal(result.error, "network down");
+    assert.equal(result.error, "Couldn't load weather. Try again in a moment.");
+    assert.doesNotMatch(result.error, /network down/);
     assert.deepEqual(await locationStore.getLocation(), result.location);
+  });
+
+  it("shows the mapped network text when the forecast cannot be reached, never the raw rejection", async () => {
+    const harness = createHarness({
+      fetchWeather: async () => {
+        throw new WeatherApiError("Weather request could not reach the network", { kind: "network" });
+      }
+    });
+
+    const result = await harness.service.selectLocation(TBILISI);
+
+    assert.equal(result.status, "error");
+    assert.equal(result.error, "Can't reach the weather service. Check your connection and try again.");
   });
 
   it("returns ready from a fresh cache without calling fetch again", async () => {
@@ -184,7 +198,7 @@ describe("createWeatherService", () => {
       now: () => clock,
       fetchWeather: async () => {
         if (shouldFail) {
-          throw new WeatherApiError("Open-Meteo forecast request failed with status 503");
+          throw new WeatherApiError("Open-Meteo forecast request failed with status 503", { kind: "http" });
         }
         return WEATHER_READING;
       }
@@ -198,13 +212,13 @@ describe("createWeatherService", () => {
 
     assert.equal(result.status, "stale");
     assert.equal(result.data.temperature, 24);
-    assert.match(result.error, /503/);
+    assert.equal(result.error, "The weather service isn't responding right now. Try again in a moment.");
   });
 
   it("reports error with no data when there is no cache and the fetch fails", async () => {
     const harness = createHarness({
       fetchWeather: async () => {
-        throw new WeatherApiError("Open-Meteo forecast request failed with status 500");
+        throw new WeatherApiError("Open-Meteo forecast request failed with status 500", { kind: "http" });
       }
     });
 
@@ -213,7 +227,8 @@ describe("createWeatherService", () => {
 
     assert.equal(result.status, "error");
     assert.equal(result.data, null);
-    assert.match(result.error, /500/);
+    assert.equal(result.error, "The weather service isn't responding right now. Try again in a moment.");
+    assert.doesNotMatch(result.error, /500|Open-Meteo/);
   });
 
   it("forces a fresh fetch when the city changes, ignoring TTL", async () => {
