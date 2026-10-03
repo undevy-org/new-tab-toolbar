@@ -100,7 +100,7 @@ describe("no focus rule hides the outline without a visible replacement (fix wav
       it(`${base.split(" ")[0]}: ${selector.split("\n")[0]} draws a 2px --soft-ring ring`, () => {
         const rule = ruleFor(selector);
         assert.ok(rule, selector);
-        assert.match(rule.body, /box-shadow: 0 0 0 2px var\(--soft-ring\);/);
+        assert.match(rule.body, /box-shadow: 0 0 0 2px var\(--(?:soft-ring|focus-overlay-ring)\);/);
       });
     }
   }

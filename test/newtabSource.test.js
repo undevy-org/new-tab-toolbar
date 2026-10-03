@@ -8,6 +8,16 @@ async function source() {
   return readFile(NEWTAB_SOURCE, "utf8");
 }
 
+async function appStyles() {
+  const base = new URL("../src/", import.meta.url);
+  const [surfaces, controls, app] = await Promise.all([
+    readFile(new URL("surfaces.css", base), "utf8"),
+    readFile(new URL("controls.css", base), "utf8"),
+    readFile(new URL("newtab.css", base), "utf8")
+  ]);
+  return surfaces + controls + app;
+}
+
 describe("newtab favorites source", () => {
   it("styles the drop highlight: invalid = --danger dashed outline with >= 3:1 against --bg in both themes", async () => {
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
@@ -423,15 +433,16 @@ describe("newtab city modal source", () => {
   });
 
   it("modal controls get a transparent 2px outline only while focused, plus the soft ring", async () => {
-    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    const css = await appStyles();
+    const ring = /box-shadow: 0 0 0 2px var\(--(?:soft-ring|focus-overlay-ring)\);/;
     assert.match(css, /\.city-modal :is\(button, input, \.weather-form__suggestion\):focus-visible \{\s*outline: 2px solid transparent;/);
     assert.doesNotMatch(css, /\.city-modal :is\(button, input[^)]*\)\s*\{/); // never on resting controls
     for (const selector of [".city-modal .favorite-input:focus-visible", ".city-modal .icon-button:focus-visible", ".city-modal .weather-form__suggestion:focus-visible"]) {
       const at = css.indexOf(selector);
       assert.ok(at > -1, selector);
-      assert.match(css.slice(at, css.indexOf("}", at)), /box-shadow: 0 0 0 2px var\(--soft-ring\);/, selector);
+      assert.match(css.slice(at, css.indexOf("}", at)), ring, selector);
     }
-    assert.match(css, /\.city-modal \.button:focus-visible,\s*\.city-modal \.icon-button:focus-visible \{\s*background: var\(--soft-fill-strong\);\s*box-shadow: 0 0 0 2px var\(--soft-ring\);/);
+    assert.match(css, /\.city-modal \.button:focus-visible,\s*\.city-modal \.icon-button:focus-visible \{\s*background: var\(--soft-fill-strong\);\s*box-shadow: 0 0 0 2px var\(--(?:soft-ring|focus-overlay-ring)\);/);
     assert.doesNotMatch(css, /\.weather-form__suggestion:focus-visible \{\s*outline: 3px/);
   });
 
@@ -496,11 +507,11 @@ describe("newtab city modal source", () => {
   });
 
   it("styles the modal above the panel and tooltip, with a readable placeholder and a visible focus ring", async () => {
-    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    const css = await appStyles();
     assert.match(css, /\.city-modal \{[^}]*position: fixed;[^}]*z-index: 100;/s);
-    assert.match(css, /\.city-modal__backdrop \{[^}]*background: rgb\(0 0 0 \/ 50%\);/s);
-    assert.match(css, /\.city-modal__dialog \{[^}]*width: min\(420px, calc\(100vw - 32px\)\);/s);
-    assert.match(css, /\.city-modal__dialog--scroll \{[^}]*max-height: calc\(100vh - 32px\);[^}]*overflow-y: auto;/s);
+    assert.match(css, /\.city-modal__backdrop \{[^}]*background: var\(--surface-backdrop\);/s);
+    assert.match(css, /\.city-modal__dialog \{[^}]*width: min\(var\(--surface-modal-max-width\), calc\(100vw - 2 \* var\(--viewport-margin\)\)\);/s);
+    assert.match(css, /\.city-modal__dialog--scroll \{[^}]*max-height: calc\(100vh - 2 \* var\(--viewport-margin\)\);[^}]*overflow-y: auto;/s);
     assert.match(css, /\.city-modal \.favorite-input::placeholder \{[^}]*color: var\(--muted\);[^}]*opacity: 1;/s);
     assert.doesNotMatch(css, /\.city-modal[^{]*\{[^}]*transition/s);
   });
@@ -768,8 +779,8 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
     assert.match(hide, /if \(desktopDialogRoot\) \{[^}]*desktopDialogRoot\.inert = false;\s*syncWeatherDialogCity\(\);\s*\} else if \(favoritesRoot\) favoritesRoot\.inert = false;/);
     // The opener of a stacked city modal lives in the dialog, outside the grid: focus lookup is document-wide.
     assert.match(fn(code, "applyPendingFocus"), /const target = document\.querySelector\(selector\);/);
-    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
-    assert.match(css, /\.city-modal\.city-modal--stacked \{ z-index: 102; \}/);
+    const css = await appStyles();
+    assert.match(css, /\.city-modal\.city-modal--stacked\s*\{[^}]*z-index: 102;/s);
     assert.match(css, /\.desktop-dialog \{[^}]*z-index: 101;/s);
   });
 
@@ -824,6 +835,7 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
   it("Task 11: weather type follows the JS-set cell size, not a viewport query; status line and dialog error spacing", async () => {
     const code = await source();
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    const styles = await appStyles();
     assert.match(fn(code, "applyGridMetrics"), /document\.documentElement\.dataset\.cell = String\(metrics\.cell\);/);
     for (const [cell, primary, secondary] of [["64", 16, 10], ["56", 14, 9]]) {
       assert.match(css, new RegExp(`:where\\(:root\\[data-cell="${cell}"\\]\\) \\.weather-tile__primary \\{ font-size: ${primary}px; \\}`));
@@ -831,7 +843,7 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
     }
     for (const block of css.matchAll(/@media \(max-width: \d+px\) \{[\s\S]*?\n\}/g)) assert.doesNotMatch(block[0], /weather-tile/);
     assert.match(css, /\.desktop-status \{[^}]*width: max-content;[^}]*max-width: min\(560px, calc\(100vw - 32px\)\);/s);
-    assert.match(css, /\.desktop-dialog__error \{\s*margin: 12px 0;/);
+    assert.match(styles, /\.desktop-dialog__error \{\s*margin: 12px 0;/);
     assert.doesNotMatch(css, /--metric-(on|off)/);
     assert.doesNotMatch(css, /z-index 40/);
   });
@@ -846,10 +858,11 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
   it("fix wave 2: the link dialog's color input has its own accessible name; narrow Edit link footer wraps; a hidden badge is not displayed", async () => {
     const code = await source();
     assert.match(fn(code, "createFavoriteForm"), /color\.type = "color";\s*color\.setAttribute\("aria-label", "Background color"\);/);
-    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
-    assert.match(css, /\.desktop-dialog\[data-dialog="edit-link"\] \.favorite-form__footer \{ flex-wrap: wrap; \}/);
-    assert.match(css, /\.desktop-dialog\[data-dialog="edit-link"\] \.favorite-form__footer > \.button--danger \{ flex-basis: 100%; margin-right: 0; \}/);
-    assert.match(css, /\.desktop-grid > \.tile-remove\[hidden\] \{ display: none; \}/);
+    const css = await appStyles();
+    const gridCss = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /\.desktop-dialog\[data-dialog="edit-link"\] \.favorite-form__footer\s*\{\s*flex-wrap: wrap;/s);
+    assert.match(css, /\.desktop-dialog\[data-dialog="edit-link"\] \.favorite-form__footer > \.button--danger\s*\{\s*flex-basis: 100%;[^}]*margin-right: 0;/s);
+    assert.match(gridCss, /\.desktop-grid > \.tile-remove\[hidden\] \{ display: none; \}/);
   });
 
   it("never uses innerHTML in newtab.js and adds no chrome.storage.onChanged listener", async () => {

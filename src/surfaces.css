@@ -1,1 +1,297 @@
-/* Modal shells, backdrops, popovers — populated in design system phase 1 Task 4. */
+.weather-form__suggestions {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + var(--surface-popover-gap));
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--surface-popover-padding);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: var(--control-border-width) solid var(--border);
+  border-radius: var(--radius-popover);
+  background: var(--panel);
+  box-shadow: var(--shadow-popover);
+}
+
+.weather-form__suggestions:empty {
+  display: none;
+}
+
+.weather-form__suggestions--docked {
+  position: static;
+  margin-top: var(--surface-popover-gap);
+  max-height: none;
+  box-shadow: none;
+}
+
+.city-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--viewport-margin);
+}
+
+.city-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--surface-backdrop);
+}
+
+.city-modal__dialog {
+  position: relative;
+  box-sizing: border-box;
+  width: min(var(--surface-modal-max-width), calc(100vw - 2 * var(--viewport-margin)));
+  padding: var(--surface-modal-padding);
+  border: var(--control-border-width) solid var(--border);
+  border-radius: var(--radius-modal);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow-modal);
+}
+
+.city-modal__dialog--scroll {
+  max-height: calc(100vh - 2 * var(--viewport-margin));
+  overflow-y: auto;
+}
+
+.city-modal__actions {
+  display: flex;
+  gap: var(--form-footer-gap);
+  margin-top: 16px;
+}
+
+.city-modal__actions .button {
+  flex: 1;
+  min-height: var(--control-height);
+  justify-content: center;
+  gap: var(--form-footer-gap);
+}
+
+.city-modal__title {
+  margin: 0 0 var(--title-margin-bottom);
+  font-size: var(--font-size-title);
+}
+
+.city-modal__description,
+.city-modal__current {
+  margin: 0 0 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.city-modal .status--full {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
+.city-modal .status--full[hidden] {
+  display: none;
+}
+
+.city-modal .favorite-input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+.city-modal :is(button, input, .weather-form__suggestion):focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+.city-modal .favorite-input:focus-visible {
+  background: var(--soft-fill);
+  box-shadow: 0 0 0 2px var(--focus-overlay-ring);
+}
+
+.city-modal .button:focus-visible,
+.city-modal .icon-button:focus-visible {
+  background: var(--soft-fill-strong);
+  box-shadow: 0 0 0 2px var(--focus-overlay-ring);
+}
+
+.city-modal .button--primary:focus-visible {
+  background: var(--primary);
+}
+
+.city-modal .weather-form__suggestion:focus-visible {
+  background: var(--soft-fill-strong);
+  box-shadow: 0 0 0 2px var(--focus-overlay-ring);
+}
+
+.city-modal.city-modal--stacked {
+  z-index: 102;
+}
+
+.desktop-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--surface-backdrop);
+}
+
+.desktop-dialog {
+  position: fixed;
+  z-index: 101;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  width: min(var(--surface-modal-max-width), calc(100vw - 2 * var(--viewport-margin)));
+  max-height: calc(100vh - 2 * var(--viewport-margin));
+  overflow-y: auto;
+  padding: var(--surface-modal-padding);
+  border: var(--control-border-width) solid var(--border);
+  border-radius: var(--radius-modal);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow-modal);
+}
+
+.desktop-dialog__title {
+  margin: 0 0 var(--title-margin-bottom);
+  font-size: var(--font-size-title);
+}
+
+@media (max-width: 400px) {
+  .desktop-dialog .favorite-form__row {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .desktop-dialog .favorite-form__row-label {
+    width: 100%;
+  }
+
+  .desktop-dialog .favorite-form__row > .segmented,
+  .desktop-dialog .favorite-form__row > .favorite-input,
+  .desktop-dialog .favorite-form__color-controls {
+    flex: 1 1 100%;
+  }
+
+  .desktop-dialog .segmented__option {
+    padding: 0 6px;
+    white-space: nowrap;
+  }
+
+  .desktop-dialog[data-dialog="edit-link"] .favorite-form__footer {
+    flex-wrap: wrap;
+  }
+
+  .desktop-dialog[data-dialog="edit-link"] .favorite-form__footer > .button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .desktop-dialog[data-dialog="edit-link"] .favorite-form__footer > .button--danger {
+    flex-basis: 100%;
+    margin-right: 0;
+  }
+}
+
+.desktop-dialog__error {
+  margin: 12px 0;
+  color: var(--danger);
+  font-size: var(--font-size-md);
+  overflow-wrap: anywhere;
+}
+
+.desktop-dialog__error[hidden] {
+  display: none;
+}
+
+.desktop-dialog .favorite-form {
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.desktop-dialog :is(button, input):focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+.desktop-dialog .favorite-input:focus-visible {
+  background: var(--soft-fill);
+  box-shadow: 0 0 0 2px var(--focus-overlay-ring);
+}
+
+.desktop-dialog .button:focus-visible {
+  background: var(--soft-fill-strong);
+  box-shadow: 0 0 0 2px var(--focus-overlay-ring);
+}
+
+.desktop-dialog .button--primary:focus-visible {
+  background: var(--primary);
+}
+
+.desktop-dialog .favorite-color-input:focus-visible {
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--focus-overlay-ring);
+}
+
+.desktop-dialog .segmented:has(input:focus-visible) {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--focus-overlay-ring);
+}
+
+.desktop-dialog .segmented__option:has(input:focus-visible) {
+  outline: none;
+}
+
+.desktop-dialog__body {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: var(--font-size-md);
+}
+
+.desktop-dialog[data-dialog="confirm-delete"] .favorite-form__footer {
+  justify-content: flex-end;
+  margin-top: 12px;
+  padding-bottom: 0;
+}
+
+.desktop-dialog[data-dialog="confirm-delete"] .favorite-form__footer .button--danger {
+  margin-right: 0;
+}
+
+.desktop-dialog__city {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--form-row-gap);
+  min-height: var(--control-height);
+  margin-bottom: 8px;
+}
+
+.desktop-dialog__city-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.add-menu {
+  position: absolute;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: var(--surface-popover-padding);
+  border: var(--control-border-width) solid var(--border);
+  border-radius: var(--radius-popover);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow-popover);
+}

@@ -27,4 +27,10 @@ describe("overlay control CSS (AS-DS-10)", () => {
     assert.doesNotMatch(css, /min-height:\s*44px/);
     assert.doesNotMatch(css, /\.add-menu__item[^}]*min-height:\s*36px/);
   });
+
+  it("modal titles use title-margin-bottom token in surfaces.css", async () => {
+    const css = await readFile(new URL("../src/surfaces.css", import.meta.url), "utf8");
+    assert.match(css, /\.desktop-dialog__title\s*\{[^}]*margin:\s*0 0 var\(--title-margin-bottom\)/s);
+    assert.match(css, /\.city-modal__title\s*\{[^}]*margin:\s*0 0 var\(--title-margin-bottom\)/s);
+  });
 });
