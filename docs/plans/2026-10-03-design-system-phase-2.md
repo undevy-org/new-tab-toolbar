@@ -74,7 +74,8 @@ Extend `test/designSystem.test.js` with a `describe("grid / page chrome tokens (
 - `--radius-drop-highlight: 14px;`
 - `--radius-status-chip: 10px;`
 - `--shadow-status: var(--shadow-popover);`
-- `--status-chip-padding-y: 10px;` and `--status-chip-padding-x: 14px;`
+- `--status-chip-padding-y: 10px;`, `--status-chip-padding-x: 14px;`, and
+  `--status-chip-offset-bottom: 16px;`
 - `--tile-remove-size: 24px;` and `--tile-remove-offset: 8px;`
 - Four `--font-size-weather-*-cell-*` tokens
 - `--line-height-page: 1.45;`
@@ -136,13 +137,13 @@ git -C .private commit -m "test(e2e): grid chrome metrics (AS-DS-11…14)"
 
 ---
 
-### Task 3: Migrate `newtab.css` radii, shadows, remove badge (serves AS-DS-11, AS-DS-12, AS-DS-14, AS-DS-17, AS-DS-18)
+### Task 3: Migrate `newtab.css` radii, shadows, remove badge (serves AS-DS-7, AS-DS-11, AS-DS-12, AS-DS-14, AS-DS-17, AS-DS-18)
 
 **Files:**
 - Modify: `src/newtab.css`
 - Modify: `test/designSystem.test.js`
 
-- [ ] **Step 1:** Add failing tests forbidding `border-radius: 13px` on tile selectors and `14px` on `.drop-highlight`; require `var(--radius-tile)`, `var(--radius-drop-highlight)`, `var(--shadow-tooltip)` on `.tooltip`, `var(--shadow-status)` or equivalent on `.desktop-status`, `var(--radius-status-chip)`, status-chip padding/offset tokens on `.desktop-status`, tile-remove size/offset tokens.
+- [ ] **Step 1:** Add failing tests forbidding `border-radius: 13px` on tile selectors and `14px` on `.drop-highlight`; require `var(--radius-tile)`, `var(--radius-drop-highlight)`, `var(--shadow-tooltip)` on `.tooltip`, `var(--shadow-status)` or equivalent on `.desktop-status`, `var(--radius-status-chip)`, status-chip padding/offset tokens on `.desktop-status`, tile-remove size/offset tokens. Extend overlay control tests for **AS-DS-7**: assert `.segmented__option` in `controls.css` uses `height: calc(var(--control-height) - 2 * var(--control-border-width))` (inner **38px** at default tokens; pairs with `dg-39` outer `.segmented` **40px**).
 
 - [ ] **Step 2:** Replace literals in `newtab.css` for: tile classes, `.drop-highlight`, `.desktop-status` (radius, shadow, padding, bottom offset), `.tooltip` (radius, shadow), `.tile-remove` dimensions/offsets; replace shipped **8 / 10 / 12 px** tile and tooltip spacing with `var(--space-grid-*)` (leave **6px** 2×2 favorite `gap` literal per spec). **Do not** edit focus `outline` lines.
 
