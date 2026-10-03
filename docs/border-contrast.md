@@ -29,7 +29,7 @@ Applied as defaults so the pipeline does not wait. Override any of them before t
    | light | `#838e9a` | 3.33:1 (panel `#ffffff`) | 3.05:1 (page `#f3f5f7`) | was 1.35 / 1.24 |
    | dark | `#68727f` | 3.28:1 (panel `#1d2229`) | 3.68:1 (page `#14171c`) | was 1.41 / 1.59 |
 
-   Both neighbours are checked because a chrome tile has the page outside and the panel inside, while a field has the panel on both sides. The page background is the harder case in light, the panel in dark. The light value is deliberately close to the minimum, so it is in light it is lighter than the muted text color (`#5c6672`), in dark it is dimmer than it (`#a8b0ba`), so the border still reads as a hairline, not a frame.
+   Both neighbours are checked because a chrome tile has the page outside and the panel inside, while a field has the panel on both sides. The page background is the harder case in light, the panel in dark. The light value is deliberately close to the minimum: in light it is lighter than the muted text color (`#5c6672`), in dark dimmer than it (`#a8b0ba`), so the border still reads as a hairline, not a frame.
 3. **Which surfaces use it** (the five that draw a control boundary with nothing else to identify it):
    - `.chrome-tile` (settings, add);
    - `.city-hint-tile` (dashed, same role: it is a button whose only cue at 1×1 is its edge and a glyph);
@@ -39,7 +39,7 @@ Applied as defaults so the pipeline does not wait. Override any of them before t
 
    Everything else keeps `--border`: card and surface edges (`.favorite-form`, `.city-modal__dialog`, `.desktop-dialog`, `.add-menu`, `.weather-form__suggestions`, `.tooltip`), row dividers (`.favorite-form__row` top rule), the dividers between segmented options, `.weather-tile` (informational at rest; in edit mode it is a button named "Edit <metric>", identified by its value text and by the edit-mode cues, so its faint border is kept; see Accepted exceptions), `.button` (has a text label), `.icon-button` (glyph; the city clear button already uses a transparent border), `.favorite-tile` (accent border plus icon and label).
 4. **Hover, pressed, focus unchanged:** `border-color: var(--primary)` on `.chrome-tile:hover` and `[aria-pressed="true"]` stays; the step from rest to hover is 5.6:1 in light (was 13.7:1) and 4.5:1 in dark (was 10.4:1) between the new rest color and `--primary`, still a clear change. Focus rings (`--focus-ring`, `--soft-ring`, `--focus`) are not touched.
-5. **Focused field:** a focused field gets the `--color-fill-soft` background plus the 2 px soft ring (AS-DS-6), and its border measures 2.94:1 (light) / 2.69:1 (dark) against that fill. The ring carries the focused boundary: it is drawn outside the border, and the soft ring measures 4.1:1 (light) and 6.2:1 (dark) against the panel and 4.0:1 / 5.4:1 against `--color-fill-soft`. `test/focusTokens.test.js` guards only the panel pair, so `test/borderContrast.test.js` adds the ring-on-`--color-fill-soft` check (>= 3:1), so the focused state is not measured against the border. If the owner wants the border alone to clear 3:1 on the focused fill, the values become darker (light about `#7d8793`) and the look gets heavier; not recommended.
+5. **Focused field:** a focused field gets the `--color-fill-soft` background plus the 2 px soft ring (AS-DS-6), and its border measures 2.94:1 (light) / 2.69:1 (dark) against that fill. The ring carries the focused boundary: it is drawn outside the border, and the soft ring measures 4.1:1 (light) and 6.2:1 (dark) against the panel and 4.0:1 / 5.4:1 against `--color-fill-soft`. `test/focusTokens.test.js` guards only the panel pair, so `test/borderContrast.test.js` adds the ring-on-`--color-fill-soft` check (>= 3:1). The focused state is therefore not measured against the border. If the owner wants the border alone to clear 3:1 on the focused fill, the values become darker (light about `#7d8793`) and the look gets heavier; not recommended.
 6. **Theme coverage:** both themes in the same change. Forced-colors mode keeps system colors for borders and is not changed.
 
 ## Scope
@@ -110,7 +110,7 @@ This changes what the user sees, so it follows the full UI-phase cycle: spec, pl
 - Given: the repository after the change.
 - When: `docs/design-system.md` (color token table and border-roles paragraph), `CHANGELOG.md` and the follow-up spec's Non-goals line are read.
 - Then: the token and its alias are listed with their role; the paragraph names the two roles and says which token a new control boundary must use; no line in the Components section still calls a field or segmented border `--color-border`; `CHANGELOG.md` has a `Changed` entry under `[Unreleased]` stating that field and chrome-tile borders are darker for accessibility; the follow-up spec's existing Non-goals line carries the "lifted by" note.
-- Verified by: a source assertion in `test/borderContrast.test.js` that `docs/design-system.md` mentions `--color-border-control`; design review (copy lens) reads the CHANGELOG line.
+- Verified by: source assertions in `test/borderContrast.test.js` that `docs/design-system.md` mentions `--color-border-control` and that its `.favorite-input`, `.segmented` and `.favorite-color-input` Components lines do not use a bare `--color-border`; design review (copy lens) reads the CHANGELOG line.
 
 ## Review focus
 

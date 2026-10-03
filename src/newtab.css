@@ -185,7 +185,7 @@ button.weather-tile {
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius-tile);
   background: var(--panel);
   color: var(--text);
@@ -489,7 +489,7 @@ button.weather-tile {
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px dashed var(--border);
+  border: 1px dashed var(--border-control);
   border-radius: var(--radius-tile);
   background: var(--panel);
   color: var(--text);

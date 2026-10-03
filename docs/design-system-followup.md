@@ -37,7 +37,7 @@ This changes what the user sees, so it follows the full UI-phase cycle: spec, pl
 
 - Changing the "at most one row below the lowest tile" rule or `canPlace` itself.
 - Changing tile keyboard focus tokens (`test/focusTokens.test.js`) without a dedicated AS and owner approval.
-- New design tokens or colors (`--danger`, `--primary`, drop-highlight radius stay as they are).
+- New design tokens or colors (`--danger`, `--primary`, drop-highlight radius stay as they are) (lifted for `--color-border-control` by `docs/border-contrast.md`).
 - Rewriting weather fetch, geocoding, or storage schemas.
 - Broad grid-engine features (multi-row gaps, repack policy) unless captured in a new AS and approved.
 

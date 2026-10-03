@@ -105,7 +105,7 @@
 .segmented {
   display: flex;
   min-height: var(--control-height);
-  border: var(--control-border-width) solid var(--border);
+  border: var(--control-border-width) solid var(--border-control);
   border-radius: var(--radius-control);
   overflow: hidden;
   box-sizing: border-box;
@@ -155,7 +155,7 @@
 .favorite-input {
   min-height: var(--control-height);
   padding: 0 var(--control-padding-x);
-  border: var(--control-border-width) solid var(--border);
+  border: var(--control-border-width) solid var(--border-control);
   border-radius: var(--radius-control);
   background: var(--panel);
   color: var(--text);
@@ -172,7 +172,7 @@
   width: 48px;
   height: var(--control-height);
   padding: 2px;
-  border: var(--control-border-width) solid var(--border);
+  border: var(--control-border-width) solid var(--border-control);
   border-radius: var(--radius-control);
   background: var(--panel);
 }
