@@ -41,6 +41,19 @@ describe("grid / page chrome tokens (AS-DS-16)", () => {
   });
 });
 
+describe("newtab.css typography tokens (AS-DS-15)", () => {
+  it("uses design tokens on body, status, and tooltip", async () => {
+    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+    assert.match(css, /body \{[^}]*font-family:\s*var\(--font-family\)/s);
+    assert.match(css, /body \{[^}]*line-height:\s*var\(--line-height-page\)/s);
+    assert.match(css, /\.status \{[^}]*font-size:\s*var\(--font-size-md\)/s);
+    assert.match(css, /\.status \{[^}]*line-height:\s*var\(--line-height-body\)/s);
+    assert.match(css, /\.desktop-status \{[^}]*font-size:\s*var\(--font-size-md\)/s);
+    assert.match(css, /\.desktop-status \{[^}]*line-height:\s*var\(--line-height-body\)/s);
+    assert.match(css, /\.tooltip \{[^}]*font-size:\s*var\(--font-size-sm\)/s);
+  });
+});
+
 describe("newtab.css grid chrome tokens (AS-DS-17)", () => {
   it("uses Phase 2 tokens for radii, shadows, status chip, spacing, and remove badge", async () => {
     const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
