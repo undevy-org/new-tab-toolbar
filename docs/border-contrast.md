@@ -2,7 +2,7 @@
 
 ## Status
 
-`draft for spec review`
+`ready for spec gate`
 
 ## Intake log
 
