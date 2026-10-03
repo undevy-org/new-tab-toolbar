@@ -649,8 +649,16 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
     const render = fn(code, "renderDesktop");
     assert.match(render, /view\?\.status === "no-location"\) \{\s*if \(!hintPlaced\) \{\s*tile = createCityHintTile\(cell, item\);/);
     const hint = fn(code, "createCityHintTile");
-    assert.match(hint, /if \(cell\.w === 2\) button\.textContent = "Set a city";\s*else button\.appendChild\(createIconNode\("plus"\)\);/);
+    assert.match(hint, /if \(cell\.w === 2\) button\.textContent = "Set a city";\s*else button\.appendChild\(createIconNode\("mapPin"\)\);/);
     assert.match(hint, /button\.setAttribute\("aria-label", "Set a city"\);/);
+    assert.doesNotMatch(hint, /createIconNode\("plus"\)/, "the plus glyph belongs to the Add tile");
+  });
+
+  it("draws the drop highlight only at the judged cell, never clamped into the grid (AS-FU-03)", async () => {
+    const draw = fn(await source(), "drawDropHighlight");
+    assert.doesNotMatch(draw, /Math\.min\(target\./);
+    assert.match(draw, /target\.x \+ s\.cell\.w <= s\.columns && target\.y <= lowest \+ 1/);
+    assert.match(draw, /highlight\?\.remove\(\);/);
   });
 
   it("uses the wide weather model for 2-wide tiles and adds the city line only at 2 high (R6)", async () => {

@@ -1105,7 +1105,7 @@ function createWeatherMetricTile(item, cell, view) {
   return tile;
 }
 
-// Spec § Weather / city: the hint takes the first enabled metric's cell and size; the plus glyph at 1-wide, text when wider.
+// Spec § Weather / city: the hint takes the first enabled metric's cell and size; the map-pin glyph at 1-wide (the plus belongs to Add), text when wider.
 function createCityHintTile(cell, item) {
   const button = createNode("button", "city-hint-tile");
   button.type = "button";
@@ -1114,7 +1114,7 @@ function createCityHintTile(cell, item) {
   button.dataset.metricId = item.id;
   button.setAttribute("aria-label", "Set a city");
   if (cell.w === 2) button.textContent = "Set a city";
-  else button.appendChild(createIconNode("plus"));
+  else button.appendChild(createIconNode("mapPin"));
   return button;
 }
 
@@ -1822,7 +1822,7 @@ function autoscrollFrame() {
 }
 
 // The dragged tile is position:fixed under the pointer (it never adds scrollable overflow, so autoscroll ends at
-// the page bottom); the grid keeps two spare rows while dragging and the highlight is clamped inside the grid.
+// the page bottom); the grid keeps two spare rows while dragging; the highlight is drawn only for a block fully inside it.
 function applyDragVisuals(s) {
   const grid = dragGridOf();
   if (!grid) return;
@@ -1850,16 +1850,25 @@ function updateDragTarget(s) {
   drawDropHighlight(grid, target, s, valid);
 }
 
+// The outline is drawn at the judged cell only, never clamped to another one. A block that overhangs the grid or lies
+// beyond the one allowed row below the lowest tile gets none (it would widen the page or add scroll height).
 function drawDropHighlight(grid, target, s, valid) {
+  let lowest = -1;
+  for (const [id, g] of s.layout) if (id !== s.id) lowest = Math.max(lowest, g.y + g.h - 1);
+  const visible = target.x + s.cell.w <= s.columns && target.y <= lowest + 1;
   let highlight = grid.querySelector(":scope > .drop-highlight");
+  if (!visible) {
+    highlight?.remove();
+    return;
+  }
   if (!highlight) {
     highlight = createNode("div", "drop-highlight");
     highlight.setAttribute("aria-hidden", "true");
     grid.prepend(highlight);
   }
   highlight.dataset.valid = String(valid);
-  highlight.style.setProperty("--x", String(Math.min(target.x, s.columns - s.cell.w)));
-  highlight.style.setProperty("--y", String(Math.min(target.y, s.rows - s.cell.h)));
+  highlight.style.setProperty("--x", String(target.x));
+  highlight.style.setProperty("--y", String(target.y));
   highlight.style.setProperty("--w", String(s.cell.w));
   highlight.style.setProperty("--h", String(s.cell.h));
 }
