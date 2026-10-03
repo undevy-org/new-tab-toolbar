@@ -28,6 +28,13 @@ describe("overlay control CSS (AS-DS-10)", () => {
     assert.doesNotMatch(css, /\.add-menu__item[^}]*min-height:\s*36px/);
   });
 
+  it("keeps vertical padding on suggestion rows so a wrapped city name does not touch the row edges", async () => {
+    const tokens = await readFile(new URL("../src/design-tokens.css", import.meta.url), "utf8");
+    const css = await readFile(new URL("../src/controls.css", import.meta.url), "utf8");
+    assert.match(tokens, /--list-row-padding-y:\s*8px;/);
+    assert.match(css, /\.weather-form__suggestion \{[^}]*padding: var\(--list-row-padding-y\) var\(--control-padding-x\);/s);
+  });
+
   it("modal titles use title-margin-bottom token in surfaces.css", async () => {
     const css = await readFile(new URL("../src/surfaces.css", import.meta.url), "utf8");
     assert.match(css, /\.desktop-dialog__title\s*\{[^}]*margin:\s*0 0 var\(--title-margin-bottom\)/s);

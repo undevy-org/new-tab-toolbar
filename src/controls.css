@@ -2,7 +2,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: none;
+  flex: none; /* stays 36 px wide next to a long link title */
   width: 36px;
   height: 36px;
   border: var(--control-border-width) solid var(--border);
@@ -263,6 +263,7 @@
   padding-right: 48px;
 }
 
+/* Pinned to the input (40 px high, 36 px button, 2 px inset), not to the wrapper's middle: the wrapper also holds the list while it is docked. */
 .weather-form__clear {
   position: absolute;
   top: 2px;
@@ -275,11 +276,12 @@
 }
 
 .weather-form__suggestion {
-  flex: none;
+  flex: none; /* never shrink a wrapped item inside the capped list: the list scrolls instead */
   display: flex;
   align-items: center;
   min-height: var(--control-height);
-  padding: 0 var(--control-padding-x);
+  /* A one-line row stays at --control-height; a long name that wraps keeps breathing room above and below. */
+  padding: var(--list-row-padding-y) var(--control-padding-x);
   border: 0;
   border-radius: var(--radius-control);
   background: transparent;
@@ -318,7 +320,7 @@
 
 .add-menu__item:focus-visible,
 .add-menu__item:focus {
-  outline: 2px solid transparent;
+  outline: 2px solid transparent; /* forced colors turn this into a visible indicator */
   background: var(--soft-fill-strong);
   box-shadow: inset 0 0 0 2px var(--soft-ring);
 }
