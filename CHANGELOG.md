@@ -9,9 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- City window: the red error message now disappears as soon as you start editing the
+- City modal: in a very low window (or at a large browser zoom) the Save and Cancel /
+  Not now buttons are visible again without scrolling. The room kept for an error
+  message is given up only when the window is too low to hold it. E2E:
+  `dg-48-city-modal-low-window.mjs`.
+- City modal: the red error message now disappears as soon as you start editing the
   city name (or press the clear button), instead of lingering under the suggestions.
-  The window also keeps room for the message, so Save and Cancel no longer jump down
+  The window also keeps room for the message, so the buttons no longer jump down
   when an error appears. E2E: `dg-47-city-error-ux.mjs`.
 - Network failures in the city flow no longer show the browser's raw "Failed to fetch"
   (or developer text such as a status code). The city modal and the weather tiles
@@ -27,8 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Borders of text fields, the color field, the segmented control, the chrome tiles
-  (Settings, Add) and the first-run hint tile are darker so they meet 3:1 contrast
+- Borders of text fields, the color field, the segmented control, the Settings and Add
+  tiles and the first-run "Set a city" tile are darker so they meet 3:1 contrast
   (WCAG 1.4.11) in light and dark. Card edges and dividers keep their quiet look.
 - Design system phase 2: grid and page chrome in `newtab.css` use tokens from
   `design-tokens.css` (tile and drop-highlight radii, status chip padding and

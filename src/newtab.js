@@ -648,12 +648,19 @@ function createCityForm(mode) {
   // dialog's scroll position and the mode cannot flip back and forth. It is measured from the INPUT's bottom edge, not from
   // the field wrapper, because the wrapper contains the list while it is docked. A dialog that does not fit the viewport on
   // its own (a very low window, large zoom) scrolls in every mode, also before the first suggestion appears.
+  // The room kept for an error (the feedback block's min-height) is given up when the dialog does not fit with it: a dialog
+  // clamped to the viewport has no slack to move in, and the reserve would push the buttons out of view. That choice is made on
+  // the height the dialog has with the reserve and no error text, so showing or clearing an error never flips it. The order
+  // matters: the dialog is centered, so dropping the reserve moves the input, and `free` / `tooTall` must see that layout.
   function placePopover() {
     const dialog = field.closest(".city-modal__dialog");
     if (!dialog) return;
     const scrollTop = dialog.scrollTop;
     suggestionsList.classList.remove("weather-form__suggestions--docked");
-    dialog.classList.remove("city-modal__dialog--scroll");
+    dialog.classList.remove("city-modal__dialog--scroll", "city-modal__dialog--compact");
+    const reserve = Number.parseFloat(getComputedStyle(feedback).minHeight) || 0;
+    const withReserve = dialog.getBoundingClientRect().height - feedback.getBoundingClientRect().height + reserve;
+    dialog.classList.toggle("city-modal__dialog--compact", withReserve > window.innerHeight - 2 * VIEWPORT_MARGIN);
     const free = window.innerHeight - input.getBoundingClientRect().bottom - POPOVER_GAP - VIEWPORT_MARGIN;
     const tooTall = dialog.getBoundingClientRect().height > window.innerHeight - 2 * VIEWPORT_MARGIN;
     const docked = free < POPOVER_MIN_FREE;
