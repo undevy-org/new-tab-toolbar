@@ -1,12 +1,15 @@
 # Quiet Tab design system
 
 This document is the public source of truth for UI tokens, components, and layout
-rules on the new tab page. Implementation lives in `src/design-tokens.css`,
-`src/controls.css`, and `src/surfaces.css`; grid and tile styling remains in
-`src/newtab.css` until a later migration phase.
+rules on the new tab page. **Target implementation (Phase 1)** splits overlay
+styles into `src/design-tokens.css`, `src/controls.css`, and `src/surfaces.css`;
+grid and tile styling stays in `src/newtab.css` until Phase 2. Until Phase 1
+lands in the repo, the live page may still use a single `newtab.css` link in
+`newtab.html` — that is expected pre-migration.
 
-**Status:** Adopted 2026-10-03 (controls + surfaces v1). Grid/tile tokens are
-planned (v2).
+**Status:** Target spec adopted 2026-10-03 (controls + surfaces v1). **Phase 1
+code migration is pending** until the implementation plan completes. Grid/tile
+tokens remain planned (v2).
 
 ## Principles
 
@@ -22,7 +25,7 @@ planned (v2).
 4. **No build step** — Stylesheets are linked from `newtab.html` in dependency
    order; no preprocessor.
 
-## Stylesheet map
+## Stylesheet map (target after Phase 1)
 
 | File | Contents |
 |------|----------|
@@ -66,7 +69,7 @@ values.
 | Token | Value | Use |
 |-------|-------|-----|
 | `--font-family` | system UI stack | `body` |
-| `--font-size-body` | inherit (~16px UA) | Body; line-height **1.45** on `body` |
+| `--font-size-body` | inherit (~16px UA) | Body text size (line-height on `body` is **1.45**, not `--line-height-body`) |
 | `--font-size-sm` | **13px** | Form row labels, segmented labels, tooltip |
 | `--font-size-md` | **14px** | Status, dialog body, page status line |
 | `--font-size-title` | **18px** | Modal titles |
@@ -223,6 +226,11 @@ Modal titles: `--font-size-title`, `margin: 0 0 var(--title-margin-bottom)` (**1
 | Change city / Set a city | Search input **40px**; clear **36px** inset **2px**; suggestion rows **40px**; Cancel or Not now, Save |
 | Add menu | Each menu item **40px** |
 
+**Metric coverage:** Every row above uses the same overlay control classes as
+AS-DS-1 (40px outer height, 8px control radius) except city-modal-specific
+rules in AS-DS-2 (clear inset, suggestions). No separate per-screen AS is required
+when those classes apply.
+
 ## Migration phases
 
 **Phase 1 (this spec):** Add token and component stylesheets; refactor existing
@@ -247,6 +255,12 @@ without changing grid behavior.
 - Tokenizing grid/tile/status chrome (phase 2).
 - Changing grid metrics, weather tone colors, or dialog copy.
 - New components or layout patterns beyond CSS file split and metric unification.
+- New keyboard flows, validation rules, or error copy — behavior stays as in
+  shipped desktop-grid / weather phases; regression covered by existing E2E
+  (`dg-40-dialog-focus.mjs`, dialog scenarios in `dg-39-dialog-narrow.mjs`) and
+  unit `test/focusTokens.test.js`, not new acceptance scenarios in this doc.
+- First-run onboarding and large favorites grids (140+ tiles) — unchanged; no
+  new AS in this phase (still covered by prior phase specs and E2E).
 
 ## Accepted exceptions
 
@@ -255,53 +269,105 @@ without changing grid behavior.
 | `.icon-button` clear in city field | **36×36px** inside **40px** input | Keeps a square hit target without stretching the glyph button to full row height. |
 | `.favorite-color-input` | **48px** wide, **40px** tall | Native color input needs a wider swatch than text fields. |
 | Disabled buttons | `opacity: 0.62` | Existing affordance; primary does not get a separate muted fill. |
+| `.city-modal__title` margin-bottom | **8px** in pre-Phase-1 code | Legacy; Phase 1 surfaces migration unifies to **12px** (`--title-margin-bottom`). |
+
+## User-visible copy (regression guard, unchanged in phase 1)
+
+Phase 1 must not change strings. Key labels (English UI):
+
+| Surface | Strings (representative) |
+|---------|--------------------------|
+| Add / Edit link | Cancel, Add, Save, Delete; row labels Link, Name, Icon, Color, Size |
+| Delete confirm | Cancel, Delete; title asks to confirm removal |
+| Edit weather | Cancel, Save; Change city / city name row |
+| City modal | Cancel, Not now, Save; search placeholder; geocode error status |
+| Add menu | Add link, Add weather, Settings (exact labels per `newtab.js`) |
+
+Regression: existing E2E that open these dialogs; no copy assertions added in
+this phase beyond visual/layout checks.
 
 ## Acceptance scenarios
+
+**Spec gate vs implementation:** Metrics below are the contract. Executable
+`Verified by` artifacts are created in
+`docs/plans/2026-10-03-design-system-v1.md` (Tasks 1–2, 5). Before those tasks,
+missing files in checkout are expected; spec review judges completeness of the
+Given/When/Then text, not file presence.
 
 ### AS-DS-1 Overlay control height (Add link)
 - Given: A fresh grid; Add link dialog open; custom icon row and manual color visible.
 - When: The user inspects visible controls (inputs, segmented groups, footer buttons).
 - Then: Each control’s border-box height is **40px** ± **0.5px** (segmented outer box included; radio inputs excluded).
-- Verified by: E2E `dg-41-control-metrics.mjs`
+- Verified by: E2E `dg-41-control-metrics.mjs` (plan Task 2)
 
 ### AS-DS-2 Overlay control height (city modal)
 - Given: Change-city modal open with at least one geocode suggestion visible.
 - When: The user inspects the city field, clear button, suggestion rows, and action buttons.
 - Then: Field, suggestion rows, and action buttons are **40px** ± **0.5px** tall; clear button is **36px** ± **0.5px** and sits **2px** from the top/right of the field.
-- Verified by: E2E `dg-41-control-metrics.mjs`
+- Verified by: E2E `dg-41-control-metrics.mjs` (plan Task 2)
 
 ### AS-DS-3 Control corner radius
-- Given: Add link dialog open.
-- When: Computed styles are read for `.favorite-input`, `.button`, and `.segmented`.
-- Then: `border-radius` is **8px** on those controls (popover surfaces may use **12px**; modal shell **16px**).
-- Verified by: E2E `dg-41-control-metrics.mjs`
+- Given: Add link dialog open; add menu open on desktop (separate checks).
+- When: Computed styles are read for `.favorite-input`, `.button`, `.segmented`,
+  `.add-menu__item`, and city-modal `.favorite-input` / `.weather-form__suggestion`.
+- Then: `border-radius` is **8px** on those controls (popover shells **12px**;
+  modal card **16px**).
+- Verified by: E2E `dg-41-control-metrics.mjs` (plan Task 2)
 
 ### AS-DS-4 Modal title spacing
 - Given: Desktop dialog or city modal open.
 - When: Title margin-bottom is measured.
 - Then: Gap below the title is **12px** ± **1px** in both desktop dialog and city modal.
-- Verified by: E2E `dg-41-control-metrics.mjs`
+- Verified by: E2E `dg-41-control-metrics.mjs` (plan Task 2)
 
 ### AS-DS-5 Stylesheet load order
-- Given: New tab HTML loaded.
+- Given: New tab HTML loaded after Phase 1 Task 1.
 - When: Stylesheets are listed in document order.
 - Then: `design-tokens.css`, `controls.css`, `surfaces.css`, `newtab.css` — in that order.
-- Verified by: `test/designSystem.test.js`
+- Verified by: `test/designSystem.test.js` (plan Task 1)
 
 ### AS-DS-6 Focus and theme tokens unchanged
-- Given: Existing focus token tests.
-- When: `npm test` runs.
+- Given: Existing focus token tests and dialog focus E2E.
+- When: `npm test` runs and `dg-40-dialog-focus.mjs` runs after Phase 1 CSS split.
 - Then: Overlay soft-ring and tile `--focus-ring` contrast rules still pass; no regression in dialog/city focus selectors.
-- Verified by: `test/focusTokens.test.js` (existing)
+- Verified by: `test/focusTokens.test.js`; E2E `dg-40-dialog-focus.mjs` (plan Task 4)
 
 ### AS-DS-7 Narrow dialogs still fit
-- Given: Viewport **320×600** and **500×800** (unchanged from AS-10).
-- When: Add link and other dialogs are opened with all optional rows visible.
-- Then: No control clips outside the dialog; segmented labels remain readable (inherits AS-10).
-- Verified by: E2E `dg-39-dialog-narrow.mjs` (update height assertion to 40px where needed)
+- Given: Viewport **320×600** and **500×800** (same matrix as desktop-grid narrow
+  dialog E2E `dg-39-dialog-narrow.mjs`).
+- When: Add link (custom icon + manual color visible), Edit link, Edit weather, and
+  delete confirm dialogs are opened; segmented options measured.
+- Then: No control clips outside the dialog card; dialog has no horizontal overflow;
+  each `.segmented__option` height is **40px** ± **0.5px** (or ≤ **40.5px** during
+  transition); option labels stay on one line at **320px** width.
+- Verified by: E2E `dg-39-dialog-narrow.mjs` (plan Task 5 — tighten segmented height to 40px)
+
+### AS-DS-8 Overlay keyboard and focus (unchanged behavior)
+- Given: Add link or desktop dialog with segmented control open.
+- When: User tabs through interactive controls and presses Escape to close.
+- Then: Tab order stays within the overlay; Escape closes the top dialog; focus
+  returns to a sensible grid/chrome control; segmented group shows overlay focus ring
+  per Focus § Overlays (no change to grid tile `--focus-ring` rules).
+- Verified by: E2E `dg-40-dialog-focus.mjs` (existing)
+
+### AS-DS-9 Dialog errors and status (unchanged behavior)
+- Given: Invalid link in Add link, or geocode failure in city modal.
+- When: User triggers validation or failed geocode.
+- Then: Error/status appears in `.desktop-dialog__error` or city modal status slot;
+  text unchanged from pre-Phase-1; layout does not clip the message.
+- Verified by: design review only (validation logic and copy are Non-goals)
+
+### AS-DS-10 Token usage in overlay CSS
+- Given: Phase 1 `controls.css` and `surfaces.css` populated.
+- When: `npm test` runs design-system source checks.
+- Then: Overlay control heights use `var(--control-height)` (or documented calc);
+  banned legacy heights (`34px` menu rows, `44px` city field, `36px` menu
+  min-height) are absent from `controls.css`; modal titles use
+  `var(--title-margin-bottom)`.
+- Verified by: `test/designSystem.test.js` extensions (plan Task 3)
 
 ## Review focus
 
-- **Visual:** Side-by-side before/after screenshots of Add link, Edit weather, and Change city — segmented height alignment with inputs and buttons; **8px** radius consistency.
+- **Visual:** Side-by-side before/after screenshots of Add link, Edit weather, and Change city — segmented height alignment with inputs and buttons; **8px** radius consistency; **city modal title margin 8px → 12px** with desktop dialog.
 - **Scenarios:** City modal clear inset after field height drops from 44px to 40px; disabled Save on weather edit (opacity only).
 - **Accessibility:** Focus rings on segmented groups in dialogs; suggestion list row height as touch/keyboard target **40px**; no focus regression on grid tiles (phase 1 must not change tile focus rules).

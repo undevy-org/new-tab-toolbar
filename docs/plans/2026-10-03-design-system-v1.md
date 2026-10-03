@@ -17,15 +17,16 @@
 - E2E base commit: `--base 67b3e32` when running full harness.
 - Stage commits by explicit paths only (never `git add -A`).
 - Plan spec for review: `docs/design-system.md`.
+- Do not change grid tile focus selectors or `--focus-ring` rules in `newtab.css` except moving shared `:root` tokens to `design-tokens.css`.
 
 ---
 
 ### Task 0: Spec review gate
 
 **Files:**
-- Modify: `docs/design-system.md` (Acceptance scenarios / Review focus — present after 2026-10-03 update)
+- Modify: `docs/design-system.md` (wording: target spec vs pre-Phase-1 checkout; AS-DS-1…10)
 
-- [ ] **Step 1:** Read `docs/design-system.md` end-to-end; confirm Non-goals, Accepted exceptions, AS-DS-1…7, Review focus.
+- [ ] **Step 1:** Read `docs/design-system.md` end-to-end; confirm intro does **not** claim split CSS already exists; Status reflects Phase 1 pending; Non-goals waive keyboard/error/copy AS per spec.
 
 - [ ] **Step 2:** Run spec init (from repo root):
 
@@ -33,7 +34,9 @@
 node .private/design-review/tools/init-run.mjs --checkout . --spec docs/design-system.md --kind spec
 ```
 
-- [ ] **Step 3:** Run lens `0-spec` (Sonnet) + skeptic per `.private/design-review/PROTOCOL.md`; merge findings:
+Use `--round N --prev <run-dir>` for follow-up rounds after spec edits.
+
+- [ ] **Step 3:** Run lens `0-spec` (Composer 2.5 per owner) + skeptic; merge:
 
 ```bash
 node .private/design-review/tools/merge.mjs <run-dir>
@@ -63,7 +66,7 @@ Expected: exit **0**. Ledger: `Spec review: passed (<run-id>)`.
 
 - [ ] **Step 1: Write failing test**
 
-Create `test/designSystem.test.js`:
+Create `test/designSystem.test.js` (minimum tokens; expand in Task 3 for AS-DS-10):
 
 ```javascript
 import assert from "node:assert/strict";
@@ -95,7 +98,7 @@ node --test test/designSystem.test.js
 
 - [ ] **Step 3: Create `src/design-tokens.css`**
 
-Move `:root` color blocks from `newtab.css` (lines 1–36) into this file. Add semantic tokens from the spec; keep **legacy aliases** (`--bg`, `--panel`, `--text`, …) so grid rules in `newtab.css` keep working.
+Move the `:root` color block from the start of `newtab.css` into this file. Add semantic tokens from the spec; keep **legacy aliases** (`--bg`, `--panel`, `--text`, …) so grid rules in `newtab.css` keep working.
 
 Required tokens (minimum):
 
@@ -139,7 +142,13 @@ git commit -m "feat: add design token stylesheet and load order"
 **Files:**
 - Create: `.private/e2e/scenarios/dg-41-control-metrics.mjs`
 
-- [ ] **Step 1:** Add scenario measuring **40px** heights on Add link (inputs, `.segmented`, `.button`), **8px** radius, title `margin-bottom` **12px**; city modal branch with field, suggestions, **36px** clear at **2px** inset — copy open-flow from `dg-29-weather-modal.mjs` / `dg-15-city-first-run.mjs`.
+**E2E-first (this task owns the red scenario for AS-DS-1…4; Tasks 3–4 turn it green):**
+
+- [ ] **Step 1:** Add scenario with explicit branches and tolerances from the spec:
+
+  - **Add link (AS-DS-1, AS-DS-3, AS-DS-4 desktop):** open Add link; reveal custom icon + manual color (same `page.evaluate` clicks as `dg-39-dialog-narrow.mjs`); measure border-box heights **40px ± 0.5px** for `.favorite-input`, `.segmented` outer box, `.button`; `border-radius` **8px** on input/button/segmented; `.desktop-dialog__title` `margin-bottom` **12px ± 1px** via `getComputedStyle`.
+  - **Change city (AS-DS-2, AS-DS-4 city):** open from **weather edit** (primary flow from `dg-29-weather-modal.mjs`: edit weather tile → Change city → `#city-modal`), **not** first-run `dg-15-city-first-run.mjs`. `context.route` geocoding API; fill search; wait for `.weather-form__suggestion`; measure field, suggestion rows, footer buttons at **40px ± 0.5px**; clear `.icon-button` **36px ± 0.5px** with **2px** inset from field top/right (`getBoundingClientRect` vs field box); `.city-modal__title` margin **12px ± 1px** after Task 4 (expect FAIL on 8px until surfaces migration).
+  - Reuse harness patterns from `dg-29-weather-modal.mjs` and `15-city-modal-layout.mjs` (`openChange`, geocode routing).
 
 - [ ] **Step 2:**
 
@@ -147,7 +156,7 @@ git commit -m "feat: add design token stylesheet and load order"
 node .private/e2e/run.mjs --repo . --base 67b3e32 --only dg-41
 ```
 
-Expected: **FAIL** on height/radius until Task 3.
+Expected: **FAIL** on height/radius/title until Tasks 3–4. Paste failing assertion line into private commit message or task ledger.
 
 - [ ] **Step 3:** Commit in private repo:
 
@@ -158,12 +167,14 @@ git -C .private commit -m "test(e2e): overlay control metrics (AS-DS-1…4)"
 
 ---
 
-### Task 3: `controls.css` migration (serves AS-DS-1…3, AS-DS-6)
+### Task 3: `controls.css` migration (serves AS-DS-1…3, AS-DS-6, AS-DS-10)
 
 **Files:**
 - Modify: `src/controls.css`, `src/newtab.css`, `test/designSystem.test.js`
 
-- [ ] **Step 1:** Add test forbidding `height: 34px`, `min-height: 44px`, `min-height: 36px` on `.add-menu__item` in `controls.css`; require `var(--control-height)` and segmented `calc(var(--control-height) - 2 * var(--control-border-width))`.
+**Note:** E2E red was in Task 2; this task implements until `dg-41` passes.
+
+- [ ] **Step 1:** Add tests forbidding `height: 34px`, `min-height: 44px`, `min-height: 36px` on `.add-menu__item` in `controls.css`; require `var(--control-height)` and segmented `calc(var(--control-height) - 2 * var(--control-border-width))`.
 
 - [ ] **Step 2:** Move from `newtab.css`: `.icon-button`, `.favorite-form*` row chrome (not dialog reset), `.segmented*`, `.favorite-input`, `.favorite-color-input`, `.button*`, `.text-button`, `.weather-form` field/clear/suggestion rows, `.add-menu__item`. Apply spec: unified heights/radii; clear `top/right: 2px`; remove city **44px** override.
 
@@ -174,6 +185,8 @@ npm test && npm run check
 node .private/e2e/run.mjs --repo . --base 67b3e32 --only dg-41
 ```
 
+Expect `dg-41` green for control heights/radius; city title margin may still fail until Task 4.
+
 - [ ] **Step 4: Commit** — `feat: migrate overlay controls to design tokens`
 
 ---
@@ -183,20 +196,46 @@ node .private/e2e/run.mjs --repo . --base 67b3e32 --only dg-41
 **Files:**
 - Modify: `src/surfaces.css`, `src/newtab.css`
 
-Move: backdrops, `.desktop-dialog*`, `.city-modal*`, `.add-menu` shell, `.weather-form__suggestions` panel, overlay `:focus-visible` rules for dialog/city. Unify `.city-modal__title` and `.desktop-dialog__title` to `margin: 0 0 var(--title-margin-bottom)`.
+- [ ] **Step 1:** Move backdrops, `.desktop-dialog*`, `.city-modal*`, `.add-menu` shell, `.weather-form__suggestions` panel, overlay `:focus-visible` rules for dialog/city. Unify `.city-modal__title` and `.desktop-dialog__title` to `margin: 0 0 var(--title-margin-bottom)`.
 
-- [ ] Run `dg-41`, `dg-40-dialog-focus.mjs`, `npm test`.
+- [ ] **Step 2:**
 
-- [ ] Commit — `feat: migrate modal and popover surfaces to design tokens`
+```bash
+npm test && npm run check
+node .private/e2e/run.mjs --repo . --base 67b3e32 --only dg-41
+node .private/e2e/run.mjs --repo . --base 67b3e32 --only dg-40
+```
+
+- [ ] **Step 3: Commit** — `feat: migrate modal and popover surfaces to design tokens`
 
 ---
 
-### Task 5: Update AS-10 narrow E2E (serves AS-DS-7)
+### Task 5: Update narrow E2E (serves AS-DS-7)
 
 **Files:**
-- Modify: `.private/e2e/scenarios/dg-39-dialog-narrow.mjs` (segmented height expectation **40px**)
+- Modify: `.private/e2e/scenarios/dg-39-dialog-narrow.mjs`
 
-- [ ] Run `--only dg-39`; commit private.
+- [ ] **Step 1:** Change segmented height check to target **40px ± 0.5px** (replace `lines.every((l) => l[1] <= 40)` with equality band or `>= 39.5 && <= 40.5`).
+
+- [ ] **Step 2:**
+
+```bash
+node .private/e2e/run.mjs --repo . --base 67b3e32 --only dg-39
+```
+
+- [ ] **Step 3:** Commit private — `test(e2e): narrow dialog segmented height 40px (AS-DS-7)`
+
+---
+
+### Checkpoint: design review after Tasks 3–5
+
+**Task 6 and Task 7 do not start until checkpoint gate passes.**
+
+- [ ] `node .private/design-review/tools/init-run.mjs --checkout . --spec docs/design-system.md --kind checkpoint`
+- [ ] Lenses `1-scenarios`, `2-visual` (Composer 2.5) + skeptics; `node .private/design-review/tools/merge.mjs <run-dir>`
+- [ ] Fix Critical/Important (≤3 rounds, `--round N --prev <run>`)
+- [ ] `node .private/design-review/tools/gate.mjs --kind checkpoint` → exit 0
+- [ ] Ledger: `Checkpoint: passed (<run-id>)`
 
 ---
 
@@ -210,24 +249,29 @@ Move: backdrops, `.desktop-dialog*`, `.city-modal*`, `.add-menu` shell, `.weathe
 
 ---
 
-### Checkpoint: design review after Tasks 3–5
-
-- [ ] `init-run.mjs --kind checkpoint --spec docs/design-system.md`
-- [ ] Lenses `1-scenarios`, `2-visual` + merge; fix ≤3 rounds
-- [ ] `gate.mjs --kind checkpoint` → exit 0
-
----
-
 ### Task 7: Final design review gate
 
-- [ ] `npm test && npm run check`
-- [ ] Full E2E with `--base 67b3e32`
-- [ ] `init-run.mjs` kind=final; three lenses; `gate.mjs` exit 0
+- [ ] Full `npm test && npm run check`
+- [ ] Full E2E: `node .private/e2e/run.mjs --repo . --base 67b3e32`
+- [ ] `node .private/design-review/tools/init-run.mjs --checkout . --spec docs/design-system.md` (kind=final, default)
+- [ ] Three lenses (`1-scenarios`, `2-visual`, `3-a11y-copy`) + three skeptics; `merge.mjs`
+- [ ] Fix Critical/Important (≤3 rounds); `node .private/design-review/tools/gate.mjs` → exit 0
+- [ ] Ledger: `Final design review: passed (<run-id>)`
 
 ---
 
 ## Plan self-review
 
-All AS-DS-* items map to Tasks 1–5 and E2E/unit tests. Phase 2 grid tokens excluded. No TBD steps.
+| AS | Tasks | Tests |
+|----|-------|-------|
+| AS-DS-1…4 | 2–4 | `dg-41` |
+| AS-DS-5 | 1 | `designSystem.test.js` |
+| AS-DS-6 | 3–4 | `focusTokens.test.js`, `dg-40` |
+| AS-DS-7 | 5 | `dg-39` |
+| AS-DS-8 | — (unchanged) | `dg-40` |
+| AS-DS-9 | — (design review) | — |
+| AS-DS-10 | 3 | `designSystem.test.js` |
+
+Known gaps before execution: `dg-41` and `designSystem.test.js` do not exist until Tasks 2 and 1. Checkpoint ordering fixed (before Task 6). E2E-first red centralized in Task 2 for metrics AS.
 
 **Note:** Mirror this plan to `.private/superpowers/plans/` when writing there is allowed (optional duplicate for private notes).
