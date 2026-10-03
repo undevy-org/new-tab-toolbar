@@ -183,7 +183,8 @@ describe("newtab favorites source", () => {
     assert.match(tokens, /--primary-contrast: var\(--color-on-primary\);/);
     assert.doesNotMatch(tokens, /--color-primary: #1473e6/);
     assert.doesNotMatch(tokens, /--color-primary: #4d9aff/);
-    assert.match(css, /\.button--primary\s*\{[^}]*color: var\(--primary-contrast\);/s);
+    const controls = await readFile(new URL("../src/controls.css", import.meta.url), "utf8");
+    assert.match(controls, /\.button--primary\s*\{[^}]*color: var\(--primary-contrast\);/s);
   });
 
   it("sizes every tile from the cell box (no --tile-height), keeps the weather tile slots, and has no weather panel", async () => {

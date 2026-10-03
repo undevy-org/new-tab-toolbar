@@ -11,7 +11,13 @@ async function html() {
 }
 
 async function css() {
-  return readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+  const base = new URL("../src/", import.meta.url);
+  const [surfaces, controls, app] = await Promise.all([
+    readFile(new URL("surfaces.css", base), "utf8"),
+    readFile(new URL("controls.css", base), "utf8"),
+    readFile(new URL("newtab.css", base), "utf8")
+  ]);
+  return surfaces + controls + app;
 }
 
 describe("newtab weather source", () => {
@@ -277,10 +283,10 @@ describe("newtab weather source", () => {
   });
 
   it("popover items never shrink inside the capped list (the list scrolls instead)", async () => {
-    const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
-    const at = css.indexOf(".weather-form__suggestion {");
+    const cssText = await css();
+    const at = cssText.indexOf(".weather-form__suggestion {");
     assert.ok(at > -1);
-    assert.match(css.slice(at, css.indexOf("}", at)), /\bflex: none;/);
+    assert.match(cssText.slice(at, cssText.indexOf("}", at)), /\bflex: none;/);
   });
 
   it("ignores the second click of a double click on an item, but never a keyboard activation", async () => {

@@ -334,26 +334,6 @@ button.weather-tile {
   display: none;
 }
 
-.icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none; /* stays 36 px wide next to a long link title */
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-
-.icon-button:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
 .icon {
   display: inline-flex;
   align-items: center;
@@ -361,172 +341,9 @@ button.weather-tile {
   flex: 0 0 auto;
 }
 
-.favorite-form {
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  width: min(680px, 100%);
-  justify-self: center;
-  padding: 4px 12px;
-  margin-bottom: 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
-}
-
-.favorite-form__row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 0;
-  border-top: 1px solid var(--border);
-}
-
-.favorite-form__row:first-child {
-  border-top: none;
-}
-
-.favorite-form__row-label {
-  flex: 0 0 auto;
-  width: 100px;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.favorite-form__row > .favorite-input,
-.favorite-form__row > .segmented {
-  flex: 1;
-  min-width: 0;
-}
-
-.favorite-form__row--custom-icon {
-  display: none;
-}
-
-.favorite-form:has(input[name="iconMode"][value="custom"]:checked)
-  .favorite-form__row--custom-icon {
-  display: flex;
-}
-
-.favorite-form__color-controls {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.favorite-form__color-controls .segmented {
-  flex: 1;
-  min-width: 0;
-}
-
-.favorite-form__color-controls .favorite-color-input {
-  pointer-events: none;
-  opacity: 0.5;
-}
-
-.favorite-form:has(input[name="backgroundColorSource"][value="manual"]:checked)
-  .favorite-form__color-controls
-  .favorite-color-input {
-  pointer-events: auto;
-  opacity: 1;
-}
-
-.favorite-form__footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 0;
-  border-top: 1px solid var(--border);
-}
-
-.favorite-form__footer .button--danger {
-  margin-right: auto;
-}
-
-.segmented {
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.segmented__option {
-  position: relative;
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 34px; /* + the 1 px border of .segmented above and below = 36 px outer */
-  padding: 0 8px;
-  border-right: 1px solid var(--border);
-  font-size: 13px;
-  color: var(--muted);
-  cursor: pointer;
-  text-align: center;
-}
-
-.segmented__option:last-child {
-  border-right: none;
-}
-
-.segmented__option input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-}
-
-.segmented__option:has(input:checked) {
-  background: var(--primary);
-  color: var(--primary-contrast);
-  font-weight: 600;
-}
-
-.segmented__option:has(input:focus-visible) {
-  outline: 3px solid var(--focus);
-  outline-offset: -3px;
-}
-
-.favorite-input {
-  min-height: 40px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--panel);
-  color: var(--text);
-  font: inherit;
-}
-
-
 .favorite-tile:focus-visible {
   outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
-}
-
-.favorite-input:focus-visible,
-.favorite-color-input:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 2px;
-}
-
-.favorite-color-input {
-  width: 48px;
-  height: 40px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--panel);
-}
-
-.button--danger {
-  border-color: var(--danger);
-  color: var(--danger);
 }
 
 .status {
@@ -538,48 +355,6 @@ button.weather-tile {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-}
-
-.button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 40px;
-  padding: 0 14px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--panel);
-  color: var(--text);
-  font: inherit;
-  font-weight: 600;
-  line-height: 1.2;
-  cursor: pointer;
-}
-
-.button:hover:not(:disabled) {
-  border-color: var(--primary);
-}
-
-.button:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 2px;
-}
-
-.button:disabled {
-  cursor: wait;
-  opacity: 0.62;
-}
-
-.button--primary {
-  border-color: var(--primary);
-  background: var(--primary);
-  color: var(--primary-contrast);
-}
-
-.button--primary:hover:not(:disabled) {
-  border-color: var(--primary-hover);
-  background: var(--primary-hover);
 }
 
 .status {
@@ -766,33 +541,6 @@ button.weather-tile {
 .weather-tile[data-weather-tone="rain-4"] { background: rgba(var(--weather-tone-rgb), 0.48); }
 .weather-tile[data-weather-tone="rain-5"] { background: rgba(var(--weather-tone-rgb), 0.6); }
 
-.weather-form {
-  display: flex;
-  flex-direction: column;
-}
-
-.weather-form__field {
-  position: relative;
-}
-
-.weather-form__field > .favorite-input {
-  width: 100%;
-  min-height: 44px;
-  padding-right: 48px;
-}
-
-/* Pinned to the input (44 px high, 36 px button), not to the wrapper's middle: the wrapper also holds the list while it is docked. */
-.weather-form__clear {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  border-color: transparent;
-}
-
-.weather-form__clear[hidden] {
-  display: none;
-}
-
 .weather-form__suggestions {
   position: absolute;
   z-index: 2;
@@ -821,29 +569,6 @@ button.weather-tile {
   max-height: none;
   box-shadow: none;
 }
-
-.weather-form__suggestion {
-  flex: none; /* never shrink a wrapped item inside the capped list: the list scrolls instead */
-  min-height: 36px;
-  padding: 9px 12px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  overflow-wrap: anywhere;
-}
-
-.weather-form__suggestion:hover {
-  background: var(--soft-fill);
-}
-
-.weather-form__suggestion:active {
-  background: var(--soft-fill-strong);
-}
-
 
 /* City modal: above the grid and the tooltip layer (60); raised above a desktop dialog when stacked (below). No transitions. */
 .city-modal {
@@ -926,17 +651,6 @@ button.weather-tile {
 .city-modal .weather-form__suggestion:focus-visible {
   background: var(--soft-fill-strong);
   box-shadow: 0 0 0 2px var(--soft-ring);
-}
-
-@media (max-width: 600px) {
-  .favorite-form {
-    flex-direction: column;
-  }
-
-  .button,
-  .favorite-input {
-    width: 100%;
-  }
 }
 
 /* Weather type follows the cell size that newtab.js sets from gridMetrics (R4: :root[data-cell] next to --cell-size),
@@ -1066,25 +780,6 @@ button.weather-tile {
 
 .desktop-dialog__city-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.text-button {
-  flex: none;
-  min-height: 32px;
-  padding: 0 4px;
-  border: 0;
-  border-radius: 6px;
-  background: none;
-  color: var(--text);
-  font: inherit;
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  cursor: pointer;
-}
-
-.text-button:disabled { color: var(--muted); cursor: default; }
-
-.desktop-dialog .text-button:focus-visible { box-shadow: 0 0 0 2px var(--soft-ring); }
-
 /* The change-mode city modal stacked over the weather edit dialog (z-index 101). */
 .city-modal.city-modal--stacked { z-index: 102; }
 
@@ -1103,23 +798,3 @@ button.weather-tile {
   box-shadow: 0 12px 32px rgb(0 0 0 / 20%);
 }
 
-.add-menu__item {
-  min-height: 36px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 8px;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.add-menu__item:hover { background: var(--soft-fill); }
-
-.add-menu__item:focus-visible,
-.add-menu__item:focus {
-  outline: 2px solid transparent; /* forced colors turn this into a visible indicator */
-  background: var(--soft-fill-strong);
-  box-shadow: inset 0 0 0 2px var(--soft-ring);
-}

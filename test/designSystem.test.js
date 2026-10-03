@@ -17,3 +17,14 @@ describe("design system wiring", () => {
     assert.match(css, /--control-disabled-opacity:\s*0\.62;/);
   });
 });
+
+describe("overlay control CSS (AS-DS-10)", () => {
+  it("uses control-height tokens and forbids legacy magic heights in controls.css", async () => {
+    const css = await readFile(new URL("../src/controls.css", import.meta.url), "utf8");
+    assert.match(css, /min-height:\s*var\(--control-height\)/);
+    assert.match(css, /height:\s*calc\(var\(--control-height\) - 2 \* var\(--control-border-width\)\)/);
+    assert.doesNotMatch(css, /height:\s*34px/);
+    assert.doesNotMatch(css, /min-height:\s*44px/);
+    assert.doesNotMatch(css, /\.add-menu__item[^}]*min-height:\s*36px/);
+  });
+});

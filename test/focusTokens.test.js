@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 const css = await readFile(new URL("../src/newtab.css", import.meta.url), "utf8");
+const controlsCss = await readFile(new URL("../src/controls.css", import.meta.url), "utf8");
+const overlayCss = await readFile(new URL("../src/surfaces.css", import.meta.url), "utf8") + controlsCss + css;
 const tokenCss = await readFile(new URL("../src/design-tokens.css", import.meta.url), "utf8");
 
 function block(source, selectorStart) {
@@ -68,7 +70,7 @@ describe("every tile type uses the tile focus ring token", () => {
 });
 
 describe("no focus rule hides the outline without a visible replacement (fix wave 3, L3-R2-01)", () => {
-  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selector: m[1].replace(/\/\*[\s\S]*?\*\//g, "").trim(), body: m[2] }));
+  const rules = [...overlayCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selector: m[1].replace(/\/\*[\s\S]*?\*\//g, "").trim(), body: m[2] }));
   const ruleFor = (selector) => rules.find((r) => r.selector === selector);
   // Shared base rules: a transparent outline for forced colors; each control type they cover has its own ring rule.
   const replacements = {
