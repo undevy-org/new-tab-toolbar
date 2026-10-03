@@ -50,13 +50,13 @@ html {
 .desktop-grid > .tile-remove {
   position: absolute;
   z-index: 2;
-  left: calc(var(--x) * (var(--cell-size) + var(--grid-gap)) - 8px);
-  top: calc(var(--y) * (var(--cell-size) + var(--grid-gap)) - 8px);
+  left: calc(var(--x) * (var(--cell-size) + var(--grid-gap)) - var(--tile-remove-offset));
+  top: calc(var(--y) * (var(--cell-size) + var(--grid-gap)) - var(--tile-remove-offset));
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: var(--tile-remove-size);
+  height: var(--tile-remove-size);
   padding: 0;
   border: 2px solid var(--panel);
   border-radius: 50%;
@@ -127,7 +127,7 @@ html {
   top: calc(var(--y) * (var(--cell-size) + var(--grid-gap)));
   width: calc(var(--w) * var(--cell-size) + (var(--w) - 1) * var(--grid-gap));
   height: calc(var(--h) * var(--cell-size) + (var(--h) - 1) * var(--grid-gap));
-  border-radius: 14px;
+  border-radius: var(--radius-drop-highlight);
   pointer-events: none;
 }
 
@@ -162,17 +162,17 @@ button.weather-tile {
   position: fixed;
   z-index: 50;
   left: 50%;
-  bottom: 16px;
+  bottom: var(--status-chip-offset-bottom);
   transform: translateX(-50%);
   width: max-content; /* a centred fixed box without a width would shrink to the half viewport right of left:50% */
   max-width: min(560px, calc(100vw - 32px));
-  padding: 10px 14px;
+  padding: var(--status-chip-padding-y) var(--status-chip-padding-x);
   border: 1px solid var(--danger);
-  border-radius: 10px;
+  border-radius: var(--radius-status-chip);
   background: var(--panel);
   color: var(--danger);
   font-size: 14px;
-  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+  box-shadow: var(--shadow-status);
 }
 
 .desktop-status[hidden] {
@@ -185,7 +185,7 @@ button.weather-tile {
   justify-content: center;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 13px;
+  border-radius: var(--radius-tile);
   background: var(--panel);
   color: var(--text);
   font: inherit;
@@ -212,12 +212,12 @@ button.weather-tile {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-grid-8);
   min-width: 0;
   padding: 0;
   overflow: hidden;
   border: 1px solid rgba(var(--favorite-accent-rgb), 0.78);
-  border-radius: 13px;
+  border-radius: var(--radius-tile);
   background: linear-gradient(
     135deg,
     rgba(var(--favorite-accent-rgb), 0.18),
@@ -235,7 +235,7 @@ button.weather-tile {
 
 .favorite-tile[data-w="2"] {
   justify-content: flex-start;
-  padding: 0 12px;
+  padding: 0 var(--space-grid-12);
 }
 
 .favorite-tile[data-w="2"][data-h="2"] {
@@ -243,7 +243,7 @@ button.weather-tile {
   align-items: flex-start;
   justify-content: center;
   gap: 6px;
-  padding: 10px 12px;
+  padding: var(--space-grid-10) var(--space-grid-12);
 }
 
 .favorite-tile__text {
@@ -392,11 +392,11 @@ button.weather-tile {
   left: 0;
   width: max-content;
   max-width: min(260px, calc(100vw - 16px));
-  padding: 8px 10px;
+  padding: var(--space-grid-8) var(--space-grid-10);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: var(--panel);
-  box-shadow: 0 18px 50px rgb(0 0 0 / 10%);
+  box-shadow: var(--shadow-tooltip);
   color: var(--text);
   font-size: 13px;
   line-height: 1.35;
@@ -418,7 +418,7 @@ button.weather-tile {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 13px;
+  border-radius: var(--radius-tile);
   background: var(--panel);
 }
 
@@ -436,8 +436,8 @@ button.weather-tile {
 
 .weather-tile[data-w="2"]:not([data-h="2"]) {
   flex-direction: row;
-  gap: 8px;
-  padding: 0 10px;
+  gap: var(--space-grid-8);
+  padding: 0 var(--space-grid-10);
 }
 
 .weather-tile[data-w="2"]:not([data-h="2"]) .weather-tile__glyph svg {
@@ -461,7 +461,7 @@ button.weather-tile {
 
 .weather-tile__city {
   max-width: 100%;
-  padding: 0 10px;
+  padding: 0 var(--space-grid-10);
   overflow: hidden;
   font-size: 12px;
   color: var(--muted);
@@ -489,7 +489,7 @@ button.weather-tile {
   justify-content: center;
   padding: 0;
   border: 1px dashed var(--border);
-  border-radius: 13px;
+  border-radius: var(--radius-tile);
   background: var(--panel);
   color: var(--text);
   font: inherit;

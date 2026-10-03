@@ -692,7 +692,7 @@ describe("newtab desktop grid source (DOM contract, normal mode)", () => {
     assert.match(styles, /\.desktop \{[^}]*min-height: 100vh;[^}]*padding: var\(--grid-pad, 16px\);/s);
     assert.match(styles, /\.desktop-grid \{[^}]*position: relative;[^}]*margin: 0 auto;/s);
     assert.match(styles, /\.desktop-grid > \[data-widget-id\] \{[^}]*position: absolute;[^}]*left: calc\(var\(--x\) \* \(var\(--cell-size\) \+ var\(--grid-gap\)\)\);/s);
-    assert.match(styles, /\.desktop-grid > \.tile-remove \{[^}]*width: 24px;[^}]*height: 24px;/s);
+    assert.match(styles, /\.desktop-grid > \.tile-remove \{[^}]*width: var\(--tile-remove-size\);[^}]*height: var\(--tile-remove-size\);/s);
     assert.match(styles, /\.favorite-tile__label,\s*\.favorite-tile__host \{[^}]*text-overflow: ellipsis;/s);
     assert.doesNotMatch(styles, /grid-column: span 2/);
   });
